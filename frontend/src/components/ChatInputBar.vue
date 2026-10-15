@@ -225,7 +225,7 @@ watch([model, inputEl, isMobile], async () => {
         </div>
       </div>
       <div class="input-box" :class="{ disabled: disabled }">
-        <button v-if="attachmentsEnabled" class="attachment-button" type="button" title="添加附件，视频不超过 100MB，其他文件不超过 15MB" aria-label="添加附件，视频不超过 100MB，其他文件不超过 15MB" :disabled="disabled" @click="fileInput?.click()">
+        <button v-if="attachmentsEnabled" class="attachment-button" type="button" title="添加附件" aria-label="添加附件" :disabled="disabled" @click="fileInput?.click()">
           <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 3v10M3 8h10" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" /></svg>
         </button>
           <input

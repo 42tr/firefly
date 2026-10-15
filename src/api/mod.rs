@@ -153,7 +153,7 @@ fn assistant_routes() -> Router {
         )
         .route("/api/assistant/jobs/{job_id}", delete(assistant::cancel_job))
         .route("/api/assistant/jobs/{job_id}/stream", get(assistant::resume_job_stream))
-        .layer(DefaultBodyLimit::max(assistant::MAX_CHAT_UPLOAD_BYTES as usize))
+        .layer(DefaultBodyLimit::max(config::get().assistant_max_chat_upload_bytes() as usize))
 }
 
 
