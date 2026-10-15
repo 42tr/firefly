@@ -178,9 +178,9 @@ mod tests {
             title,
             agent,
             codex_cwd: None,
-            codex_provider: None,
+            provider: None,
             model: None,
-            codex_reasoning_level: None,
+            reasoning_level: None,
             parallel: None,
         }).await.unwrap()
     }

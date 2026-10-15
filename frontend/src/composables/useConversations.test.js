@@ -9,7 +9,7 @@ const { useConversations } = await server.ssrLoadModule('/src/composables/useCon
 const response = (conversations, next_cursor = null) => ({ ok: true, json: async () => ({ conversations, next_cursor }) })
 const cursor = { before_at: '2026-09-27T00:00:00.123456Z', before_id: 20 }
 
-test('conversation creation sends reasoning level for Codex only', async t => {
+test('conversation creation sends reasoning level for Codex and Claude', async t => {
   const payloads = []
   t.mock.method(globalThis, 'fetch', async (_url, options) => {
     payloads.push(JSON.parse(options.body))
@@ -21,7 +21,7 @@ test('conversation creation sends reasoning level for Codex only', async t => {
   await app.createConversation({ agent: 'codex' })
   assert.ok(!('reasoning_level' in payloads[1]))
   await app.createConversation({ agent: 'claude', reasoning_level: 'high' })
-  assert.ok(!('reasoning_level' in payloads[2]))
+  assert.equal(payloads[2].reasoning_level, 'high')
 })
 
 test('conversation polling defaults to unarchived records', async t => {
@@ -42,7 +42,8 @@ test('Claude creation sends the model and its sidebar metadata displays the sele
   const app = useConversations()
   const conversation = await app.createConversation({ agent: 'claude', model: 'opus', provider: 'relay', reasoning_level: 'high' })
   assert.equal(payload.model, 'opus')
-  assert.ok(!('provider' in payload) && !('reasoning_level' in payload))
+  assert.equal(payload.provider, 'relay')
+  assert.equal(payload.reasoning_level, 'high')
   assert.ok(app.formatConversationMeta(conversation).includes('opus'))
 })
 

@@ -60,7 +60,8 @@ export function useConversations({ pendingConversation = null, isRenamingConvers
     const codex = conversation.agent === 'codex'
       ? ` · ${[provider || 'openai', modelLabel].filter(Boolean).join(' · ')}`
       : ''
-    const claude = conversation.agent === 'claude' && conversation.claude_model ? ` · ${conversation.claude_model}` : ''
+    const claude = conversation.agent === 'claude'
+      ? [conversation.claude_provider, conversation.claude_model, conversation.claude_reasoning_level].filter(Boolean).map(value => ` · ${value}`).join('') : ''
     return `${agent}${codex}${claude}${cwd}`
   }
 
@@ -262,9 +263,9 @@ export function useConversations({ pendingConversation = null, isRenamingConvers
     payload.agent = agent
     payload.workspace_mode = workspace_mode
     if (['codex', 'claude'].includes(agent) && cwd) payload.cwd = cwd
-    if (agent === 'codex' && provider) payload.provider = provider
+    if (['codex', 'claude'].includes(agent) && provider) payload.provider = provider
     if (['codex', 'claude'].includes(agent) && model) payload.model = model
-    if (agent === 'codex' && reasoning_level) payload.reasoning_level = reasoning_level
+    if (['codex', 'claude'].includes(agent) && reasoning_level) payload.reasoning_level = reasoning_level
     const resp = await apiFetch('/api/assistant/conversations', {
       method: 'POST',
       headers: { 'Content-Type': 'application/json' },

@@ -124,6 +124,8 @@ const handleModelSettingsSaved = conversation => patchConversation(conversation.
   codex_model: conversation.codex_model,
   codex_reasoning_level: conversation.codex_reasoning_level,
   claude_model: conversation.claude_model,
+  claude_provider: conversation.claude_provider,
+  claude_reasoning_level: conversation.claude_reasoning_level,
 })
 
 const { showWorkspaceFiles, readConversationIdFromUrl,
@@ -191,7 +193,9 @@ const activeConversationTitle = computed(() => formatConversationTitle(activeCon
 const activeModelLabel = computed(() => {
   if (activeConversation.value?.agent === 'claude') {
     const model = String(activeConversation.value.claude_model || '').trim()
-    return model ? `Claude:${model}` : 'Claude'
+    const provider = String(activeConversation.value.claude_provider || '').trim()
+    const level = String(activeConversation.value.claude_reasoning_level || '').trim()
+    return ['Claude', provider, model, level].filter(Boolean).join(' · ')
   }
   if (activeConversation.value?.agent !== 'codex') return ''
   const provider = String(activeConversation.value.codex_provider || '').trim() || 'openai'
@@ -582,9 +586,9 @@ const openWorkspaceConversationDialog = async conversation => {
   await handleCreateConversation({
     agent: conversation.agent, cwd: conversation.cwd,
     workspace_mode: conversation.workspace_mode,
-    provider: conversation.codex_provider,
+    provider: conversation.agent === 'claude' ? conversation.claude_provider : conversation.codex_provider,
     model: conversation.agent === 'claude' ? conversation.claude_model : conversation.codex_model,
-    reasoning_level: conversation.codex_reasoning_level,
+    reasoning_level: conversation.agent === 'claude' ? conversation.claude_reasoning_level : conversation.codex_reasoning_level,
   })
 }
 const updatePendingConversation = options => {

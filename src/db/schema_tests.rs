@@ -73,3 +73,16 @@ async fn unknown_migration_versions_are_rejected() {
         .bind(unknown).execute(&pool).await.unwrap();
     assert!(matches!(MIGRATOR.run(&pool).await, Err(MigrateError::VersionMissing(version)) if version == unknown));
 }
+
+#[tokio::test]
+async fn claude_platform_migration_preserves_existing_sessions() {
+    let pool = sqlx::SqlitePool::connect("sqlite::memory:").await.unwrap();
+    sqlx::raw_sql(include_str!("../../migrations_sqlite/0001_firefly_baseline.sql")).execute(&pool).await.unwrap();
+    let id: i64 = sqlx::query_scalar("INSERT INTO assistant_conversations(user_id,system_prompt,agent,claude_session_id,claude_model)
+        VALUES ('owner','prompt','claude','old-session','opus') RETURNING id").fetch_one(&pool).await.unwrap();
+    sqlx::raw_sql(include_str!("../../migrations_sqlite/0002_claude_platform_and_effort.sql")).execute(&pool).await.unwrap();
+    let stored: (String, String, Option<String>, Option<String>) = sqlx::query_as(
+        "SELECT claude_session_id,claude_model,claude_provider,claude_reasoning_level FROM assistant_conversations WHERE id=?1")
+        .bind(id).fetch_one(&pool).await.unwrap();
+    assert_eq!(stored, ("old-session".into(), "opus".into(), None, None));
+}

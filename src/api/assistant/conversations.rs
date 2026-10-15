@@ -29,26 +29,24 @@ pub(super) async fn prepare_conversation(payload: &CreateConversationRequest) ->
             return Err(AppError::bad_request("副本目录仅供所属会话使用；从副本新建工作请开启并行模式"));
         }
     }
-    let mut codex_provider = payload.provider.as_deref().map(str::trim).filter(|provider| !provider.is_empty());
-    let mut codex_model = payload.model.as_deref().map(str::trim).filter(|model| !model.is_empty());
-    let codex_reasoning_level = if agent == "codex" {
-        payload.reasoning_level.as_deref().map(str::trim).filter(|level| !level.is_empty())
-    } else {
-        None
+    let normalize = |value: &Option<String>| value.as_deref().map(str::trim).filter(|value| !value.is_empty()).map(str::to_owned);
+    let (provider, model, reasoning_level) = match agent {
+        "codex" => {
+            let provider = normalize(&payload.provider);
+            let model = normalize(&payload.model);
+            validate_codex_selection(provider.as_deref(), model.as_deref())?;
+            (provider, model, normalize(&payload.reasoning_level))
+        }
+        "claude" => (
+            claude::normalize_provider(&config::get(), payload.provider.clone()).map_err(AppError::bad_request)?,
+            claude::normalize_model(payload.model.clone()).map_err(AppError::bad_request)?,
+            claude::normalize_reasoning_level(payload.reasoning_level.clone()).map_err(AppError::bad_request)?,
+        ),
+        _ => (None, None, None),
     };
-    if agent == "codex" {
-        validate_codex_selection(codex_provider, codex_model)?;
-    } else {
-        codex_provider = None;
-        codex_model = None;
-    }
-    let model = if agent == "claude" {
-        claude::normalize_model(payload.model.clone()).map_err(AppError::bad_request)?
-    } else { codex_model.map(str::to_string) };
     Ok(ExecutionSettings {
         agent: agent.into(), workspace_mode: mode.into(), cwd: workspace_cwd,
-        provider: codex_provider.map(str::to_string), model,
-        reasoning_level: codex_reasoning_level.map(str::to_string),
+        provider, model, reasoning_level,
     })
 }
 
@@ -83,9 +81,9 @@ pub async fn create_conversation(
         title: payload.title.as_deref(),
         agent: &settings.agent,
         codex_cwd: actual_cwd.as_deref().or(settings.cwd.as_deref()),
-        codex_provider: settings.provider.as_deref(),
+        provider: settings.provider.as_deref(),
         model: settings.model.as_deref(),
-        codex_reasoning_level: settings.reasoning_level.as_deref(),
+        reasoning_level: settings.reasoning_level.as_deref(),
         parallel: workspace_id.map(|id| (settings.cwd.as_deref().unwrap_or(""), id)),
     }).await.map_err(AppError::internal_server_error)?;
     Ok(Json(to_summary(record, false)))
@@ -383,8 +381,10 @@ pub async fn update_claude_settings(
     let user_id = auth_user.storage_scope();
     assistant_store::get_conversation_for_read(conversation_id,user_id).await
         .map_err(AppError::internal_server_error)?.ok_or(AppError::not_found("Conversation not found"))?;
+    let provider = claude::normalize_provider(&config::get(), payload.provider).map_err(AppError::bad_request)?;
     let model = claude::normalize_model(payload.model).map_err(AppError::bad_request)?;
-    let record = assistant_store::set_claude_settings(conversation_id,user_id,model.as_deref()).await
+    let reasoning_level = claude::normalize_reasoning_level(payload.reasoning_level).map_err(AppError::bad_request)?;
+    let record = assistant_store::set_claude_settings(conversation_id,user_id,provider.as_deref(),model.as_deref(),reasoning_level.as_deref()).await
         .map_err(|error| match error.downcast_ref::<assistant_store::ConversationSettingsError>() {
             Some(assistant_store::ConversationSettingsError::NotClaude) => AppError::bad_request(error),
             Some(_) => AppError::conflict(error),
@@ -452,6 +452,8 @@ fn to_summary(record: assistant_store::ConversationRecord, is_running: bool) -> 
         codex_model: record.codex_model,
         codex_reasoning_level: record.codex_reasoning_level,
         claude_model: record.claude_model,
+        claude_provider: record.claude_provider,
+        claude_reasoning_level: record.claude_reasoning_level,
         message_count: record.message_count,
         read_message_id: record.read_message_id,
         last_message_id: record.last_message_id,
@@ -1000,9 +1002,9 @@ mod list_tests {
             title: None,
             agent: "firefly",
             codex_cwd: None,
-            codex_provider: None,
+            provider: None,
             model: None,
-            codex_reasoning_level: None,
+            reasoning_level: None,
             parallel: None,
         })
             .await.unwrap();

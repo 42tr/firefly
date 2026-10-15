@@ -82,6 +82,13 @@ pub struct Config {
     /// Optional comma-separated model choices; empty uses Claude's standard aliases.
     #[serde_inline_default(String::new())]
     pub claude_models: String,
+    /// JSON platform profiles; credentials reference server environment variables.
+    #[serde_inline_default(String::new())]
+    pub claude_providers: String,
+    #[serde_inline_default(String::new())]
+    pub claude_provider: String,
+    #[serde_inline_default(String::new())]
+    pub claude_reasoning_level: String,
     #[serde_inline_default("dontAsk".into())]
     pub claude_permission_mode: String,
     #[serde_inline_default("Bash,Edit,Write,Read,Glob,Grep,WebFetch,WebSearch,NotebookEdit".into())]

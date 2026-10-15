@@ -22,9 +22,13 @@ Codex 对话标题栏提供“模型设置”，运行或排队时也可修改 A
 
 旧流萤记录作为各自独立的会话显示，不合并历史。旧引用分支继续使用保存的祖先上下文，消息接口的 `source_reply` 返回来源回复预览和可用的会话 ID；原会话删除后仍保留预览与继承上下文。旧 `/api/assistant/firefly/messages` 接口及实时订阅暂时保留，供升级前的客户端兼容使用。
 
-Claude 在新建对话、现有对话标题栏和定时任务中也提供模型选择，支持 `sonnet`、`opus`、`haiku` 等 CLI 别名或手动输入完整模型名称。`CLAUDE_MODELS` 可配置逗号分隔的下拉选项；实际可用模型由 Claude CLI 当前账号和 API 平台决定。默认选择依次使用 `CLAUDE_MODEL`、`ANTHROPIC_MODEL`，均未配置时使用 Claude 的 `default` 模型设置。恢复默认时也显式传递模型参数，避免恢复会话时沿用此前的覆盖值；会话 ID、历史和工作目录继续保留。
+Claude 在新建对话、现有对话标题栏和定时任务中提供 API 平台、模型和推理级别选择。模型支持 `sonnet`、`opus`、`haiku` 等 CLI 别名或手动输入完整名称；`CLAUDE_MODELS` 配置 CLI 平台的逗号分隔下拉选项。推理级别提供默认、`low`、`medium`、`high`、`xhigh`、`max`，通过 Claude CLI 的 `--effort` 传入，实际支持范围由模型和平台决定；需要支持该参数的 Claude Code 版本。`CLAUDE_REASONING_LEVEL` 可设置服务默认值，留空沿用 CLI 环境和设置。
 
-`GET /api/assistant/claude/models` 返回默认模型与候选选项；创建 Claude 对话使用 `model` 字段，现有对话通过 `PATCH /api/assistant/conversations/{id}/claude-settings` 保存 `{"model":"opus"}`，空值恢复默认。保存与消息提交在同一数据库写锁下执行，每条消息保存自己的 Claude 模型选择快照，修改只影响之后提交的消息；重试和重启恢复继续使用原快照。运行和排队时可以保存，归档对话须先取消归档。
+平台列表由 `CLAUDE_PROVIDERS` 的 JSON 数组配置，只支持提供 Anthropic Messages API 的服务（仅兼容 OpenAI API 的地址不能直接使用）。每项包含 `name`、`base_url`，以及 `api_key_env` 或 `auth_token_env` 之一；密钥字段填写服务端环境变量名称，分别对应 API Key 与 Bearer Token。可选的 `models` 和 `default_model` 提供该平台的模型列表和默认模型。示例见 [`.env.example`](../.env.example)。密钥和密钥环境变量名称不返回浏览器，执行时使用本轮私有临时配置及子进程环境覆盖 CLI 中的旧平台设置，不修改其他会话或服务器环境。临时配置在本轮退出后删除。
+
+`CLAUDE_PROVIDER` 指定默认平台，未设置时为 `cli`；显式选择 `cli` 则沿用服务运行账户的 Claude CLI 登录及环境，包括已配置的 Bedrock、Vertex 或 Foundry。自定义平台的默认模型使用 `default_model`、`models` 首项，再回退 CLI 默认值；CLI 默认模型依次使用 `CLAUDE_MODEL`、`ANTHROPIC_MODEL`，均未配置时使用 Claude 的 `default` 模型设置。恢复默认也显式传递模型，避免恢复会话时沿用之前的模型覆盖。
+
+`GET /api/assistant/claude/models` 返回平台列表、默认平台、各平台候选模型和推理选项。创建 Claude 对话使用 `provider`、`model`、`reasoning_level`；现有对话通过 `PATCH /api/assistant/conversations/{id}/claude-settings` 整体替换三项，例如 `{"provider":"relay","model":"opus","reasoning_level":"high"}`，空值恢复服务默认。保存与消息提交使用同一数据库写锁，每条消息保存三项配置快照；修改只影响之后提交的消息，重试和重启恢复继续使用原快照。会话 ID、历史和工作目录保留。运行和排队时可以保存，归档对话须先取消归档。
 
 ## 对话消息重试
 

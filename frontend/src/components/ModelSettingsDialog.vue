@@ -3,7 +3,7 @@ import { computed, nextTick, onBeforeUnmount, ref, useId, watch } from 'vue'
 import { apiFetch } from '@/utils/http'
 import { useCodexModels } from '@/composables/useCodexModels'
 import { useClaudeModels } from '@/composables/useClaudeModels'
-import ClaudeModelPicker from './ClaudeModelPicker.vue'
+import ClaudeSettingsFields from './ClaudeSettingsFields.vue'
 
 const props = defineProps({
   open: Boolean,
@@ -22,6 +22,9 @@ const agent = computed(() => props.conversation?.agent)
 const isClaude = computed(() => agent.value === 'claude')
 const {
   model: claudeModel, modelOptions: claudeModelOptions, defaultModel: defaultClaudeModel,
+  provider: claudeProvider, providers: claudeProviders, defaultProvider: defaultClaudeProvider,
+  reasoningLevel: claudeReasoningLevel, reasoningOptions: claudeReasoningOptions,
+  defaultReasoningLevel: defaultClaudeReasoningLevel, changeProvider: changeClaudeProvider,
   modelsLoading: claudeModelsLoading, modelsError: claudeModelsError,
   loadModels: loadClaudeModels, cancelModelLoad: cancelClaudeModelLoad,
 } = useClaudeModels()
@@ -77,6 +80,8 @@ watch([() => props.open, () => props.conversation?.id], async ([open]) => {
   previousFocus ||= document.activeElement
   const current = props.conversation
   claudeModel.value = current?.claude_model || ''
+  claudeProvider.value = current?.claude_provider || ''
+  claudeReasoningLevel.value = current?.claude_reasoning_level || ''
   providerResolved.value = !!current?.codex_provider
   provider.value = current?.codex_provider === 'openai' ? '' : current?.codex_provider || ''
   model.value = current?.codex_model || ''
@@ -97,7 +102,7 @@ const save = async () => {
   try {
     const response = await apiFetch(`/api/assistant/conversations/${id}/${agent.value}-settings`, {
       method: 'PATCH', credentials: 'include', headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify(isClaude.value ? { model: claudeModel.value.trim() || null } : {
+      body: JSON.stringify(isClaude.value ? { provider: claudeProvider.value || null, model: claudeModel.value.trim() || null, reasoning_level: claudeReasoningLevel.value || null } : {
         provider: provider.value || 'openai', model: model.value.trim() || null,
         reasoning_level: reasoningLevel.value || null,
       }),
@@ -129,7 +134,7 @@ const save = async () => {
       <p class="settings-hint">保存后发送的新消息使用新设置，运行和排队的消息保持原设置。</p>
       <form @submit.prevent="save">
         <fieldset :disabled="saving || loading || !!blockedReason">
-          <ClaudeModelPicker v-if="isClaude" v-model="claudeModel" :models="claudeModelOptions" :default-model="defaultClaudeModel" :disabled="saving || loading || !!blockedReason" />
+          <ClaudeSettingsFields v-if="isClaude" v-model="claudeModel" v-model:provider="claudeProvider" v-model:reasoning-level="claudeReasoningLevel" :providers="claudeProviders" :default-provider="defaultClaudeProvider" :reasoning-levels="claudeReasoningOptions" :default-reasoning-level="defaultClaudeReasoningLevel" @change-provider="changeClaudeProvider" :models="claudeModelOptions" :default-model="defaultClaudeModel" :disabled="saving || loading || !!blockedReason" />
           <template v-else>
           <label :for="providerId">API 平台</label>
           <select :id="providerId" v-model="provider" @change="selectProvider">
@@ -155,6 +160,7 @@ const save = async () => {
         </fieldset>
         <p v-if="loading" class="settings-hint" role="status">正在读取模型列表…</p>
         <p v-else-if="isClaude ? claudeModelsError : modelsError || providerModelsError" class="settings-hint" role="status">{{ isClaude ? claudeModelsError : modelsError || providerModelsError }}</p>
+        <button v-if="isClaude && claudeModelsError" class="button ghost small" type="button" :disabled="loading || saving" @click="loadClaudeModels">重试读取配置</button>
         <p v-if="!isClaude && !modelsLoading && !providerResolved" class="settings-error" role="alert">无法确定当前默认平台，请重试读取配置。<button class="button ghost small" type="button" @click="loadCurrentProviders(conversation, opening)">重试</button></p>
         <p v-if="blockedReason || error" class="settings-error" role="alert">{{ blockedReason || error }}</p>
         <div class="codex-settings-actions">
