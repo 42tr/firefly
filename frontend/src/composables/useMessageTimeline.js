@@ -223,6 +223,17 @@ export function useMessageTimeline({ messages, activeConversationId, transformSe
       })
       i = j
     }
+    // Progress notes split a live turn into several process blocks. Keep the
+    // whole-turn clock and running indicator on its latest block only.
+    const timedJobs = new Set()
+    for (let index = items.length - 1; index >= 0; index -= 1) {
+      const item = items[index]
+      if (item.type === 'msg' && item.msg.role === 'user') timedJobs.clear()
+      if (item.type !== 'process') continue
+      item.showDuration = !timedJobs.has(item.jobId)
+      if (!item.showDuration) item.running = false
+      timedJobs.add(item.jobId)
+    }
     return items
   })
 

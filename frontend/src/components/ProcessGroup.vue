@@ -16,6 +16,7 @@ const props = defineProps({
     default: () => [],
   },
   timingSteps: { type: Array, default: null },
+  showDuration: { type: Boolean, default: true },
   running: {
     type: Boolean,
     default: false,
@@ -79,10 +80,11 @@ const formatCompactDuration = (durationMs) => {
   const remainingMinutes = minutes % 60
   return remainingMinutes ? `${hours}h ${remainingMinutes}m` : `${hours}h`
 }
-const durationText = computed(() => formatCompactDuration(
+const durationText = computed(() => props.showDuration ? formatCompactDuration(
   getProcessDurationMs(props.timingSteps || props.steps, props.running, currentTime.value),
-))
+) : '')
 const summaryText = computed(() => {
+  if (!props.showDuration) return '执行过程'
   return durationText.value ? `执行了 ${durationText.value}` : '执行了'
 })
 </script>

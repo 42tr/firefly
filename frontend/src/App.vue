@@ -834,6 +834,7 @@ onMounted(() => {
                 :job-id="item.jobId"
                 :steps="item.steps"
                 :timing-steps="item.timingSteps"
+                :show-duration="item.showDuration"
                 :running="item.running"
                 :collapse-requested="item.collapseRequested"
                 :loading="loadingProcessJobs.has(item.detailKey)"

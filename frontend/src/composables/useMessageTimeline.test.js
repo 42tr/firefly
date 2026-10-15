@@ -217,6 +217,99 @@ test('elapsed time continues after tools finish until the whole reply finishes',
   assert.equal(getProcessDurationMs(process.timingSteps, process.running, Date.parse('2026-10-12T02:00:00Z')), 300000)
 })
 
+test('split live processes show one whole-turn clock through streaming, completion and folding', async t => {
+  t.mock.timers.enable({ apis: ['Date', 'setInterval'], now: Date.parse('2026-10-12T01:07:55Z') })
+  const isStreaming = ref(true)
+  const messages = ref([
+    { role: 'user', generationJobId: 'job', content: 'question', processingStatus: 'running',
+      jobStartedAt: '2026-10-12T01:00:00Z' },
+    { role: 'tool', kind: 'tool-run', id: 'first', jobId: 'job', status: 'completed' },
+    { role: 'assistant', jobId: 'job', content: 'first progress note' },
+    { role: 'tool', kind: 'tool-run', id: 'second', jobId: 'job', status: 'completed' },
+    { role: 'assistant', jobId: 'job', content: 'second progress note' },
+    { role: 'tool', kind: 'tool-run', id: 'third', jobId: 'job', status: 'running' },
+  ])
+  let timeline
+  const states = new Map()
+  const Process = { ...ProcessGroup, setup(props, context) {
+    const state = ProcessGroup.setup(props, context)
+    states.set(props.steps[0].id, state)
+    return state
+  }, render: () => null }
+  const { createApp } = createRenderer({ createComment: () => ({}), createElement: () => ({}),
+    insert() {}, remove() {}, parentNode() {}, nextSibling() {} })
+  const app = createApp({ setup() {
+    timeline = useMessageTimeline({ messages, activeConversationId: ref(1), isStreaming })
+    return () => h('div', timeline.groupedMessages.value.filter(item => item.type === 'process').map(item => h(Process, {
+      key: item.key, steps: item.steps, timingSteps: item.timingSteps,
+      showDuration: item.showDuration, running: item.running, collapseRequested: item.collapseRequested,
+      toolStatusText: String, formatToolValue: String, renderMessageHtml: () => '',
+    })))
+  } })
+  app.provide(ssrContextKey, { modules: new Set() })
+  app.mount({})
+  t.after(() => app.unmount())
+  const processes = () => timeline.groupedMessages.value.filter(item => item.type === 'process')
+  const summaries = () => processes().map(item => states.get(item.steps[0].id).summaryText.value)
+  const originalKeys = processes().map(item => item.key)
+  assert.deepEqual(summaries(), ['执行过程', '执行过程', '执行了 7m 55s'])
+  assert.deepEqual(processes().map(item => item.running), [false, false, true])
+  states.get('first').toggle()
+
+  t.mock.timers.tick(5000)
+  await nextTick()
+  assert.deepEqual(summaries(), ['执行过程', '执行过程', '执行了 8m 0s'])
+  messages.value[5].status = 'completed'
+  messages.value.push(
+    { role: 'assistant', jobId: 'job', content: 'third progress note' },
+    { role: 'tool', kind: 'tool-run', id: 'fourth', jobId: 'job', status: 'running' },
+  )
+  await nextTick()
+  assert.deepEqual(summaries(), ['执行过程', '执行过程', '执行过程', '执行了 8m 0s'])
+  assert.deepEqual(processes().map(item => item.running), [false, false, false, true])
+  assert.deepEqual(processes().slice(0, 3).map(item => item.key), originalKeys)
+  assert.equal(states.get('first').open.value, true)
+
+  messages.value[0].processingStatus = 'completed'
+  messages.value[0].jobCompletedAt = '2026-10-12T01:08:05Z'
+  messages.value[7].status = 'completed'
+  messages.value.push({ role: 'assistant', jobId: 'job', content: 'final reply' })
+  isStreaming.value = false
+  messages.value = messages.value.map(message => ({ ...message }))
+  await nextTick()
+  t.mock.timers.tick(60000)
+  await nextTick()
+  assert.deepEqual(summaries(), ['执行过程', '执行过程', '执行过程', '执行了 8m 5s'])
+  assert.ok(processes().every(item => !item.running))
+  assert.equal(timeline.groupedMessages.value.at(-1).msg.content, 'final reply')
+
+  timeline.collapseLiveTurn('job')
+  await nextTick()
+  assert.equal(processes().length, 1)
+  assert.deepEqual(summaries(), ['执行了 8m 5s'])
+  assert.equal(states.get('first').open.value, false)
+})
+
+test('separate turns retain their own duration, including legacy turns without job IDs', () => {
+  const messages = []
+  for (const jobId of ['first-job', 'second-job', undefined, undefined]) {
+    messages.push(
+      { role: 'user', generationJobId: jobId, content: 'question' },
+      { role: 'tool', jobId, status: 'completed', startedAt: '2026-10-12T01:00:00Z' },
+      { role: 'assistant', jobId, chartOption: {} },
+      { role: 'tool', jobId, status: 'completed', completedAt: '2026-10-12T01:01:00Z' },
+      { role: 'assistant', jobId, content: 'final reply', time: '2026-10-12T01:04:00Z' },
+    )
+  }
+  const timeline = useMessageTimeline({ messages: ref(messages), activeConversationId: ref(1) })
+  const processes = timeline.groupedMessages.value.filter(item => item.type === 'process')
+  assert.equal(processes.length, 8)
+  assert.deepEqual(processes.map(item => item.showDuration), [false, true, false, true, false, true, false, true])
+  for (const process of processes.filter(item => item.showDuration)) {
+    assert.equal(getProcessDurationMs(process.timingSteps, process.running), 240000)
+  }
+})
+
 test('legacy execution duration reaches the final reply instead of ending at the last tool', () => {
   const timeline = useMessageTimeline({ activeConversationId: ref(1), messages: ref([
     { role: 'user', time: '2026-10-12T00:00:00Z' },
