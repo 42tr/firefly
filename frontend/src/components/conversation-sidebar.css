@@ -17,6 +17,7 @@
 .sidebar-rail { display: none; }
 .button.icon.sidebar-collapse-button { display: inline-flex; flex-shrink: 0; }
 .sidebar-collapse-button .ui-icon { width: 22px; height: 22px; }
+.sidebar-collapse-button { --icon-slide: -3px; }
 
 @media (min-width: 769px) {
   .tool-panel { transition: padding 260ms var(--ease-out); }
@@ -25,7 +26,7 @@
   .tool-panel.collapsed > :not(.sidebar-rail):not(.sidebar-settings-footer) { display: none !important; }
   .tool-panel.collapsed > .sidebar-rail { display: flex; flex: 1; flex-direction: column; align-items: center; gap: 12px; animation: sidebarContentIn 180ms var(--ease-out) both; }
   .rail-button { position: relative; display: flex; flex-shrink: 0; align-items: center; justify-content: center; width: 44px; min-height: 44px; padding: 6px; border: 0; border-radius: var(--radius-sm); background: transparent; color: var(--text-secondary); font: inherit; font-size: 12px; cursor: pointer; }
-  .rail-button:hover, .rail-button[aria-current='page'] { background: var(--bg-hover); color: var(--text-primary); }
+  .rail-button:hover, .rail-button[aria-current='page'] { color: var(--text-primary); }
   .rail-button .ui-icon { width: 22px; height: 22px; }
   .rail-brand img { width: 34px; height: 34px; }
   .rail-brand :deep(.module-indicator) { position: absolute; top: -2px; right: -4px; }
@@ -363,13 +364,12 @@
   background: transparent;
   color: var(--muted);
   cursor: pointer;
-  transition: color 0.15s ease, background 0.15s ease;
+  transition: color 0.15s ease, transform 0.15s ease;
 }
 
 .conversation-menu-trigger:hover,
 .conversation-menu-trigger[aria-expanded='true'] {
   color: var(--text-primary);
-  background: var(--bg-hover);
 }
 
 .conversation-menu-trigger svg {

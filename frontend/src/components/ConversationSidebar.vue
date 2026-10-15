@@ -266,12 +266,12 @@ const handleTitleKeydown = (event, conversation) => {
     @close="closeSearch" @select="selectSearchResult" @refresh="emit('refresh-search')" @show-more="emit('show-more')" />
   <aside ref="panel" class="tool-panel" :class="{ open, collapsed }" :inert="isMobile && !open" aria-label="工作区导航">
     <nav class="sidebar-rail" aria-label="快捷导航">
-      <button class="rail-button rail-brand" type="button" :title="['流萤', moduleDescription].filter(Boolean).join(' · ')" aria-label="进入流萤" :aria-description="[moduleDescription].filter(Boolean).join(' · ') || undefined" @click="emit('open-default')">
+      <button class="rail-button rail-brand" data-icon-motion="lift" type="button" :title="['流萤', moduleDescription].filter(Boolean).join(' · ')" aria-label="进入流萤" :aria-description="[moduleDescription].filter(Boolean).join(' · ') || undefined" @click="emit('open-default')">
         <img :src="assistantIconUrl" alt="" /><ModuleIndicator v-for="indicator in moduleIndicators.slice(0, 1)" :key="indicator.module_id" :indicator="indicator" />
 
       </button>
-      <button ref="expandButton" class="rail-button" type="button" title="展开侧栏" aria-label="展开侧栏" :aria-expanded="!collapsed" @click="toggleCollapsed"><UiIcon name="sidebar" /></button>
-      <button class="rail-button" type="button" title="搜索对话" aria-label="搜索对话" aria-haspopup="dialog" :aria-expanded="searchOpen" aria-controls="conversation-search" @click="openSearch"><UiIcon name="search" /></button>
+      <button ref="expandButton" class="rail-button" data-icon-motion="sidebar" type="button" title="展开侧栏" aria-label="展开侧栏" :aria-expanded="!collapsed" @click="toggleCollapsed"><UiIcon name="sidebar" /></button>
+      <button class="rail-button" data-icon-motion="search" type="button" title="搜索对话" aria-label="搜索对话" aria-haspopup="dialog" :aria-expanded="searchOpen" aria-controls="conversation-search" @click="openSearch"><UiIcon name="search" /></button>
       <RecentChats :active="collapsed && !isMobile" :conversations="recentConversations" :active-conversation-id="activeConversationId"
         :loading="isLoading" :error="error" :format-title="formatConversationTitle"
         @refresh="emit('refresh-recent')" @select="emit('select-recent', $event)" />
@@ -285,7 +285,7 @@ const handleTitleKeydown = (event, conversation) => {
           <span class="brand-caption">FIREFLY</span>
         </div>
       </button>
-      <button v-if="!isMobile" class="button ghost icon sidebar-collapse-button" type="button" title="收起侧栏" aria-label="收起侧栏" :aria-expanded="!collapsed" @click="toggleCollapsed"><UiIcon name="sidebar" /></button>
+      <button v-if="!isMobile" class="button ghost icon sidebar-collapse-button" data-icon-motion="sidebar" type="button" title="收起侧栏" aria-label="收起侧栏" :aria-expanded="!collapsed" @click="toggleCollapsed"><UiIcon name="sidebar" /></button>
     </div>
     <label v-if="isMobile" class="sidebar-search-field">
       <UiIcon name="search" />
@@ -393,6 +393,7 @@ const handleTitleKeydown = (event, conversation) => {
           <div class="conversation-actions" @keydown.stop>
             <button
               class="conversation-menu-trigger"
+              data-icon-motion="more"
               type="button"
               title="更多操作"
               aria-label="更多操作"

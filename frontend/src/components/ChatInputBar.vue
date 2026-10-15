@@ -225,7 +225,7 @@ watch([model, inputEl, isMobile], async () => {
         </div>
       </div>
       <div class="input-box" :class="{ disabled: disabled }">
-        <button v-if="attachmentsEnabled" class="attachment-button" type="button" title="添加附件" aria-label="添加附件" :disabled="disabled" @click="fileInput?.click()">
+        <button v-if="attachmentsEnabled" class="attachment-button" data-icon-motion="lift" type="button" title="添加附件" aria-label="添加附件" :disabled="disabled" @click="fileInput?.click()">
           <svg viewBox="0 0 16 16" aria-hidden="true"><path d="M8 3v10M3 8h10" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" /></svg>
         </button>
           <input
@@ -545,11 +545,10 @@ watch([model, inputEl, isMobile], async () => {
   cursor: pointer;
   color: var(--muted);
   font-size: 18px;
-  transition: background 0.2s var(--ease-out), color 0.2s var(--ease-out), transform 0.35s var(--ease-spring);
+  transition: color 0.2s var(--ease-out), transform 0.35s var(--ease-spring);
 }
 
 .attachment-button:hover:not(:disabled) {
-  background: var(--glow-soft);
   color: #8a5a0b;
 }
 

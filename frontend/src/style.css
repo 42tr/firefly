@@ -207,8 +207,44 @@ button {
 .button.icon,
 .button.quiet { background: transparent; border-color: transparent; }
 .button.quiet:hover:not(:disabled) { background: var(--bg-hover); color: var(--text-primary); }
-.button.icon { width: 36px; height: 36px; padding: 8px; }
+.button.icon { width: 36px; height: 36px; padding: 8px; box-shadow: none; }
 .button.icon svg { width: 18px; height: 18px; }
+button.button.icon:hover:not(:disabled) { background: transparent; border-color: transparent; box-shadow: none; transform: none; }
+
+/* Shell icon actions share feedback while each glyph keeps its own motion. */
+button[data-icon-motion] { transition: color 180ms var(--ease-out), transform 180ms var(--ease-out); }
+button[data-icon-motion]:is(:hover, :focus-visible):not(:disabled) { color: var(--text-primary); }
+button[data-icon-motion]:active:not(:disabled) { transform: scale(.94); }
+button[data-icon-motion] > :is(svg, img) { transform-origin: center; }
+button[data-icon-motion='compose'] { --icon-animation: iconCompose; }
+button[data-icon-motion='sidebar'] { --icon-animation: iconSlide; }
+button[data-icon-motion='search'] { --icon-animation: iconSearch; }
+button[data-icon-motion='lift'], button[data-icon-motion='sliders'] { --icon-animation: iconLift; }
+button[data-icon-motion='sliders'] line:nth-child(n + 7) { --slider-shift: -3px; }
+button[data-icon-motion='sliders'] line:nth-child(8) { --slider-shift: 3px; }
+button[data-icon-motion='more'] circle { --icon-dot-delay: 0ms; transform-box: fill-box; transform-origin: center; }
+button[data-icon-motion='more'] circle:nth-child(2) { --icon-dot-delay: 80ms; }
+button[data-icon-motion='more'] circle:nth-child(3) { --icon-dot-delay: 160ms; }
+
+@media (prefers-reduced-motion: no-preference) {
+  button[data-icon-motion]:focus-visible:not(:disabled) > :is(svg, img) { animation: var(--icon-animation, none) 560ms var(--ease-out); }
+  button[data-icon-motion='sliders']:focus-visible:not(:disabled) line:nth-child(n + 7) { animation: iconSlider 560ms var(--ease-out); }
+  button[data-icon-motion='more']:focus-visible:not(:disabled) circle { animation: iconDotWave 560ms var(--ease-out); animation-delay: var(--icon-dot-delay); }
+}
+@media (hover: hover) and (pointer: fine) and (prefers-reduced-motion: no-preference) {
+  button[data-icon-motion]:hover:not(:disabled) > :is(svg, img) { animation: var(--icon-animation, none) 560ms var(--ease-out); }
+  button[data-icon-motion='sliders']:hover:not(:disabled) line:nth-child(n + 7) { animation: iconSlider 560ms var(--ease-out); }
+  button[data-icon-motion='more']:hover:not(:disabled) circle { animation: iconDotWave 560ms var(--ease-out); animation-delay: var(--icon-dot-delay); }
+}
+@keyframes iconCompose { 0%, 100% { transform: translate(0, 0) rotate(0); } 40% { transform: translate(1px, -2px) rotate(-10deg); } 70% { transform: translate(0, 0) rotate(3deg); } }
+@keyframes iconSlide { 0%, 100% { transform: translateX(0); } 40% { transform: translateX(var(--icon-slide, 3px)); } 70% { transform: translateX(-1px); } }
+@keyframes iconSearch { 0%, 100% { transform: scale(1) rotate(0); } 40% { transform: scale(1.12) rotate(-8deg); } }
+@keyframes iconLift { 0%, 100% { transform: translateY(0) scale(1); } 40% { transform: translateY(-2px) scale(1.06); } }
+@keyframes iconSlider { 0%, 100% { transform: translateY(0); } 40% { transform: translateY(var(--slider-shift)); } }
+@keyframes iconDotWave { 0%, 100% { transform: translateY(0) scale(1); } 35% { transform: translateY(-4px) scale(1.12); } 65% { transform: translateY(1px) scale(.94); } }
+@media (prefers-reduced-motion: reduce) {
+  button[data-icon-motion]:active:not(:disabled) { transform: none; }
+}
 
 .ui-icon { display: inline-block; width: 18px; height: 18px; flex: 0 0 auto; vertical-align: middle; }
 code, pre { font-family: var(--font-mono); }

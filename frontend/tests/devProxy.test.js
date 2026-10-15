@@ -30,7 +30,7 @@ function websocketHandshake(url, origin) {
   })
 }
 
-test('development proxy preserves origins and the local login flow', { timeout: 30000 }, async t => {
+test('development proxy translates its own origin and preserves the local login flow', { timeout: 30000 }, async t => {
   const backend = createHttpServer((req, res) => {
     req.resume()
     res.writeHead(200, {
@@ -86,7 +86,7 @@ test('development proxy preserves origins and the local login flow', { timeout: 
   await vite.listen()
   const base = `http://127.0.0.1:${vite.httpServer.address().port}`
 
-  await t.test('HTTP proxy forwards the original Origin, including its absence', async () => {
+  await t.test('HTTP proxy forwards foreign Origins, including null and absence', async () => {
     for (const path of ['/api/check', '/downloads/check', '/auth/']) {
       for (const origin of [undefined, 'null', 'http://localhost:5173', 'http://192.168.1.3:5173']) {
         const headers = { 'Content-Type': 'application/json' }
@@ -98,12 +98,31 @@ test('development proxy preserves origins and the local login flow', { timeout: 
     }
   })
 
-  await t.test('WebSocket proxy forwards the original Origin, including its absence', async () => {
+  await t.test('HTTP proxy translates its same origin to the backend origin', async () => {
+    for (const path of ['/api/check', '/downloads/check', '/auth/']) {
+      const response = await fetch(base + path, {
+        method: 'POST', headers: { 'Content-Type': 'application/json', Origin: base }, body: '{}',
+      })
+      assert.equal(response.status, 200)
+      assert.deepEqual(await response.json(), { origin: target })
+    }
+    const differentScheme = base.replace('http:', 'https:')
+    const response = await fetch(base + '/auth/', { method: 'POST', headers: { Origin: differentScheme } })
+    assert.deepEqual(await response.json(), { origin: differentScheme })
+  })
+
+  await t.test('WebSocket proxy forwards foreign Origins, including null and absence', async () => {
     for (const origin of [undefined, 'null', 'http://localhost:5173', 'http://192.168.1.3:5173']) {
       const response = await websocketHandshake(base + '/api/assistant/ws', origin)
       assert.equal(response.statusCode, 101)
       assert.equal(response.headers['x-upstream-origin'], origin ?? '<absent>')
     }
+  })
+
+  await t.test('WebSocket proxy translates its same origin to the backend origin', async () => {
+    const response = await websocketHandshake(base + '/api/assistant/ws', base)
+    assert.equal(response.statusCode, 101)
+    assert.equal(response.headers['x-upstream-origin'], target)
   })
 
   await t.test('login navigation renders the current development SPA', async () => {

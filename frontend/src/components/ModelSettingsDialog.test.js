@@ -80,11 +80,13 @@ test('changing models adjusts supported reasoning and clears effort for a model 
   assert.equal(requests[0].payload.reasoning_level, null)
 })
 
-test('inherited defaults remain defaults and the current global provider is resolved on opening', async t => {
-  const { state } = await setup(t, { conversation: { id: 7, agent: 'codex' } })
+test('inherited Codex settings select and save the resolved platform, model, and effort', async t => {
+  const { state, requests } = await setup(t, { conversation: { id: 7, agent: 'codex' } })
   assert.equal(state.provider.value, 'relay')
-  assert.equal(state.model.value, '')
-  assert.equal(state.reasoningLevel.value, '')
+  assert.equal(state.model.value, 'model-a')
+  assert.equal(state.reasoningLevel.value, 'medium')
+  await state.save()
+  assert.deepEqual(requests[0].payload, { provider: 'relay', model: 'model-a', reasoning_level: 'medium' })
 })
 
 test('running and queued conversations can save settings for future messages', async t => {
@@ -160,7 +162,7 @@ test('Claude keeps its saved model and updates only Claude settings while a repl
   assert.deepEqual(state.claudeModelOptions.value, ['sonnet', 'opus', 'haiku'])
   state.claudeModel.value = 'opus'
   await state.save()
-  assert.deepEqual(requests, [{ url: '/api/assistant/conversations/8/claude-settings', payload: { provider: null, model: 'opus', reasoning_level: null } }])
+  assert.deepEqual(requests, [{ url: '/api/assistant/conversations/8/claude-settings', payload: { provider: 'cli', model: 'opus', reasoning_level: 'medium' } }])
   assert.equal(events[0][1].claude_model, 'opus')
 })
 
@@ -186,7 +188,7 @@ test('Claude snapshots refresh without overwriting unsaved model changes', async
   await nextTick()
   assert.equal(reads, 1)
   await state.save()
-  assert.deepEqual(requests[0].payload, { provider: null, model: 'opus', reasoning_level: null })
+  assert.deepEqual(requests[0].payload, { provider: 'cli', model: 'opus', reasoning_level: 'medium' })
 })
 
 test('Claude saves platform, model, and effort together and changes the model list with its platform', async t => {
@@ -205,9 +207,9 @@ test('Claude saves platform, model, and effort together and changes the model li
   assert.deepEqual(requests[0].payload, { provider: 'relay', model: 'relay-opus', reasoning_level: 'max' })
   state.claudeProvider.value = 'cli'
   state.changeClaudeProvider()
-  assert.equal(state.claudeModel.value, '')
+  assert.equal(state.claudeModel.value, 'sonnet')
+  assert.equal(state.claudeReasoningLevel.value, 'medium')
   assert.deepEqual(state.claudeModelOptions.value, ['sonnet', 'opus'])
-  assert.equal(state.defaultClaudeModel.value, 'sonnet')
 })
 
 test('Claude displays each native profile default and keeps valid platforms when another file is invalid', async t => {
@@ -222,17 +224,17 @@ test('Claude displays each native profile default and keeps valid platforms when
       models_error: 'broken.json: Claude settings JSON 格式无效',
     }) }),
   })
-  assert.equal(state.defaultClaudeModel.value, 'custom-model')
-  assert.equal(state.defaultClaudeReasoningLevel.value, 'high')
+  assert.equal(state.claudeModel.value, 'custom-model')
+  assert.equal(state.claudeReasoningLevel.value, 'high')
   assert.match(state.claudeModelsError.value, /broken.json/)
   await state.save()
-  assert.deepEqual(requests[0].payload, { provider: 'relay', model: null, reasoning_level: null })
+  assert.deepEqual(requests[0].payload, { provider: 'relay', model: 'custom-model', reasoning_level: 'high' })
   state.claudeProvider.value = 'cli'
   state.changeClaudeProvider()
-  assert.equal(state.defaultClaudeModel.value, 'opus')
-  assert.equal(state.defaultClaudeReasoningLevel.value, 'low')
+  assert.equal(state.claudeModel.value, 'opus')
+  assert.equal(state.claudeReasoningLevel.value, 'low')
   state.claudeProvider.value = 'allowlist'
   state.changeClaudeProvider()
-  assert.equal(state.defaultClaudeModel.value, 'default')
-  assert.equal(state.defaultClaudeReasoningLevel.value, '')
+  assert.equal(state.claudeModel.value, 'expensive-model')
+  assert.equal(state.claudeReasoningLevel.value, 'medium')
 })

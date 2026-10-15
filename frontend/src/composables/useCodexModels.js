@@ -107,9 +107,14 @@ export function useCodexModels(agent = ref('codex')) {
     selectReasoningLevel()
   }
 
+  const resolveDefaults = () => {
+    if (!model.value) selectModel()
+    if (!reasoningLevel.value) selectReasoningLevel()
+  }
+
   return {
     providers, modelsLoading, modelsError, defaultProvider, defaultModel,
     provider, model, reasoningLevel, loadProviders, modelOptions, providerModelsError,
-    reasoningOptions, changeProvider, cancelModelLoad,
+    reasoningOptions, changeProvider, cancelModelLoad, resolveDefaults,
   }
 }

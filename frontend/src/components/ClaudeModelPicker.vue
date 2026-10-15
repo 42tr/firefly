@@ -4,7 +4,6 @@ import { computed, ref, useId } from 'vue'
 const props = defineProps({
   modelValue: { type: String, default: '' },
   models: { type: Array, default: () => [] },
-  defaultModel: { type: String, default: '' },
   disabled: Boolean,
 })
 const emit = defineEmits(['update:modelValue'])
@@ -22,7 +21,7 @@ const selection = computed({
   <div class="claude-model-picker">
     <label :for="modelId">模型</label>
     <select :id="modelId" v-model="selection" :disabled="disabled">
-      <option value="">默认模型{{ defaultModel && defaultModel !== 'default' ? `（${defaultModel}）` : '' }}</option>
+      <option v-if="!modelValue" value="" disabled>请选择模型</option>
       <option v-if="modelValue && !models.includes(modelValue)" :value="modelValue">{{ modelValue }}</option>
       <option v-for="model in models" :key="model" :value="model">{{ model }}</option>
       <option :value="CUSTOM">自定义模型…</option>

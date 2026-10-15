@@ -143,8 +143,8 @@ test('Claude creation emits its selected model without Codex provider and reason
   state.provider.value = 'relay'
   state.reasoningLevel.value = 'high'
   assert.equal(state.selection.value.model, 'opus')
-  assert.equal(state.selection.value.provider, '')
-  assert.equal(state.selection.value.reasoning_level, '')
+  assert.equal(state.selection.value.provider, 'cli')
+  assert.equal(state.selection.value.reasoning_level, 'medium')
   assert.deepEqual(state.claudeModelOptions.value, ['sonnet', 'opus', 'haiku'])
   state.applyWorkspace({ agent: 'claude', cwd: 'project', claude_model: 'custom-model' })
   await nextTick()
@@ -170,10 +170,57 @@ test('Claude creation and workspace presets retain their own platform, model, an
   assert.equal(state.selection.value.reasoning_level, 'low')
   state.claudeProvider.value = 'relay'
   state.changeClaudeProvider()
-  assert.equal(state.selection.value.model, '')
+  assert.equal(state.selection.value.model, 'custom-opus')
+  assert.equal(state.selection.value.reasoning_level, 'medium')
   state.resetPicker()
   assert.equal(state.selection.value.provider, '')
   assert.equal(state.selection.value.reasoning_level, '')
+})
+
+test('Claude selects configured defaults and refreshes them when changing platform', async t => {
+  const { state } = setup(t, {
+    default: 'relay', cli_default_model: 'opus', models: ['sonnet', 'opus'], default_reasoning_level: 'low',
+    providers: [{ name: 'relay', models: ['relay-sonnet'], default_model: 'relay-opus', default_reasoning_level: 'high' }],
+  }, 'claude')
+  await state.loadClaudeModels()
+  assert.deepEqual(state.selection.value, {
+    agent: 'claude', workspace_mode: 'shared', cwd: '', provider: 'relay', model: 'relay-opus', reasoning_level: 'high',
+  })
+  state.claudeProvider.value = 'cli'
+  state.changeClaudeProvider()
+  assert.equal(state.claudeModel.value, 'opus')
+  assert.equal(state.claudeReasoningLevel.value, 'low')
+})
+
+test('Claude legacy catalogs select concrete choices instead of the default sentinel', async t => {
+  const { state } = setup(t, { default_model: 'default', models: ['sonnet', 'opus'] }, 'claude')
+  await state.loadClaudeModels()
+  assert.equal(state.claudeProvider.value, 'cli')
+  assert.equal(state.claudeModel.value, 'sonnet')
+  assert.equal(state.claudeReasoningLevel.value, 'medium')
+})
+
+test('Claude catalog refresh preserves explicit user selections', async t => {
+  const { state } = setup(t, {
+    default: 'cli', cli_default_model: 'sonnet', models: ['sonnet'],
+    providers: [{ name: 'relay', models: ['relay-model'], default_model: 'relay-model', default_reasoning_level: 'low' }],
+  }, 'claude')
+  state.claudeProvider.value = 'relay'
+  state.claudeModel.value = 'saved-custom-model'
+  state.claudeReasoningLevel.value = 'max'
+  await state.loadClaudeModels()
+  assert.equal(state.claudeProvider.value, 'relay')
+  assert.equal(state.claudeModel.value, 'saved-custom-model')
+  assert.equal(state.claudeReasoningLevel.value, 'max')
+})
+
+test('Claude does not fill an unknown platform with unrelated CLI models', async t => {
+  const { state } = setup(t, { models: ['sonnet'], cli_default_model: 'sonnet' }, 'claude')
+  state.claudeProvider.value = 'removed-platform'
+  await state.loadClaudeModels()
+  assert.equal(state.claudeProvider.value, 'removed-platform')
+  assert.equal(state.claudeModel.value, '')
+  assert.deepEqual(state.claudeModelOptions.value, [])
 })
 
 test('switching to Firefly clears a pending directory request and ignores its late failure', async t => {
