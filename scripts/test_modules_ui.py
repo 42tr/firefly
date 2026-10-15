@@ -34,7 +34,7 @@ class ModuleHost(unittest.TestCase):
         environment = {
             'PATH': os.environ['PATH'], 'HOME': str(cls.directory),
             'AUTH_PASSWORD': 'module-test-password', 'JWT_SECRET': 'module-tests-signing-key-32-bytes-long',
-            'BIND_ADDRESS': f'127.0.0.1:{port}', 'SITE_URL': cls.base, 'COOKIE_SECURE': 'false',
+            'BIND_ADDRESS': f'127.0.0.1:{port}', 'COOKIE_SECURE': 'false',
             'RUST_LOG': 'warn',
         }
         environment.update(getattr(cls, 'environment_overrides', {}))

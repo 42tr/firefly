@@ -27,22 +27,6 @@ const SESSION_COOKIE: &str = "firefly_session";
 const LOGIN_BAN_DURATION: Duration = Duration::from_secs(60 * 60);
 const LOGIN_FAILURE_LIMIT: u8 = 3;
 
-pub(super) fn check_origin(headers: &HeaderMap) -> Result<(), AppError> {
-    let origin =
-        headers.get("origin").and_then(|v| v.to_str().ok()).ok_or_else(|| AppError::forbidden("Missing Origin"))?;
-    let cfg = config::get();
-    let allowed = std::iter::once(cfg.site_url.as_str())
-        .chain(cfg.site_url_aliases.split(','))
-        .chain(cfg.cors_allowed_origins.split(','));
-    if !allowed
-        .filter_map(|v| reqwest::Url::parse(v.trim()).ok())
-        .any(|url| url.origin().ascii_serialization() == origin)
-    {
-        return Err(AppError::forbidden("Unrecognized Origin"));
-    }
-    Ok(())
-}
-
 /// Serve the bundled local login form, including on the old /auth/ entry point.
 pub async fn page(headers: HeaderMap) -> Response {
     super::frontend_router(http::Uri::from_static("/"), headers).await
@@ -121,10 +105,8 @@ fn password_matches(password: &str, cfg: &config::Config) -> bool {
 pub async fn login(
     ConnectInfo(peer): ConnectInfo<SocketAddr>,
     cookies: Cookies,
-    headers: HeaderMap,
     Json(request): Json<LoginRequest>,
 ) -> Result<StatusCode, AppError> {
-    check_origin(&headers)?;
     let cfg = config::get();
     static ATTEMPTS: OnceLock<Mutex<LoginAttempts>> = OnceLock::new();
     ATTEMPTS
@@ -153,9 +135,7 @@ pub async fn login(
 pub async fn logout(
     _session: Session,
     cookies: Cookies,
-    headers: HeaderMap,
 ) -> Result<StatusCode, AppError> {
-    check_origin(&headers)?;
     cookies.remove(Cookie::build(SESSION_COOKIE).path("/").build());
     Ok(StatusCode::NO_CONTENT)
 }
@@ -322,27 +302,27 @@ mod route_tests {
     use serde_json::{json, Value};
     use tower::ServiceExt;
 
+    fn request(method: &str, path: &str, cookie: Option<&str>, body: Value, origin: Option<&str>) -> Request<Body> {
+        let mut builder = Request::builder().method(method).uri(path)
+            .extension(ConnectInfo("192.0.2.10:12345".parse::<SocketAddr>().unwrap()))
+            .header("content-type", "application/json");
+        if let Some(origin) = origin { builder = builder.header("origin", origin); }
+        if let Some(cookie) = cookie { builder = builder.header("cookie", cookie); }
+        builder.body(Body::from(body.to_string())).unwrap()
+    }
+
     #[tokio::test]
     async fn local_login_protects_routes_and_logout_clears_the_cookie() {
         config::init_test_config();
         let app = super::super::app().route("/session-scope", get(|session: Session| async move {
             Json(json!({"scope": session.storage_scope()}))
         }));
-        let request = |method: &str, path: &str, cookie: Option<&str>, body: Value, origin: &str| {
-            let mut builder = Request::builder().method(method).uri(path)
-                .extension(ConnectInfo("192.0.2.10:12345".parse::<SocketAddr>().unwrap()))
-                .header("origin", origin).header("content-type", "application/json");
-            if let Some(cookie) = cookie { builder = builder.header("cookie", cookie); }
-            builder.body(Body::from(body.to_string())).unwrap()
-        };
-        let origin = "http://localhost:3003";
+        let origin = Some("http://192.168.1.3:5173");
         let missing = app.clone().oneshot(request("GET", "/api/assistant/ping", None, json!(null), origin)).await.unwrap();
         assert_eq!(missing.status(), StatusCode::UNAUTHORIZED);
         let rejected = app.clone().oneshot(request("POST", "/auth/", None, json!({"password":"incorrect"}), origin)).await.unwrap();
         assert_eq!(rejected.status(), StatusCode::UNAUTHORIZED);
         assert!(!rejected.headers().contains_key("set-cookie"));
-        let csrf = app.clone().oneshot(request("POST", "/auth/", None, json!({"password":config::get().auth_password}), "https://evil.example")).await.unwrap();
-        assert_eq!(csrf.status(), StatusCode::FORBIDDEN);
         let account = app.clone().oneshot(request("POST", "/auth/", None, json!({"username":"owner","password":config::get().auth_password}), origin)).await.unwrap();
         assert_eq!(account.status(), StatusCode::UNPROCESSABLE_ENTITY);
         let login = app.clone().oneshot(request("POST", "/auth/", None, json!({"password":config::get().auth_password}), origin)).await.unwrap();
@@ -359,15 +339,53 @@ mod route_tests {
         assert_eq!(serde_json::from_slice::<Value>(&body).unwrap(), json!({"scope":db::SINGLE_SCOPE}));
         let jwt = jwt::validate(cookie.strip_prefix("firefly_session=").unwrap()).unwrap();
         assert!(serde_json::to_value(jwt).unwrap().get("sub").is_none());
-        let foreign_logout = app.clone().oneshot(request("POST", "/auth/logout", Some(&cookie), json!(null), "https://evil.example")).await.unwrap();
-        assert_eq!(foreign_logout.status(), StatusCode::FORBIDDEN);
-        let logout = app.clone().oneshot(request("POST", "/auth/logout", Some(&cookie), json!(null), origin)).await.unwrap();
+        let logout = app.clone().oneshot(request("POST", "/auth/logout", Some(&cookie), json!(null), Some("https://different.example"))).await.unwrap();
         assert_eq!(logout.status(), StatusCode::NO_CONTENT);
         assert!(logout.headers().get("set-cookie").unwrap().to_str().unwrap().starts_with("firefly_session=;"));
         let logged_out = app.clone().oneshot(request("GET", "/api/assistant/ping", None, json!(null), origin)).await.unwrap();
         assert_eq!(logged_out.status(), StatusCode::UNAUTHORIZED);
         let old_callback = app.oneshot(request("GET", "/auth/callback", None, json!(null), origin)).await.unwrap();
         assert_eq!(old_callback.status(), StatusCode::NOT_FOUND);
+    }
+
+    #[tokio::test]
+    async fn login_and_logout_accept_missing_or_opaque_origins() {
+        config::init_test_config();
+        let app = super::super::app();
+        for origin in [None, Some("null")] {
+            let login = app.clone().oneshot(request(
+                "POST", "/auth/", None, json!({"password":config::get().auth_password}), origin,
+            )).await.unwrap();
+            assert_eq!(login.status(), StatusCode::NO_CONTENT);
+            let cookie = login.headers().get_all("set-cookie").iter()
+                .map(|value| value.to_str().unwrap())
+                .find(|value| value.starts_with("firefly_session="))
+                .unwrap().split(';').next().unwrap();
+            let logout = app.clone().oneshot(request("POST", "/auth/logout", Some(cookie), json!(null), origin)).await.unwrap();
+            assert_eq!(logout.status(), StatusCode::NO_CONTENT);
+            assert!(logout.headers().get("set-cookie").unwrap().to_str().unwrap().starts_with("firefly_session=;"));
+        }
+    }
+
+    #[tokio::test]
+    async fn protected_routes_still_require_valid_sessions_without_origin() {
+        config::init_test_config();
+        let app = super::super::app();
+        let expired = format!("firefly_session={}", jwt::create(&jwt::Claims::new(-1)).unwrap());
+        for cookie in [None, Some("firefly_session=invalid"), Some(expired.as_str())] {
+            for (method, path) in [
+                ("POST", "/auth/logout"),
+                ("GET", "/api/assistant/ws"),
+                ("PUT", "/api/assistant/agent-settings"),
+                ("POST", "/api/modules/reload"),
+                ("PUT", "/api/modules/test-module"),
+                ("POST", "/api/modules/test-module/call"),
+                ("POST", "/api/modules/test-module/pages/test-page/open"),
+            ] {
+                let response = app.clone().oneshot(request(method, path, cookie, json!({}), None)).await.unwrap();
+                assert_eq!(response.status(), StatusCode::UNAUTHORIZED, "{method} {path}");
+            }
+        }
     }
 
     #[tokio::test]

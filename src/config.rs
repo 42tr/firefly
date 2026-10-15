@@ -32,13 +32,6 @@ pub struct Config {
     /// 浏览器标签页标题；运行时应用于首页和登录入口。
     #[serde_inline_default("流萤".into())]
     pub site_title: String,
-    /// 站点对外访问地址，用于校验登录、退出登录及 WebSocket 请求的来源。
-    #[serde_inline_default("http://localhost:3003".into())]
-    pub site_url: String,
-    /// Additional browser origins accepted for WebSocket and login requests.
-    /// Comma-separated absolute URLs, for example `http://192.168.1.3:3000`.
-    #[serde_inline_default(String::new())]
-    pub site_url_aliases: String,
     #[serde_inline_default(!cfg!(debug_assertions))]
     pub cookie_secure: bool,
     #[serde_inline_default("http://localhost:5173".into())]
