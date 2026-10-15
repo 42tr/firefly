@@ -19,9 +19,13 @@ export function useMessageTimeline({ messages, activeConversationId, transformSe
 
   // 每条用户消息上方展示发送时间，助手回复通过过程块展示执行时长。
   const getMessageTime = (msg) => {
-    if (!msg?.time) return null
-    const date = new Date(msg.time)
-    return Number.isNaN(date.getTime()) ? null : date
+    // 排队消息的创建时间是入队时间；实际发送时间取任务首次开始处理的时间。
+    for (const value of [msg?.jobStartedAt, msg?.time]) {
+      if (!value) continue
+      const date = new Date(value)
+      if (!Number.isNaN(date.getTime())) return date
+    }
+    return null
   }
   const formatMessageTime = (date) => {
     const now = appDateParts(new Date()), at = appDateParts(date)

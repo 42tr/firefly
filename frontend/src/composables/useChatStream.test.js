@@ -223,6 +223,8 @@ for (const [status, acknowledgedStatus] of ['running', 'completed', 'failed', 'c
     await sending
     assert.equal(question.processingStatus, status === 'cancelled' ? 'failed' : status)
     assert.equal(question.processingError, status === 'failed' ? 'upstream failed' : status === 'cancelled' ? '用户已停止生成' : '')
+    const timeline = useMessageTimeline({ messages: app.messages, activeConversationId: app.activeConversationId })
+    assert.equal(timeline.groupedMessages.value.find(item => item.msg === question).timeValue, '2026-10-12T01:00:00.000Z')
     assert.deepEqual(app.queuedMessages.value.map(message => message.generationJobId), ['job-2'])
     assert.equal(app.messages.value.filter(message => message.role === 'assistant').length, status === 'failed' ? 2 : 1)
     assert.equal(app.isStreaming.value, status === 'running')
@@ -249,11 +251,13 @@ for (const status of ['running', 'completed', 'failed']) {
       pending,
     ]
     const history = app.messages.value[0]
-    acknowledge({ ok: true, json: async () => ({ message: { id: 10 }, status: 'queued', job_id: 'job-1' }) })
+    acknowledge({ ok: true, json: async () => ({ message: { id: 10, processing_started_at: '2026-10-12T01:00:00Z' }, status: 'queued', job_id: 'job-1' }) })
     await sending
     assert.deepEqual(app.messages.value, [history])
     assert.equal(history.processingStatus, status)
     assert.equal(history.processingError, error)
+    const timeline = useMessageTimeline({ messages: app.messages, activeConversationId: app.activeConversationId })
+    assert.equal(timeline.groupedMessages.value.find(item => item.msg === history).timeValue, '2026-10-12T01:00:00.000Z')
     assert.equal(app.queuedMessages.value.length, 0)
   })
 }
@@ -645,6 +649,7 @@ test('replayed events preserve server timing and a finished reply stops its cloc
   assert.ok(app.messages.value.every(message => message.jobStartedAt === '2026-10-12T01:00:00Z'))
   assert.ok(app.messages.value.every(message => message.jobCompletedAt === '2026-10-12T01:05:00Z'))
   const timeline = useMessageTimeline({ messages: app.messages, activeConversationId: app.activeConversationId })
+  assert.equal(timeline.groupedMessages.value.find(item => item.msg?.role === 'user').timeValue, '2026-10-12T01:00:00.000Z')
   const process = timeline.groupedMessages.value.find(item => item.type === 'process')
   assert.equal(process.running, false)
   assert.equal(getProcessDurationMs(process.timingSteps, process.running), 300000)

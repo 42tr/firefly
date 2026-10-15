@@ -205,6 +205,19 @@ test('message times distinguish historical dates and omit missing or invalid tim
   }
 })
 
+test('send times fall back to submission time only when a valid job start is unavailable', () => {
+  const submittedAt = '2026-10-16T00:53:00Z'
+  const startedAt = '2026-10-16T01:05:00Z'
+  const timeline = useMessageTimeline({ activeConversationId: ref(1), messages: ref([
+    { role: 'user', time: submittedAt },
+    { role: 'user', time: submittedAt, jobStartedAt: 'invalid' },
+    { role: 'user', jobStartedAt: startedAt },
+    { role: 'user', time: 'invalid', jobStartedAt: startedAt },
+  ]) })
+  assert.deepEqual(timeline.groupedMessages.value.map(item => item.timeValue),
+    [submittedAt, submittedAt, startedAt, startedAt].map(time => new Date(time).toISOString()))
+})
+
 test('process details are fetched once without changing message timestamps', async (t) => {
   let calls = 0
   t.mock.method(globalThis, 'fetch', async () => {
