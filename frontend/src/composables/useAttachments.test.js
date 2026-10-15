@@ -26,18 +26,16 @@ test('视频可选择、粘贴并预览，移除或清空时释放预览地址',
   assert.equal(revoked.length, 2)
 })
 
-test('视频上限为 100MB，普通附件仍为 15MB', (t) => {
+test('前端接受超过原大小上限的普通附件和视频，由服务端校验', (t) => {
   t.mock.method(URL, 'createObjectURL', () => 'blob:video')
   t.mock.method(URL, 'revokeObjectURL', () => {})
   const app = useAttachments()
   const select = (name, size, type = '') => app.handleAttachmentChange({ target: { files: [{ name, size, type }] } })
-  select('clip.webm', 100 * 1024 * 1024)
-  assert.equal(app.chatAttachments.value.length, 1)
+  select('demo.html', 15 * 1024 * 1024 + 1, 'text/html')
   select('clip.mov', 100 * 1024 * 1024 + 1)
-  assert.match(app.attachmentError.value, /100MB/)
-  select('notes.txt', 15 * 1024 * 1024 + 1)
-  assert.match(app.attachmentError.value, /15MB/)
-  assert.equal(app.chatAttachments.value.length, 1)
+  select('large.txt', 300 * 1024 * 1024)
+  assert.equal(app.attachmentError.value, '')
+  assert.deepEqual(app.chatAttachments.value.map(({ name }) => name), ['demo.html', 'clip.mov', 'large.txt'])
   assert.equal(attachmentContentType({ name: 'clip.mp4', type: 'text/plain' }), 'text/plain')
   app.clearAttachments()
 })

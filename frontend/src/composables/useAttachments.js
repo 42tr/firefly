@@ -2,8 +2,6 @@ import { ref } from 'vue'
 import { attachmentContentType, isVideoAttachment } from './attachmentTypes.js'
 import { appDateParts } from './appTimezone.js'
 
-const MAX_ATTACHMENT_SIZE = 15 * 1024 * 1024
-const MAX_VIDEO_ATTACHMENT_SIZE = 100 * 1024 * 1024
 // 粘贴超过该长度的纯文本时转为 txt 附件，避免超长文本撑开输入框
 const PASTE_TEXT_AS_FILE_MIN_LENGTH = 2000
 
@@ -53,16 +51,7 @@ export function useAttachments() {
     if (!files.length) return
     attachmentError.value = ''
 
-    const accepted = files.filter((file) => {
-      const limit = isVideoAttachment(file) ? MAX_VIDEO_ATTACHMENT_SIZE : MAX_ATTACHMENT_SIZE
-      if (file.size > limit) {
-        attachmentError.value = `附件 ${file.name || '未命名文件'} 超过 ${limit / (1024 * 1024)}MB 限制`
-        return false
-      }
-      return true
-    })
-
-    const newEntries = accepted.map((file) => createAttachmentEntry(file))
+    const newEntries = files.map((file) => createAttachmentEntry(file))
     chatAttachments.value = chatAttachments.value.concat(newEntries)
   }
 

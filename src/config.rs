@@ -51,6 +51,9 @@ pub struct Config {
     pub db_idle_timeout_secs: u64,
     #[serde_inline_default("storage/assistant_uploads".into())]
     pub assistant_upload_dir: String,
+    /// Maximum size of each uploaded attachment, including videos, in MiB.
+    #[serde_inline_default(100)]
+    pub assistant_max_attachment_mb: u32,
     #[serde_inline_default("workspace".into())]
     pub workspace_root: String,
     /// External module packages and standalone MCP TOML definitions.
@@ -92,6 +95,17 @@ pub struct Config {
     pub claude_allowed_tools: String,
 }
 
+impl Config {
+    pub fn assistant_max_attachment_bytes(&self) -> i64 {
+        i64::from(self.assistant_max_attachment_mb) * 1024 * 1024
+    }
+
+    pub fn assistant_max_chat_upload_bytes(&self) -> u64 {
+        // Keep the existing request budget, with room for a larger configured file and multipart metadata.
+        (256 * 1024 * 1024).max(self.assistant_max_attachment_bytes() as u64 + 1024 * 1024)
+    }
+}
+
 static CONFIG: OnceLock<Arc<Config>> = OnceLock::new();
 
 /// 自动加载 .env 文件（如果存在），不报错。
@@ -106,6 +120,7 @@ pub fn load() -> anyhow::Result<()> {
     let config: Config = envy::from_env().context("failed to load configuration from environment")?;
     validate_auth_config(&config)?;
     validate_timezone(&config)?;
+    validate_upload_config(&config)?;
     CONFIG
         .set(Arc::new(config))
         .map_err(|_| anyhow::anyhow!("config already loaded"))?;
@@ -123,6 +138,13 @@ fn validate_auth_config(config: &Config) -> anyhow::Result<()> {
 fn validate_timezone(config: &Config) -> anyhow::Result<()> {
     config.app_timezone.parse::<chrono_tz::Tz>()
         .context("APP_TIMEZONE must be an IANA timezone, such as Asia/Shanghai or America/New_York")?;
+    Ok(())
+}
+
+fn validate_upload_config(config: &Config) -> anyhow::Result<()> {
+    anyhow::ensure!(config.assistant_max_attachment_mb > 0, "ASSISTANT_MAX_ATTACHMENT_MB must be a positive integer");
+    usize::try_from(config.assistant_max_chat_upload_bytes())
+        .context("ASSISTANT_MAX_ATTACHMENT_MB is too large for this platform")?;
     Ok(())
 }
 
@@ -173,6 +195,38 @@ pub fn cors_allowed_origins() -> anyhow::Result<Vec<HeaderValue>> {
 
 #[cfg(test)]
 mod runtime_tests {
+    #[test]
+    fn attachment_upload_limits_default_and_environment_override() {
+        let default: super::Config = envy::from_iter([
+            ("JWT_SECRET".to_owned(), "test".to_owned()),
+            ("AUTH_PASSWORD".to_owned(), "test".to_owned()),
+        ]).unwrap();
+        assert_eq!(default.assistant_max_attachment_mb, 100);
+        assert_eq!(default.assistant_max_attachment_bytes(), 100 * 1024 * 1024);
+        assert_eq!(default.assistant_max_chat_upload_bytes(), 256 * 1024 * 1024);
+        assert!(super::validate_upload_config(&default).is_ok());
+
+        for (value, expected_request_mb) in [("1", 256), ("300", 301)] {
+            let config: super::Config = envy::from_iter([
+                ("JWT_SECRET".to_owned(), "test".to_owned()),
+                ("AUTH_PASSWORD".to_owned(), "test".to_owned()),
+                ("ASSISTANT_MAX_ATTACHMENT_MB".to_owned(), value.to_owned()),
+            ]).unwrap();
+            assert_eq!(config.assistant_max_attachment_bytes(), value.parse::<i64>().unwrap() * 1024 * 1024);
+            assert_eq!(config.assistant_max_chat_upload_bytes(), expected_request_mb * 1024 * 1024);
+            assert!(super::validate_upload_config(&config).is_ok());
+        }
+
+        for value in ["0", "-1", "1.5", "invalid", "4294967296"] {
+            let config = envy::from_iter::<_, super::Config>([
+                ("JWT_SECRET".to_owned(), "test".to_owned()),
+                ("AUTH_PASSWORD".to_owned(), "test".to_owned()),
+                ("ASSISTANT_MAX_ATTACHMENT_MB".to_owned(), value.to_owned()),
+            ]);
+            assert!(config.is_err() || super::validate_upload_config(&config.unwrap()).is_err(), "{value}");
+        }
+    }
+
     #[test]
     fn defaults_and_timezone_validation() {
         let mut config: super::Config = serde_json::from_value(serde_json::json!({

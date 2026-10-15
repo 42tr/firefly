@@ -80,14 +80,6 @@ fn attachment_content_type(file_name: &str, content_type: Option<&str>) -> Strin
     content_type
 }
 
-fn attachment_size_limit(content_type: &str) -> i64 {
-    if content_type.starts_with("video/") {
-        MAX_VIDEO_ATTACHMENT_BYTES
-    } else {
-        MAX_ATTACHMENT_BYTES
-    }
-}
-
 pub(super) async fn parse_chat_multipart(multipart: &mut Multipart) -> Result<ParsedChatPayload, AppError> {
     let mut message = String::new();
     let mut enable_tools = None;
@@ -95,6 +87,7 @@ pub(super) async fn parse_chat_multipart(multipart: &mut Multipart) -> Result<Pa
     // Removes already-saved files if a later field fails or the request is dropped mid-upload.
     let mut attachments = AttachmentCleanup::new(Vec::new());
     let storage_dir = attachment_storage_dir().await.map_err(AppError::internal_server_error)?;
+    let size_limit = config::get().assistant_max_attachment_bytes();
 
     while let Some(field) = multipart.next_field().await.map_err(|err| AppError::bad_request(err.to_string()))? {
         let name = field.name().unwrap_or_default().to_string();
@@ -113,7 +106,7 @@ pub(super) async fn parse_chat_multipart(multipart: &mut Multipart) -> Result<Pa
                 enable_tools = parse_bool_flag(&raw);
             }
             "attachments" | "attachments[]" => {
-                let pending = save_multipart_attachment(field, &storage_dir)
+                let pending = save_multipart_attachment(field, &storage_dir, size_limit)
                     .await
                     .map_err(|err| AppError::bad_request(err.to_string()))?;
                 attachments.entries.push(pending);
@@ -131,11 +124,12 @@ pub(super) fn is_multipart_content_type(value: &str) -> bool {
 }
 
 pub(super) fn ensure_payload_size_limit(headers: &HeaderMap) -> Result<(), AppError> {
+    let size_limit = config::get().assistant_max_chat_upload_bytes();
     if let Some(len_header) = headers.get(header::CONTENT_LENGTH) {
         if let Ok(text) = len_header.to_str() {
             if let Ok(len) = text.parse::<u64>() {
-                if len > MAX_CHAT_UPLOAD_BYTES {
-                    let mb = MAX_CHAT_UPLOAD_BYTES / (1024 * 1024);
+                if len > size_limit {
+                    let mb = size_limit / (1024 * 1024);
                     return Err(AppError::new(
                         StatusCode::PAYLOAD_TOO_LARGE,
                         format!("上传内容过大，最大支持 {} MB", mb),
@@ -156,12 +150,11 @@ fn parse_bool_flag(raw: &str) -> Option<bool> {
 }
 
 async fn save_multipart_attachment(
-    field: Field<'_>, storage_dir: &std::path::Path,
+    field: Field<'_>, storage_dir: &std::path::Path, size_limit: i64,
 ) -> anyhow::Result<PendingAttachment> {
     let mut field = field;
     let file_name = attachment_utils::sanitize_file_name(field.file_name());
     let content_type = attachment_content_type(&file_name, field.content_type());
-    let size_limit = attachment_size_limit(&content_type);
     let file_id = uuid::Uuid::new_v4().to_string();
     let path = storage_dir.join(&file_id);
     // Deletes the partial file on any error below or if the upload is aborted.
@@ -219,7 +212,7 @@ pub(super) async fn save_codex_image(
     use base64::Engine;
     let encoded = result["result"].as_str().unwrap_or_default();
     let bytes = if !encoded.is_empty() {
-        anyhow::ensure!(encoded.len() <= (MAX_ATTACHMENT_BYTES as usize).div_ceil(3) * 4, "生成图片超过附件大小限制");
+        anyhow::ensure!(encoded.len() <= (MAX_GENERATED_IMAGE_BYTES as usize).div_ceil(3) * 4, "生成图片超过附件大小限制");
         base64::engine::general_purpose::STANDARD.decode(encoded)?
     } else {
         let path = result["saved_path"].as_str().filter(|value| !value.is_empty())
@@ -228,7 +221,7 @@ pub(super) async fn save_codex_image(
             .ok_or_else(|| anyhow!("无法定位 $HOME/.codex 生图目录"))?;
         read_codex_image(std::path::Path::new(path), thread_id, &home).await?
     };
-    anyhow::ensure!(bytes.len() <= MAX_ATTACHMENT_BYTES as usize, "生成图片超过附件大小限制");
+    anyhow::ensure!(bytes.len() <= MAX_GENERATED_IMAGE_BYTES as usize, "生成图片超过附件大小限制");
     let (extension, content_type) = match image::guess_format(&bytes)? {
         image::ImageFormat::Png => ("png", "image/png"),
         image::ImageFormat::Jpeg => ("jpg", "image/jpeg"),
@@ -261,7 +254,7 @@ async fn read_codex_image(path: &std::path::Path, thread_id: &str, home: &std::p
     let file = tokio::task::spawn_blocking(move || crate::workspace_files::open_path(&home, &relative)).await??;
     let file = fs::File::from_std(file);
     let mut bytes = Vec::new();
-    file.take(MAX_ATTACHMENT_BYTES as u64 + 1).read_to_end(&mut bytes).await?;
+    file.take(MAX_GENERATED_IMAGE_BYTES as u64 + 1).read_to_end(&mut bytes).await?;
     Ok(bytes)
 }
 
@@ -319,52 +312,66 @@ mod tests {
     }
 
     #[test]
-    fn video_mime_fallback_and_limits() {
+    fn video_mime_fallback() {
         for name in ["clip.MP4", "clip.mov", "clip.webm", "clip.mkv", "clip.avi", "clip.m4v", "clip.ogv", "clip.3gp"] {
             let mime = attachment_content_type(name, Some("application/octet-stream"));
             assert!(mime.starts_with("video/"), "{name}: {mime}");
-            assert_eq!(attachment_size_limit(&mime), MAX_VIDEO_ATTACHMENT_BYTES);
         }
         assert_eq!(attachment_content_type("clip.mp4", Some("text/plain")), "text/plain");
-        assert_eq!(attachment_size_limit("text/plain"), MAX_ATTACHMENT_BYTES);
     }
 
     #[tokio::test]
-    async fn multipart_accepts_large_video_but_rejects_large_regular_file() {
+    async fn multipart_enforces_configured_limit_for_regular_files_and_videos() {
         use tower::{Layer, ServiceExt};
-        let directory = std::env::temp_dir().join(uuid::Uuid::new_v4().to_string());
-        fs::create_dir(&directory).await.unwrap();
-        for (name, accepted) in [("recording.mp4", true), ("notes.txt", false)] {
-            let mut body = format!(
-                "--boundary\r\nContent-Disposition: form-data; name=\"attachments[]\"; filename=\"{name}\"\r\nContent-Type: application/octet-stream\r\n\r\n"
-            ).into_bytes();
-            let size = MAX_ATTACHMENT_BYTES as usize + 1;
-            body.resize(body.len() + size, 0);
-            body.extend_from_slice(b"\r\n--boundary--\r\n");
-            let request = axum::http::Request::builder()
-                .header(header::CONTENT_TYPE, "multipart/form-data; boundary=boundary")
-                .body(Body::from(body))
-                .unwrap();
-            let request = axum::extract::DefaultBodyLimit::max(MAX_CHAT_UPLOAD_BYTES as usize)
-                .layer(tower::service_fn(|request: axum::extract::Request| async move { Ok::<_, Infallible>(request) }))
-                .oneshot(request)
-                .await
-                .unwrap();
-            let mut multipart = Multipart::from_request(request, &()).await.unwrap();
-            let field = multipart.next_field().await.unwrap().unwrap();
-            let result = save_multipart_attachment(field, &directory).await;
-            if accepted {
-                let attachment = result.unwrap();
-                assert_eq!(attachment.content_type, "video/mp4");
-                assert_eq!(attachment.file_size, size as i64);
-                assert_eq!(fs::metadata(&attachment.storage_path).await.unwrap().len(), size as u64);
-                fs::remove_file(attachment.storage_path).await.unwrap();
-            } else {
-                assert!(result.err().unwrap().to_string().contains("15MB"));
-                assert!(fs::read_dir(&directory).await.unwrap().next_entry().await.unwrap().is_none());
+        let directory = tempfile::tempdir().unwrap();
+        for (limit_mb, size, accepted) in [
+            (100, 100 * 1024 * 1024, true),
+            (100, 100 * 1024 * 1024 + 1, false),
+            (1, 1024 * 1024, true),
+            (1, 1024 * 1024 + 1, false),
+            (2, 1024 * 1024 + 1, true),
+        ] {
+            let config: config::Config = serde_json::from_value(json!({
+                "jwt_secret": "test", "auth_password": "test", "assistant_max_attachment_mb": limit_mb,
+            })).unwrap();
+            for (name, expected_type) in [("demo.html", "application/octet-stream"), ("recording.mp4", "video/mp4")] {
+                let prefix = format!(
+                    "--boundary\r\nContent-Disposition: form-data; name=\"attachments[]\"; filename=\"{name}\"\r\nContent-Type: application/octet-stream\r\n\r\n"
+                ).into_bytes();
+                // Stream repeated chunks instead of allocating a 100MB request body for each boundary case.
+                let chunk = bytes::Bytes::from(vec![b'x'; 1024 * 1024]);
+                let mut chunks = vec![Ok::<_, Infallible>(bytes::Bytes::from(prefix))];
+                for _ in 0..size / chunk.len() {
+                    chunks.push(Ok(chunk.clone()));
+                }
+                if size % chunk.len() > 0 {
+                    chunks.push(Ok(chunk.slice(..size % chunk.len())));
+                }
+                chunks.push(Ok(bytes::Bytes::from_static(b"\r\n--boundary--\r\n")));
+                let request = axum::http::Request::builder()
+                    .header(header::CONTENT_TYPE, "multipart/form-data; boundary=boundary")
+                    .body(Body::from_stream(futures_util::stream::iter(chunks)))
+                    .unwrap();
+                let request = axum::extract::DefaultBodyLimit::max(config.assistant_max_chat_upload_bytes() as usize)
+                    .layer(tower::service_fn(|request: axum::extract::Request| async move { Ok::<_, Infallible>(request) }))
+                    .oneshot(request)
+                    .await
+                    .unwrap();
+                let mut multipart = Multipart::from_request(request, &()).await.unwrap();
+                let field = multipart.next_field().await.unwrap().unwrap();
+                let result = save_multipart_attachment(field, directory.path(), config.assistant_max_attachment_bytes()).await;
+                if accepted {
+                    let attachment = result.unwrap();
+                    assert_eq!(attachment.content_type, expected_type);
+                    assert_eq!(attachment.file_size, size as i64);
+                    assert_eq!(fs::metadata(&attachment.storage_path).await.unwrap().len(), size as u64);
+                    fs::remove_file(attachment.storage_path).await.unwrap();
+                } else {
+                    assert!(result.err().unwrap().to_string().contains(&format!("{limit_mb}MB")));
+                    assert!(fs::read_dir(directory.path()).await.unwrap().next_entry().await.unwrap().is_none());
+                }
             }
         }
-        fs::remove_dir(directory).await.unwrap();
     }
 
     #[tokio::test]
@@ -380,7 +387,7 @@ mod tests {
             .unwrap();
         let mut multipart = Multipart::from_request(request, &()).await.unwrap();
         let field = multipart.next_field().await.unwrap().unwrap();
-        assert!(save_multipart_attachment(field, &directory).await.is_err());
+        assert!(save_multipart_attachment(field, &directory, 100 * 1024 * 1024).await.is_err());
         assert!(fs::read_dir(&directory).await.unwrap().next_entry().await.unwrap().is_none());
         fs::remove_dir(directory).await.unwrap();
     }

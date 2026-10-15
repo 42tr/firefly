@@ -72,9 +72,7 @@ use crate::{
     assistant_job, assistant_store, claude, codex, config, llm, mcp, office, utils,
 };
 
-const MAX_ATTACHMENT_BYTES: i64 = 15 * 1024 * 1024;
-const MAX_VIDEO_ATTACHMENT_BYTES: i64 = 100 * 1024 * 1024;
-pub const MAX_CHAT_UPLOAD_BYTES: u64 = 256 * 1024 * 1024;
+const MAX_GENERATED_IMAGE_BYTES: i64 = 15 * 1024 * 1024;
 
 fn is_codex_retrying_message(message: &str) -> bool {
     let normalized = message.trim().to_ascii_lowercase();
