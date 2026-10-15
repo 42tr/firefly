@@ -67,6 +67,12 @@ python3 scripts/test_modules_ui.py
 
 模块宿主测试启动临时后端，运行前先构建前端及 `cargo build --locked`，使用仓库内的协议示例。截图写入忽略的 `output/`。
 
+已安装 Claude CLI 时，还可运行原生 settings 协议回归；它使用隔离配置、虚构凭据和本地模拟 API，验证平台覆盖、凭据助手、推理级别及恢复会话，不调用真实模型：
+
+```sh
+python3 -m unittest scripts.test_claude_settings_protocol
+```
+
 ## 提交约定
 
 - 说明触发场景、最终行为和验证结果，界面变更提供桌面与移动端结果。

@@ -51,12 +51,18 @@ pub struct GenerationJobRecord {
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct ClaudeGenerationSettings {
+    #[serde(default)]
+    pub provider: Option<String>,
     pub model: Option<String>,
+    #[serde(default)]
+    pub reasoning_level: Option<String>,
 }
 
 impl ClaudeGenerationSettings {
     pub fn apply_to(&self, conversation: &mut super::ConversationRecord) {
         conversation.claude_model = self.model.clone();
+        conversation.claude_provider = self.provider.clone();
+        conversation.claude_reasoning_level = self.reasoning_level.clone();
     }
 }
 
@@ -87,7 +93,7 @@ pub(super) async fn insert_queued_user_turn(
                 (SELECT json_object('provider', codex_provider, 'model', codex_model,
                                     'reasoning_level', codex_reasoning_level)
                  FROM assistant_conversations WHERE id = ?2 AND user_id = ?3 AND agent = 'codex'),
-                (SELECT json_object('model', claude_model)
+                (SELECT json_object('provider', claude_provider, 'model', claude_model, 'reasoning_level', claude_reasoning_level)
                  FROM assistant_conversations WHERE id = ?2 AND user_id = ?3 AND agent = 'claude'))
         "#,
     )
@@ -636,6 +642,13 @@ async fn set_generation_status_tx(
 #[cfg(test)]
 mod timing_tests {
     use super::*;
+
+    #[test]
+    fn old_claude_snapshots_keep_their_model_and_inherit_platform_and_effort() {
+        let settings: ClaudeGenerationSettings = serde_json::from_value(serde_json::json!({"model":"opus"})).unwrap();
+        assert_eq!(settings.model.as_deref(), Some("opus"));
+        assert!(settings.provider.is_none() && settings.reasoning_level.is_none());
+    }
 
     #[tokio::test]
     async fn generation_timing_excludes_queue_wait_and_persists_across_recovery() {

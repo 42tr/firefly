@@ -7,6 +7,8 @@ async fn update(id: i64, user: &str, model: Option<&str>) -> Result<Conversation
         Path(id),
         Json(ClaudeSettingsRequest {
             model: model.map(str::to_owned),
+            provider: None,
+            reasoning_level: None,
         }),
     )
     .await
@@ -14,6 +16,7 @@ async fn update(id: i64, user: &str, model: Option<&str>) -> Result<Conversation
 }
 
 async fn fixture() -> (sqlx::SqlitePool, assistant_store::ConversationRecord) {
+    crate::config::init_test_config();
     let pool = crate::db::test_pool().await;
     crate::db::set_test_pool(pool.clone());
     let conversation = assistant_store::create_conversation("owner", crate::assistant_store::NewConversation {
@@ -21,9 +24,9 @@ async fn fixture() -> (sqlx::SqlitePool, assistant_store::ConversationRecord) {
         title: Some("existing"),
         agent: "claude",
         codex_cwd: Some("project"),
-        codex_provider: None,
+        provider: Some("cli"),
         model: Some("sonnet"),
-        codex_reasoning_level: None,
+        reasoning_level: Some("low"),
         parallel: None,
     })
     .await
@@ -32,6 +35,63 @@ async fn fixture() -> (sqlx::SqlitePool, assistant_store::ConversationRecord) {
         .await
         .unwrap();
     (pool, conversation)
+}
+
+#[tokio::test]
+async fn claude_platform_and_effort_updates_are_validated_and_snapshotted_together() {
+    let (_pool, conversation) = fixture().await;
+    let save = |provider: Option<&str>, model: Option<&str>, level: Option<&str>| {
+        update_claude_settings(Session::for_storage("owner"), Path(conversation.id), Json(ClaudeSettingsRequest {
+            provider: provider.map(str::to_owned), model: model.map(str::to_owned), reasoning_level: level.map(str::to_owned),
+        }))
+    };
+    for (provider, level) in [(Some("unknown"), Some("high")), (Some("cli"), Some("invalid"))] {
+        assert_eq!(save(provider, Some("opus"), level).await.unwrap_err().status(), StatusCode::BAD_REQUEST);
+    }
+    let updated = save(Some(" cli "), Some(" opus "), Some(" max ")).await.unwrap().0;
+    assert_eq!(updated.claude_provider.as_deref(), Some("cli"));
+    assert_eq!(updated.claude_reasoning_level.as_deref(), Some("max"));
+    assert!(updated.codex_provider.is_none() && updated.codex_reasoning_level.is_none());
+    let submitted = assistant_store::submit_queued_user_turn(conversation.id, "owner", None, "", true, "question".into(), &[])
+        .await.unwrap();
+    let _ = save(None, None, None).await.unwrap();
+    let stored = assistant_store::get_conversation(conversation.id, "owner").await.unwrap().unwrap();
+    assert!(stored.claude_provider.is_none() && stored.claude_reasoning_level.is_none() && stored.claude_model.is_none());
+    let job = assistant_store::get_generation_job(submitted.message.generation_job_id.unwrap(), "owner").await.unwrap().unwrap();
+    let settings = job.claude_settings.unwrap();
+    assert_eq!(settings.provider.as_deref(), Some("cli"));
+    assert_eq!(settings.model.as_deref(), Some("opus"));
+    assert_eq!(settings.reasoning_level.as_deref(), Some("max"));
+    let mut execution = stored;
+    settings.apply_to(&mut execution);
+    assert_eq!(execution.claude_provider.as_deref(), Some("cli"));
+    assert_eq!(execution.claude_reasoning_level.as_deref(), Some("max"));
+    assert_eq!(execution.claude_session_id.as_deref(), Some("same-session"));
+}
+
+#[tokio::test]
+async fn concurrent_claude_platform_effort_and_model_updates_do_not_mix_snapshots() {
+    let (_pool, conversation) = fixture().await;
+    let (updated, submitted) = tokio::join!(
+        update_claude_settings(Session::for_storage("owner"), Path(conversation.id), Json(ClaudeSettingsRequest {
+            provider: Some("cli".into()), model: Some("opus".into()), reasoning_level: Some("high".into()),
+        })),
+        assistant_store::submit_queued_user_turn(conversation.id, "owner", None, "", true, "question".into(), &[]),
+    );
+    let _ = updated.unwrap();
+    let job = assistant_store::get_generation_job(submitted.unwrap().message.generation_job_id.unwrap(), "owner").await.unwrap().unwrap();
+    let settings = job.claude_settings.unwrap();
+    match settings.model.as_deref() {
+        Some("opus") => {
+            assert_eq!(settings.provider.as_deref(), Some("cli"));
+            assert_eq!(settings.reasoning_level.as_deref(), Some("high"));
+        }
+        Some("sonnet") => {
+            assert_eq!(settings.provider.as_deref(), Some("cli"));
+            assert_eq!(settings.reasoning_level.as_deref(), Some("low"));
+        }
+        other => panic!("unexpected model: {other:?}"),
+    }
 }
 
 #[tokio::test]
@@ -154,6 +214,8 @@ async fn queued_running_retried_and_recovered_claude_messages_keep_their_model_s
         Some("sonnet")
     );
     assert!(running.codex_settings.is_none());
+    assert_eq!(running.claude_settings.as_ref().unwrap().provider.as_deref(), Some("cli"));
+    assert_eq!(running.claude_settings.as_ref().unwrap().reasoning_level.as_deref(), Some("low"));
     update(id, "owner", Some("haiku")).await.unwrap();
     let retry = assistant_store::submit_queued_user_turn(
         id,
@@ -178,6 +240,8 @@ async fn queued_running_retried_and_recovered_claude_messages_keep_their_model_s
         .unwrap()
         .apply_to(&mut execution);
     assert_eq!(execution.claude_model.as_deref(), Some("sonnet"));
+    assert_eq!(execution.claude_provider.as_deref(), Some("cli"));
+    assert_eq!(execution.claude_reasoning_level.as_deref(), Some("low"));
     assert_eq!(execution.claude_session_id.as_deref(), Some("same-session"));
     assert_eq!(
         assistant_store::requeue_interrupted_generations()

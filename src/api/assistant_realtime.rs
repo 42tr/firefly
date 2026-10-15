@@ -325,9 +325,9 @@ mod tests {
             title: Some("新的工作"),
             agent: "codex",
             codex_cwd: None,
-            codex_provider: None,
+            provider: None,
             model: None,
-            codex_reasoning_level: None,
+            reasoning_level: None,
             parallel: None,
         })
         .await

@@ -193,15 +193,18 @@ pub async fn dispatch(
     let workspace_id = (settings.workspace_mode == "parallel").then(uuid::Uuid::new_v4);
     let actual_cwd = workspace_id.map(crate::assistant_workspace::destination);
     let conversation_id: i64 = query_scalar("INSERT INTO assistant_conversations
-        (user_id,title,system_prompt,agent,codex_cwd,codex_provider,codex_model,codex_reasoning_level,workspace_mode,source_cwd,workspace_id,workspace_state,claude_model)
-        VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13) RETURNING id")
+        (user_id,title,system_prompt,agent,codex_cwd,codex_provider,codex_model,codex_reasoning_level,workspace_mode,source_cwd,workspace_id,workspace_state,claude_model,claude_provider,claude_reasoning_level)
+        VALUES (?1,?2,?3,?4,?5,?6,?7,?8,?9,?10,?11,?12,?13,?14,?15) RETURNING id")
         .bind(user).bind(format!("定时 · {}", record.title)).bind(system_prompt).bind(&settings.agent)
-        .bind(actual_cwd.as_deref().or(settings.cwd.as_deref())).bind(&settings.provider)
+        .bind(actual_cwd.as_deref().or(settings.cwd.as_deref()))
+        .bind(if settings.agent == "codex" { settings.provider.as_deref() } else { None })
         .bind(if settings.agent == "codex" { settings.model.as_deref() } else { None })
-        .bind(&settings.reasoning_level).bind(&settings.workspace_mode)
+        .bind(if settings.agent == "codex" { settings.reasoning_level.as_deref() } else { None }).bind(&settings.workspace_mode)
         .bind(workspace_id.map(|_| settings.cwd.as_deref().unwrap_or("")))
         .bind(workspace_id).bind(if workspace_id.is_some() { "pending" } else { "ready" })
         .bind(if settings.agent == "claude" { settings.model.as_deref() } else { None })
+        .bind(if settings.agent == "claude" { settings.provider.as_deref() } else { None })
+        .bind(if settings.agent == "claude" { settings.reasoning_level.as_deref() } else { None })
         .fetch_one(&mut *tx).await?;
     let job = uuid::Uuid::new_v4();
     super::generation::insert_queued_user_turn(&mut tx, job, conversation_id, user, enable_tools, record.prompt, &[]).await?;

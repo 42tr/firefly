@@ -43,7 +43,7 @@ function setup(t, data = listing, defaultAgent = 'codex') {
   return { state, events }
 }
 
-test('selects the configured level and emits the user selection for Codex only', async t => {
+test('Codex and Claude keep separate reasoning selections', async t => {
   const { state, events } = setup(t)
   await state.loadProviders()
   assert.equal(state.model.value, 'model-a')
@@ -53,7 +53,7 @@ test('selects the configured level and emits the user selection for Codex only',
   assert.equal(events.at(-1).payload.reasoning_level, 'xhigh')
   state.agent.value = 'claude'
   await nextTick()
-  assert.equal(state.selection.value.reasoning_level, null)
+  assert.equal(state.selection.value.reasoning_level, '')
 })
 
 test('changes available levels with the model and clears unsupported reasoning', async t => {
@@ -143,12 +143,37 @@ test('Claude creation emits its selected model without Codex provider and reason
   state.provider.value = 'relay'
   state.reasoningLevel.value = 'high'
   assert.equal(state.selection.value.model, 'opus')
-  assert.equal(state.selection.value.provider, null)
-  assert.equal(state.selection.value.reasoning_level, null)
+  assert.equal(state.selection.value.provider, '')
+  assert.equal(state.selection.value.reasoning_level, '')
   assert.deepEqual(state.claudeModelOptions.value, ['sonnet', 'opus', 'haiku'])
   state.applyWorkspace({ agent: 'claude', cwd: 'project', claude_model: 'custom-model' })
   await nextTick()
   assert.equal(state.selection.value.model, 'custom-model')
+})
+
+test('Claude creation and workspace presets retain their own platform, model, and effort', async t => {
+  const { state, events } = setup(t, {
+    default: 'relay', cli_default_model: 'sonnet', models: ['sonnet', 'opus'],
+    providers: [{ name: 'relay', models: ['custom-sonnet', 'custom-opus'], default_model: 'custom-opus' }],
+  }, 'claude')
+  await state.loadClaudeModels()
+  assert.deepEqual(state.claudeModelOptions.value, ['custom-sonnet', 'custom-opus'])
+  state.claudeProvider.value = 'relay'
+  state.claudeModel.value = 'custom-opus'
+  state.claudeReasoningLevel.value = 'max'
+  await nextTick()
+  assert.deepEqual(events.at(-1).payload, {
+    agent: 'claude', workspace_mode: 'shared', cwd: '', provider: 'relay', model: 'custom-opus', reasoning_level: 'max',
+  })
+  state.applyWorkspace({ agent: 'claude', cwd: 'project', claude_provider: 'cli', claude_model: 'opus', claude_reasoning_level: 'low' })
+  assert.equal(state.selection.value.provider, 'cli')
+  assert.equal(state.selection.value.reasoning_level, 'low')
+  state.claudeProvider.value = 'relay'
+  state.changeClaudeProvider()
+  assert.equal(state.selection.value.model, '')
+  state.resetPicker()
+  assert.equal(state.selection.value.provider, '')
+  assert.equal(state.selection.value.reasoning_level, '')
 })
 
 test('switching to Firefly clears a pending directory request and ignores its late failure', async t => {

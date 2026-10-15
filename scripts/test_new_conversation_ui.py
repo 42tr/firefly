@@ -39,6 +39,7 @@ class NewConversationUI(unittest.TestCase):
         self.pins = []
         self.archive_requests = 0
         self.codex_updates = []
+        self.claude_updates = []
         self.codex_save_failure = False
         self.conversations = [dict(id=1, title='查询示例资料', agent='firefly', message_count=2),
                               dict(id=2, title='移动端排版优化', agent='codex', message_count=2),
@@ -88,6 +89,14 @@ class NewConversationUI(unittest.TestCase):
                         codex_model=request.post_data_json['model'],
                         codex_reasoning_level=request.post_data_json['reasoning_level'])
             data = item
+        elif path.endswith('/claude-settings'):
+            conversation_id = int(path.split('/')[-2])
+            fields = request.post_data_json
+            self.claude_updates.append(fields)
+            item = next(item for item in self.conversations if item['id'] == conversation_id)
+            item.update(claude_provider=fields['provider'], claude_model=fields['model'],
+                        claude_reasoning_level=fields['reasoning_level'])
+            data = item
         elif re.fullmatch(r'/api/assistant/conversations/\d+', path):
             conversation_id = int(path.rsplit('/', 1)[1])
             if request.method == 'DELETE':
@@ -111,6 +120,10 @@ class NewConversationUI(unittest.TestCase):
             data = dict(default='openai', default_model='test-model', default_reasoning_level='medium',
                         providers=[], official_models=['test-model'], model_reasoning=[
                             dict(model='test-model', reasoning_levels=['low', 'medium', 'high'], default_reasoning_level='medium')])
+        elif path.endswith('/claude/models'):
+            data = dict(default='cli', cli_default_model='sonnet', default_model='sonnet', default_reasoning_level='medium',
+                        models=['sonnet', 'opus', 'haiku'], reasoning_levels=['low', 'medium', 'high', 'xhigh', 'max'],
+                        providers=[dict(name='relay', models=['custom-sonnet', 'custom-opus'], default_model='custom-sonnet', default_reasoning_level='high')])
         elif path.endswith('/active-generation'):
             data = {'active': False}
         elif path.endswith('/messages'):
@@ -183,6 +196,55 @@ class NewConversationUI(unittest.TestCase):
         self.page.screenshot(path=str(captures / 'desktop.png'))
         self.page.set_viewport_size(dict(width=390, height=844))
         self.page.screenshot(path=str(captures / 'mobile.png'))
+
+    def test_claude_platform_model_and_effort_in_new_and_existing_conversations(self):
+        self.conversations[1].update(agent='claude', claude_provider='relay', claude_model='custom-opus',
+                                     claude_reasoning_level='max', status='running')
+        self.open_page()
+        self.choose_agent('Claude')
+        self.page.get_by_role('button', name='配置 Agent', exact=True).click()
+        settings = self.page.get_by_role('group', name='Claude 配置', exact=True)
+        expect(settings.get_by_role('combobox', name='API 平台', exact=True)).to_be_visible()
+        settings.get_by_role('combobox', name='API 平台', exact=True).select_option('relay')
+        expect(settings.get_by_role('combobox', name='模型', exact=True).locator('option[value=""]')).to_have_text('默认模型（custom-sonnet）')
+        expect(settings.get_by_role('combobox', name='推理级别', exact=True).locator('option[value=""]')).to_have_text('默认推理级别（high）')
+        settings.get_by_role('combobox', name='模型', exact=True).select_option('custom-opus')
+        settings.get_by_role('combobox', name='推理级别', exact=True).select_option('high')
+        for width in [320, 390, 1280]:
+            self.page.set_viewport_size(dict(width=width, height=844))
+            self.assertFalse(self.page.evaluate('document.documentElement.scrollWidth > innerWidth'))
+        self.page.get_by_role('textbox', name='消息', exact=True).fill('测试 Claude 平台配置')
+        self.page.get_by_role('button', name='发送消息', exact=True).click()
+        self.page.wait_for_function('location.search.includes("conversation=10")')
+        self.assertEqual(self.creations[-1]['provider'], 'relay')
+        self.assertEqual(self.creations[-1]['model'], 'custom-opus')
+        self.assertEqual(self.creations[-1]['reasoning_level'], 'high')
+        self.page.goto(os.getenv('FIREFLY_TEST_URL', 'http://127.0.0.1:5187/') + '?conversation=2')
+        self.page.get_by_role('button', name='模型设置', exact=True).click()
+        dialog = self.page.get_by_role('dialog', name='模型设置', exact=True)
+        expect(dialog.get_by_role('combobox', name='API 平台', exact=True)).to_have_value('relay')
+        expect(dialog.get_by_role('combobox', name='模型', exact=True)).to_have_value('custom-opus')
+        expect(dialog.get_by_role('combobox', name='推理级别', exact=True)).to_have_value('max')
+        captures = Path('output/claude-settings-ui')
+        captures.mkdir(parents=True, exist_ok=True)
+        for width, name in [(1280, 'desktop'), (390, 'mobile'), (320, 'narrow')]:
+            self.page.set_viewport_size(dict(width=width, height=844))
+            bounds = dialog.bounding_box()
+            self.assertGreaterEqual(bounds['x'], 0)
+            self.assertLessEqual(bounds['x'] + bounds['width'], width)
+            self.page.screenshot(path=str(captures / f'{name}.png'))
+        dialog.get_by_role('combobox', name='API 平台', exact=True).select_option('cli')
+        expect(dialog.get_by_role('combobox', name='推理级别', exact=True).locator('option[value=""]')).to_have_text('默认推理级别（medium）')
+        expect(dialog.get_by_role('combobox', name='模型', exact=True)).to_have_value('')
+        dialog.get_by_role('combobox', name='模型', exact=True).select_option('opus')
+        dialog.get_by_role('combobox', name='推理级别', exact=True).select_option('low')
+        dialog.get_by_role('button', name='保存', exact=True).click()
+        expect(dialog).to_have_count(0)
+        self.assertEqual(self.claude_updates[-1], dict(provider='cli', model='opus', reasoning_level='low'))
+        self.page.reload()
+        self.page.get_by_role('button', name='模型设置', exact=True).click()
+        expect(dialog.get_by_role('combobox', name='API 平台', exact=True)).to_have_value('cli')
+        expect(dialog.get_by_role('combobox', name='推理级别', exact=True)).to_have_value('low')
 
     def test_codex_settings_allow_busy_and_disable_archived_conversations(self):
         self.open_page()

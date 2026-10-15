@@ -4,7 +4,7 @@ import UiIcon from './UiIcon.vue'
 import { apiFetch } from '@/utils/http'
 import { useCodexModels } from '@/composables/useCodexModels'
 import { useClaudeModels } from '@/composables/useClaudeModels'
-import ClaudeModelPicker from './ClaudeModelPicker.vue'
+import ClaudeSettingsFields from './ClaudeSettingsFields.vue'
 
 const props = defineProps({
   open: { type: Boolean, default: false },
@@ -40,6 +40,9 @@ const {
 } = useCodexModels(agent)
 const {
   model: claudeModel, modelOptions: claudeModelOptions, defaultModel: defaultClaudeModel,
+  provider: claudeProvider, providers: claudeProviders, defaultProvider: defaultClaudeProvider,
+  reasoningLevel: claudeReasoningLevel, reasoningOptions: claudeReasoningOptions,
+  defaultReasoningLevel: defaultClaudeReasoningLevel, changeProvider: changeClaudeProvider,
   modelsLoading: claudeModelsLoading, modelsError: claudeModelsError,
   loadModels: loadClaudeModels, cancelModelLoad: cancelClaudeModelLoad,
 } = useClaudeModels()
@@ -153,6 +156,8 @@ const resetPicker = () => {
   provider.value = ''
   model.value = ''
   claudeModel.value = ''
+  claudeProvider.value = ''
+  claudeReasoningLevel.value = ''
   reasoningLevel.value = ''
   path.value = ''
   confirmedPath.value = ''
@@ -173,6 +178,8 @@ const applyWorkspace = (item) => {
   provider.value = item.codex_provider === 'openai' ? '' : item.codex_provider || item.provider || ''
   model.value = item.codex_model || item.model || ''
   claudeModel.value = item.claude_model || item.model || ''
+  claudeProvider.value = item.claude_provider || item.provider || ''
+  claudeReasoningLevel.value = item.claude_reasoning_level || item.reasoning_level || ''
   reasoningLevel.value = item.codex_reasoning_level || item.reasoning_level || ''
   if (agent.value === 'codex') loadProviders(false)
   if (agent.value === 'claude') loadClaudeModels()
@@ -209,9 +216,9 @@ const selection = computed(() => ({
   agent: agent.value,
   workspace_mode: agent.value !== 'firefly' && parallel.value ? 'parallel' : 'shared',
   cwd: agent.value === 'firefly' ? null : confirmedPath.value,
-  provider: agent.value === 'codex' ? provider.value : null,
+  provider: agent.value === 'codex' ? provider.value : agent.value === 'claude' ? claudeProvider.value : null,
   model: agent.value === 'codex' ? model.value : agent.value === 'claude' ? claudeModel.value : null,
-  reasoning_level: agent.value === 'codex' ? reasoningLevel.value : null,
+  reasoning_level: agent.value === 'codex' ? reasoningLevel.value : agent.value === 'claude' ? claudeReasoningLevel.value : null,
 }))
 const directoryLabel = computed(() => confirmedPath.value.split('/').filter(Boolean).at(-1) || 'workspace')
 const directoryTitle = computed(() => `workspace/${confirmedPath.value}`)
@@ -305,9 +312,9 @@ onBeforeUnmount(() => {
     </div>
 
     <div v-if="agent === 'claude'" class="claude-model-settings">
-      <ClaudeModelPicker v-model="claudeModel" :models="claudeModelOptions" :default-model="defaultClaudeModel" :disabled="creating || claudeModelsLoading" />
+      <ClaudeSettingsFields v-model="claudeModel" v-model:provider="claudeProvider" v-model:reasoning-level="claudeReasoningLevel" :providers="claudeProviders" :default-provider="defaultClaudeProvider" :reasoning-levels="claudeReasoningOptions" :default-reasoning-level="defaultClaudeReasoningLevel" @change-provider="changeClaudeProvider" :models="claudeModelOptions" :default-model="defaultClaudeModel" :disabled="creating || claudeModelsLoading" />
       <p v-if="claudeModelsLoading" class="models-note" role="status">正在读取模型选项…</p>
-      <p v-else-if="claudeModelsError" class="models-note" role="status">{{ claudeModelsError }}</p>
+      <p v-else-if="claudeModelsError" class="models-note" role="status">{{ claudeModelsError }} <button class="button ghost small" type="button" @click="loadClaudeModels">重试</button></p>
     </div>
 
     <label class="parallel-option" :class="{ selected: parallel }">

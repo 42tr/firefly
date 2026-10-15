@@ -133,7 +133,9 @@ pub struct CodexSettingsRequest {
 #[derive(Debug, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct ClaudeSettingsRequest {
+    pub provider: Option<String>,
     pub model: Option<String>,
+    pub reasoning_level: Option<String>,
 }
 
 #[derive(Debug, Serialize)]
@@ -150,6 +152,8 @@ pub struct ConversationSummary {
     pub codex_model: Option<String>,
     pub codex_reasoning_level: Option<String>,
     pub claude_model: Option<String>,
+    pub claude_provider: Option<String>,
+    pub claude_reasoning_level: Option<String>,
     pub message_count: i64,
     pub read_message_id: i64,
     pub last_message_id: i64,

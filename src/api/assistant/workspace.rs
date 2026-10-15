@@ -45,9 +45,20 @@ pub async fn codex_providers(_auth_user: Session) -> Json<Value> {
     }))
 }
 
-pub async fn claude_models(_auth_user: Session) -> Json<Value> {
+pub async fn claude_models(_auth_user: Session) -> Result<Json<Value>, AppError> {
     let cfg = config::get();
-    Json(json!({"default_model":claude::default_model(&cfg),"models":claude::model_choices(&cfg)}))
+    let listing = claude::providers().map_err(AppError::internal_server_error)?;
+    let defaults = claude::cli_defaults(&cfg).map_err(AppError::internal_server_error)?;
+    Ok(Json(json!({
+        "default": "cli",
+        "providers": listing.providers,
+        "default_model": defaults.model,
+        "cli_default_model": defaults.model,
+        "default_reasoning_level": defaults.reasoning_level,
+        "models": defaults.models,
+        "models_error": listing.warnings.join("；"),
+        "reasoning_levels": claude::REASONING_LEVELS,
+    })))
 }
 
 pub async fn create_workspace_directory(

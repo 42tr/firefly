@@ -15,9 +15,9 @@ async fn db_tests_codex_settings_preserve_thread_history_workspace_and_survive_r
         title: Some("existing conversation"),
         agent: "codex",
         codex_cwd: Some("project"),
-        codex_provider: Some("previous"),
+        provider: Some("previous"),
         model: Some("old-model"),
-        codex_reasoning_level: Some("low"),
+        reasoning_level: Some("low"),
         parallel: None,
     }).await.unwrap();
     assistant_store::set_codex_thread_id(conversation.id, "owner", "same-thread").await.unwrap();
@@ -57,9 +57,9 @@ async fn db_tests_codex_settings_reject_archived_foreign_and_invalid_updates() {
         title: None,
         agent: "codex",
         codex_cwd: Some("project"),
-        codex_provider: Some("openai"),
+        provider: Some("openai"),
         model: Some("original"),
-        codex_reasoning_level: Some("low"),
+        reasoning_level: Some("low"),
         parallel: None,
     }).await.unwrap();
     let id = conversation.id;
@@ -86,9 +86,9 @@ async fn db_tests_codex_settings_can_change_while_busy_without_changing_submitte
         title: None,
         agent: "codex",
         codex_cwd: Some("project"),
-        codex_provider: Some("openai"),
+        provider: Some("openai"),
         model: Some("original"),
-        codex_reasoning_level: Some("low"),
+        reasoning_level: Some("low"),
         parallel: None,
     }).await.unwrap();
     let id = conversation.id;
@@ -147,9 +147,9 @@ async fn db_tests_codex_settings_and_submission_snapshot_are_serialized() {
             title: None,
             agent: "codex",
             codex_cwd: Some("project"),
-            codex_provider: Some("openai"),
+            provider: Some("openai"),
             model: Some("original"),
-            codex_reasoning_level: Some("low"),
+            reasoning_level: Some("low"),
             parallel: None,
         }).await.unwrap();
         let save = update(conversation.id, "owner", json!({"provider":"openai", "model":"changed", "reasoning_level":"high"}));

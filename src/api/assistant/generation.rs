@@ -634,7 +634,7 @@ pub(super) async fn run_claude_turn(
     }
 
     if job.cancellation_token().is_cancelled() { return Ok(()); }
-    let mut turn = claude::start_turn(&abs, record.claude_session_id.as_deref(), record.claude_model.as_deref(), &prompt).await?;
+    let mut turn = claude::start_turn(&abs, record.claude_session_id.as_deref(), record.claude_provider.as_deref(), record.claude_model.as_deref(), record.claude_reasoning_level.as_deref(), &prompt).await?;
     let (_seen_session, result) = run_claude_events(&mut turn, record, user_id, conversation_id, &job).await;
     turn.interrupt().await?;
     result

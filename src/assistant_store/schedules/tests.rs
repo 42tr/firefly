@@ -110,19 +110,28 @@ async fn schedules_preserve_agent_settings_and_use_existing_queue_recovery() {
             task.execution.reasoning_level = Some("high".into());
             task.execution.workspace_mode = "parallel".into();
         }
-        if agent == "claude" { task.execution.model = Some("opus".into()); }
+        if agent == "claude" {
+            task.execution.model = Some("opus".into());
+            task.execution.provider = Some("cli".into());
+            task.execution.reasoning_level = Some("max".into());
+        }
         let id = save(None, "owner", &task, now).await.unwrap().unwrap();
         // Restart after several missed minutes submits once and advances into the future.
         let restarted_at = now + Duration::hours(2);
         let conversation = dispatch(id, "owner", restarted_at, "system", false, 32).await.unwrap().unwrap();
         let record = crate::assistant_store::get_conversation(conversation, "owner").await.unwrap().unwrap();
         assert_eq!(record.agent, agent);
-        assert_eq!(record.codex_provider, task.execution.provider);
         if agent == "claude" {
             assert_eq!(record.claude_model,task.execution.model);
+            assert_eq!(record.claude_provider, task.execution.provider);
+            assert_eq!(record.claude_reasoning_level, task.execution.reasoning_level);
+            assert!(record.codex_provider.is_none() && record.codex_reasoning_level.is_none());
             assert!(record.codex_model.is_none());
-        } else { assert_eq!(record.codex_model, task.execution.model); }
-        assert_eq!(record.codex_reasoning_level, task.execution.reasoning_level);
+        } else {
+            assert_eq!(record.codex_model, task.execution.model);
+            assert_eq!(record.codex_provider, task.execution.provider);
+            assert_eq!(record.codex_reasoning_level, task.execution.reasoning_level);
+        }
         assert_eq!(record.message_count, 1);
         if agent == "codex" {
             assert_eq!(record.workspace_state, "pending");

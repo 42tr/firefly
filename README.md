@@ -50,7 +50,7 @@ cargo build --release --locked
 
 左下角设置菜单统一提供“Agent 配置”“扩展模块”和“退出登录”。在 Agent 配置中填写支持 Responses API 的模型服务、模型与密钥，分配工具后保存。`OPENAI_*` 仅用于首次初始化，以后以页面保存的配置为准。无需模型密钥即可启动和进入配置页面。
 
-Codex 和 Claude Code 分别使用运行账户的 `codex`、`claude` CLI 登录，可按需安装。CLI 登录属于该账户，不随 Firefly 二进制分发。
+Codex 和 Claude Code 通过运行账户的 `codex`、`claude` CLI 执行，可按需安装并配置登录或 API 凭据。CLI 登录属于该账户，不随 Firefly 二进制分发。Claude 的多平台、模型和推理级别配置见[对话文档](docs/assistant.md)。
 
 运行配置项说明见 [.env.example](.env.example)。
 

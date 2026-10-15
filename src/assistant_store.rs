@@ -27,7 +27,7 @@ pub mod schedules;
 
 // Formatted SQL only inserts this fixed projection; all request values use bind parameters.
 const CONVERSATION_COLUMNS: &str =
-    "id, user_id, title, system_prompt, agent, codex_cwd, codex_thread_id, codex_provider, codex_model, codex_reasoning_level, claude_session_id, claude_model, created_at, updated_at, last_message_at, message_count, read_message_id, COALESCE((SELECT MAX(id) FROM assistant_messages WHERE conversation_id = assistant_conversations.id), 0) AS last_message_id, is_pinned, is_archived, workspace_mode, source_cwd, workspace_id, workspace_state, workspace_error, workspace_metadata";
+    "id, user_id, title, system_prompt, agent, codex_cwd, codex_thread_id, codex_provider, codex_model, codex_reasoning_level, claude_session_id, claude_model, claude_provider, claude_reasoning_level, created_at, updated_at, last_message_at, message_count, read_message_id, COALESCE((SELECT MAX(id) FROM assistant_messages WHERE conversation_id = assistant_conversations.id), 0) AS last_message_id, is_pinned, is_archived, workspace_mode, source_cwd, workspace_id, workspace_state, workspace_error, workspace_metadata";
 
 #[derive(Debug, Clone, Serialize, FromRow)]
 pub struct ConversationRecord {
@@ -44,6 +44,8 @@ pub struct ConversationRecord {
     pub codex_reasoning_level: Option<String>,
     pub claude_session_id: Option<String>,
     pub claude_model: Option<String>,
+    pub claude_provider: Option<String>,
+    pub claude_reasoning_level: Option<String>,
     #[sqlx(try_from = "crate::db::Timestamp")]
     pub created_at: DateTime<Utc>,
     #[sqlx(try_from = "crate::db::Timestamp")]
@@ -129,17 +131,17 @@ pub struct NewConversation<'a> {
     pub title: Option<&'a str>,
     pub agent: &'a str,
     pub codex_cwd: Option<&'a str>,
-    pub codex_provider: Option<&'a str>,
+    pub provider: Option<&'a str>,
     pub model: Option<&'a str>,
-    pub codex_reasoning_level: Option<&'a str>,
+    pub reasoning_level: Option<&'a str>,
     pub parallel: Option<(&'a str, uuid::Uuid)>,
 }
 
 pub async fn create_conversation(user_id: &str, conversation: NewConversation<'_>) -> anyhow::Result<ConversationRecord> {
-    let NewConversation { system_prompt, title, agent, codex_cwd, codex_provider, model, codex_reasoning_level, parallel } = conversation;
+    let NewConversation { system_prompt, title, agent, codex_cwd, provider, model, reasoning_level, parallel } = conversation;
     let pool = db::pool();
     let sql = format!(
-        "INSERT INTO assistant_conversations (user_id, title, system_prompt, agent, codex_cwd, codex_provider, codex_model, codex_reasoning_level, workspace_mode, source_cwd, workspace_id, workspace_state, claude_model) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13) RETURNING {}",
+        "INSERT INTO assistant_conversations (user_id, title, system_prompt, agent, codex_cwd, codex_provider, codex_model, codex_reasoning_level, workspace_mode, source_cwd, workspace_id, workspace_state, claude_model, claude_provider, claude_reasoning_level) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15) RETURNING {}",
         CONVERSATION_COLUMNS
     );
     let rec = query_as::<_, ConversationRecord>(sqlx::AssertSqlSafe(sql))
@@ -148,14 +150,16 @@ pub async fn create_conversation(user_id: &str, conversation: NewConversation<'_
         .bind(system_prompt)
         .bind(agent)
         .bind(codex_cwd)
-        .bind(codex_provider)
+        .bind(if agent == "codex" { provider } else { None })
         .bind(if agent == "codex" { model } else { None })
-        .bind(codex_reasoning_level)
+        .bind(if agent == "codex" { reasoning_level } else { None })
         .bind(if parallel.is_some() { "parallel" } else { "shared" })
         .bind(parallel.map(|p| p.0))
         .bind(parallel.map(|p| p.1))
         .bind(if parallel.is_some() { "pending" } else { "ready" })
         .bind(if agent == "claude" { model } else { None })
+        .bind(if agent == "claude" { provider } else { None })
+        .bind(if agent == "claude" { reasoning_level } else { None })
         .fetch_one(pool)
         .await?;
     crate::assistant_events::notify(Some(user_id), "conversations");
@@ -629,7 +633,7 @@ pub async fn set_codex_settings(
 }
 
 pub async fn set_claude_settings(
-    conversation_id: i64, user_id: &str, model: Option<&str>,
+    conversation_id: i64, user_id: &str, provider: Option<&str>, model: Option<&str>, reasoning_level: Option<&str>,
 ) -> anyhow::Result<Option<ConversationRecord>> {
     // Use the same writer transaction as message submission to protect queued snapshots.
     let mut tx = db::pool().begin_with("BEGIN IMMEDIATE").await?;
@@ -639,9 +643,9 @@ pub async fn set_claude_settings(
     let Some((agent, archived)) = current else { return Ok(None) };
     if agent != "claude" { return Err(ConversationSettingsError::NotClaude.into()); }
     if archived { return Err(ConversationSettingsError::Archived.into()); }
-    query("UPDATE assistant_conversations SET claude_model=?3,
+    query("UPDATE assistant_conversations SET claude_model=?3, claude_provider=?4, claude_reasoning_level=?5,
            updated_at=CAST(unixepoch('subsec') * 1000000 AS INTEGER) WHERE id=?1 AND user_id=?2")
-        .bind(conversation_id).bind(user_id).bind(model).execute(&mut *tx).await?;
+        .bind(conversation_id).bind(user_id).bind(model).bind(provider).bind(reasoning_level).execute(&mut *tx).await?;
     let sql = format!("SELECT {CONVERSATION_COLUMNS} FROM assistant_conversations WHERE id=?1 AND user_id=?2");
     let record = query_as::<_, ConversationRecord>(sqlx::AssertSqlSafe(sql))
         .bind(conversation_id).bind(user_id).fetch_one(&mut *tx).await?;
@@ -1023,9 +1027,9 @@ mod paging_tests {
             title: None,
             agent: "codex",
             codex_cwd: Some("project"),
-            codex_provider: Some("relay"),
+            provider: Some("relay"),
             model: Some("model-a"),
-            codex_reasoning_level: Some("xhigh"),
+            reasoning_level: Some("xhigh"),
             parallel: Some(("source", workspace_id)),
         })
         .await
