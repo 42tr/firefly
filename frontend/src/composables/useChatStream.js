@@ -95,7 +95,8 @@ export function useChatStream({
   const setJobTiming = (jobId, { startedAt, completedAt, status, error }) => {
     if (!jobId) return
     if (status && localSubmissions.size) {
-      pendingJobStates.set(jobId, { status,
+      pendingJobStates.set(jobId, { ...pendingJobStates.get(jobId), status,
+        ...(startedAt ? { startedAt } : {}),
         error: error ?? (status === 'running' ? '' : pendingJobStates.get(jobId)?.error || '') })
     }
     for (const message of messages.value) {
@@ -938,6 +939,10 @@ export function useChatStream({
         })
       }
       advanceProcessingState(optimisticMessage, pendingJobStates.get(optimisticMessage.generationJobId))
+      // A stream can start before the acknowledgement links this bubble to its
+      // job. Preserve that server time even if the job has already finished.
+      const startedAt = data.message?.processing_started_at || pendingJobStates.get(optimisticMessage.generationJobId)?.startedAt
+      if (startedAt) (existing || optimisticMessage).jobStartedAt = startedAt
       if (existing) {
         advanceProcessingState(existing, { status: optimisticMessage.processingStatus, error: optimisticMessage.processingError })
         messages.value = messages.value.filter(message => message !== optimisticMessage)

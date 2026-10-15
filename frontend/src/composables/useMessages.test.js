@@ -15,6 +15,31 @@ const { useMessages } = await server.ssrLoadModule('/src/composables/useMessages
 const { useMessageTimeline } = await server.ssrLoadModule('/src/composables/useMessageTimeline.js')
 const { getProcessDurationMs } = await server.ssrLoadModule('/src/composables/processDuration.js')
 
+test('queued history displays each turn’s actual send time after reload', t => {
+  t.mock.timers.enable({ apis: ['Date'], now: new Date('2026-10-16T02:00:00').getTime() })
+  let timeline
+  const queuedAt = '2026-10-16T00:53:00'
+  const startedTimes = [queuedAt, '2026-10-16T01:05:00', '2026-10-16T01:27:00']
+  const { createApp } = createRenderer({ createComment: () => ({}), insert() {}, remove() {}, parentNode() {}, nextSibling() {} })
+  const app = createApp({ setup() {
+    const model = useMessages()
+    model.messages.value = model.transformServerMessages(startedTimes.flatMap((startedAt, index) => {
+      const timing = { generation_job_id: `job-${index}`, processing_status: 'completed', processing_started_at: startedAt }
+      return [
+        { id: index * 2 + 1, role: 'user', content: 'continue', created_at: queuedAt, ...timing },
+        { id: index * 2 + 2, role: 'assistant', content: 'answer', created_at: startedAt, ...timing },
+      ]
+    }))
+    timeline = useMessageTimeline({ messages: model.messages, activeConversationId: ref(1) })
+    return () => null
+  } })
+  app.mount({})
+  t.after(() => app.unmount())
+  const questions = timeline.groupedMessages.value.filter(item => item.msg?.role === 'user')
+  assert.deepEqual(questions.map(item => item.timeLabel), ['00:53', '01:05', '01:27'])
+  assert.deepEqual(questions.map(item => item.timeValue), startedTimes.map(time => new Date(time).toISOString()))
+})
+
 test('reloaded compact history uses persisted job duration even when all process records were saved at completion', t => {
   let timeline
   const { createApp } = createRenderer({ createComment: () => ({}), insert() {}, remove() {}, parentNode() {}, nextSibling() {} })
