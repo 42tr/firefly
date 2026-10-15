@@ -204,6 +204,13 @@
   align-self: stretch;
 }
 
+.message.latest-reply {
+  display: flex;
+  flex-direction: column;
+  justify-content: flex-end;
+  animation: none;
+}
+
 .message.chart,
 
 .message-content {

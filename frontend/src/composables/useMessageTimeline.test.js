@@ -22,9 +22,12 @@ test('only the latest reply stays outside the process through streaming, complet
   messages.value.push({ role: 'tool', kind: 'tool-run', jobId: 'live', id: 'call', status: 'running' })
   assert.deepEqual(timeline.groupedMessages.value.map(item => item.type), ['msg', 'process', 'msg'])
   assert.equal(replies()[0].key, originalKey)
+  const originalMessageKey = replies()[0].messageKey
   messages.value.push({ role: 'assistant', jobId: 'live', content: 'new reply' })
   assert.deepEqual(timeline.groupedMessages.value.map(item => item.type), ['msg', 'process', 'msg'])
   assert.deepEqual(replies().map(item => item.msg.content), ['new reply'])
+  assert.equal(replies()[0].key, originalKey)
+  assert.notEqual(replies()[0].messageKey, originalMessageKey)
   assert.equal(timeline.groupedMessages.value[1].steps[0].content, 'visible progress note')
   const replyKey = replies()[0].key
   messages.value.at(-1).content += ' with more text'
@@ -33,6 +36,7 @@ test('only the latest reply stays outside the process through streaming, complet
   assert.deepEqual(replies().map(item => item.msg.content), ['new reply with more text'])
   messages.value[0].processingStatus = 'completed'
   messages.value = messages.value.map(message => ({ ...message, status: 'completed' }))
+  assert.equal(replies()[0].key, replyKey)
   assert.deepEqual(timeline.groupedMessages.value.map(item => item.type), ['msg', 'process', 'msg'])
   assert.deepEqual(replies().map(item => item.msg.content), ['new reply with more text'])
   assert.equal(messages.value[1].content, 'visible progress note')

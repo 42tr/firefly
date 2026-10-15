@@ -15,7 +15,7 @@ const welcomeMessage = () => [
 export function useMessages() {
   const messages = ref([])
   const isLoadingMessages = ref(false)
-  const { chatPanel, isPinnedToBottom, scrollToBottom } = useMessageScroll()
+  const { chatPanel, isPinnedToBottom, scrollToBottom, vStableReply } = useMessageScroll()
 
   const { safeParseJson } = useMarkdown()
   const { renderChart, disposeAllCharts, extractEchartsFromText, extractEchartsFromTool, resolveChartTitle } = useEcharts()
@@ -322,6 +322,7 @@ export function useMessages() {
     isPinnedToBottom,
     welcomeMessage,
     scrollToBottom,
+    vStableReply,
     normalizeAttachments,
     transformServerMessages,
     loadConversationMessages,

@@ -262,6 +262,7 @@ const {
   isPinnedToBottom,
   welcomeMessage,
   scrollToBottom,
+  vStableReply,
   normalizeAttachments,
   transformServerMessages,
   loadConversationMessages,
@@ -846,8 +847,9 @@ onMounted(() => {
               />
               <div
                 v-else
+                v-stable-reply="item.latestReply ? item.msg : null"
                 class="message"
-                :class="[item.msg.role, item.msg.chartOption ? 'chart' : '', item.msg.kind || '']"
+                :class="[item.msg.role, item.msg.chartOption ? 'chart' : '', item.msg.kind || '', { 'latest-reply': item.latestReply }]"
               >
               <div class="message-content">
                 <div v-if="item.msg.title" class="message-title">{{ item.msg.title }}</div>
@@ -855,6 +857,7 @@ onMounted(() => {
                 <ToolOutput v-else-if="item.msg.imageOutput" :value="item.msg.imageOutput" :resolve-image-url="resolveImageUrl" />
                 <MarkdownMessage
                   v-else-if="item.msg.role === 'assistant'"
+                  :key="item.messageKey"
                   :html="renderMessageHtml(item.msg)"
                 />
                 <div v-else class="plain-text">{{ item.msg.content }}</div>

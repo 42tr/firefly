@@ -124,8 +124,9 @@ export function useMessageTimeline({ messages, activeConversationId, transformSe
       // 流式与历史记录均只在消息区显示最新一条文字回复，较早的说明收进过程块。
       // 最新回复之后的工具步骤也并入过程，图表和图片等结果仍保持可见。
       let resultStart = segment.length
+      let latestReply = null
       for (let k = segment.length - 1; k >= 0; k -= 1) {
-        if (isReplyTextMessage(segment[k])) { resultStart = k; break }
+        if (isReplyTextMessage(segment[k])) { resultStart = k; latestReply = segment[k]; break }
       }
       while (resultStart > 0 && isResultMessage(segment[resultStart - 1])
         && !isReplyTextMessage(segment[resultStart - 1])) resultStart -= 1
@@ -189,7 +190,15 @@ export function useMessageTimeline({ messages, activeConversationId, transformSe
       })
       flushSteps()
       tailResults.forEach((resultMsg) => {
-        pushItem({ type: 'msg', msg: resultMsg, key: getMsgKey(resultMsg) })
+        const messageKey = getMsgKey(resultMsg)
+        const isLatestReply = resultMsg === latestReply
+        const anchor = list[i - 1]?.role === 'user' ? list[i - 1] : segment[0]
+        const jobId = resultMsg.jobId || anchor.generationJobId
+        // Keep the reply's outer element through replacement; its Markdown
+        // child still belongs to the individual message and resets with it.
+        const key = isLatestReply ? `reply-${JSON.stringify([activeConversationId.value,
+          jobId ? ['job', jobId] : ['message', anchor.messageId ?? getMsgKey(anchor)]])}` : messageKey
+        pushItem({ type: 'msg', msg: resultMsg, key, messageKey, latestReply: isLatestReply })
       })
       i = j
     }

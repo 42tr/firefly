@@ -19,7 +19,7 @@ class StreamingUI(unittest.TestCase):
         cls.browser = playwright.chromium.launch(headless=True)
         cls.addClassCleanup(cls.browser.close)
 
-    def exercise(self, width, height, ending='done'):
+    def open_stream_page(self, width, height, records=None):
         page = self.browser.new_page(viewport={'width': width, 'height': height})
         self.addCleanup(page.context.close)
         errors = []
@@ -42,9 +42,10 @@ class StreamingUI(unittest.TestCase):
           };
           Object.defineProperty(navigator, 'clipboard', {value: {writeText: async () => {}}});
         ''')
-        active = True
-        records = [dict(id=1, conversation_id=1, role='user', content='检查流式界面',
-                        generation_job_id='job', processing_status='running')]
+        state = {'active': True}
+        if records is None:
+            records = [dict(id=1, conversation_id=1, role='user', content='检查流式界面',
+                            generation_job_id='job', processing_status='running')]
         row = dict(id=1, title='流式回归', agent='firefly', status='running',
                    workspace_mode='shared', workspace_state='ready', is_archived=False)
 
@@ -56,7 +57,7 @@ class StreamingUI(unittest.TestCase):
             elif path.endswith('/messages'):
                 data = {'messages': records, 'has_more': False}
             elif path.endswith('/active-generation'):
-                data = {'active': active, 'job_id': 'job' if active else None}
+                data = {'active': state['active'], 'job_id': 'job' if state['active'] else None}
             elif path.endswith('/process'):
                 data = {'messages': records}
             elif path.endswith('/read'):
@@ -74,6 +75,10 @@ class StreamingUI(unittest.TestCase):
         base = os.getenv('FIREFLY_TEST_URL', 'http://127.0.0.1:5297/').rstrip('/')
         page.goto(base + '/?conversation=1')
         page.wait_for_function('typeof window.emitStream === "function"')
+        return page, records, row, state, image_requests, errors
+
+    def exercise(self, width, height, ending='done'):
+        page, records, row, state, image_requests, errors = self.open_stream_page(width, height)
 
         def emit(event, **data):
             page.evaluate('([event, data]) => window.emitStream(event, data)', [event, data])
@@ -169,7 +174,7 @@ class StreamingUI(unittest.TestCase):
         expect(page.locator('.process-step-fragment').last).to_contain_text('继续检查中。')
 
         active_height = panel.evaluate('(node) => node.clientHeight')
-        active = False
+        state['active'] = False
         row['status'] = 'completed'
         if ending == 'stop':
             page.get_by_role('button', name='停止当前回复', exact=True).click()
@@ -205,6 +210,107 @@ class StreamingUI(unittest.TestCase):
         self.assertLessEqual(page.evaluate('document.documentElement.scrollWidth'), width)
         self.assertEqual(errors, [])
         print(f'{width}px streaming metrics: {metrics}')
+
+    def exercise_replacement(self, width):
+        for reading in (False, True):
+            with self.subTest(width=width, reading_history=reading):
+                records = []
+                for index in range(10):
+                    records.extend([
+                        dict(id=index * 2 + 1, role='user', content=f'历史问题 {index}',
+                             generation_job_id=f'history-{index}', processing_status='completed'),
+                        dict(id=index * 2 + 2, role='assistant', content=f'历史回复 {index}。' + '历史记录用于保持阅读位置。' * 30,
+                             generation_job_id=f'history-{index}', processing_status='completed'),
+                    ])
+                records.append(dict(id=21, role='user', content='检查回复切换',
+                                    generation_job_id='job', processing_status='running'))
+                page, records, row, state, _, errors = self.open_stream_page(width, 850, records)
+                page.evaluate("emitStream('stream_started', {job_id:'job'})")
+                page.evaluate("emitStream('assistant_delta', {delta:'较长的中间说明，用来检查消息切换时的高度变化。'.repeat(200)})")
+                page.wait_for_function('''() => {
+                    const panel = document.querySelector('.chat-panel');
+                    return [...document.querySelectorAll('.latest-reply')].at(-1)?.offsetHeight > 1000
+                      && panel.scrollHeight - panel.scrollTop - panel.clientHeight <= 1;
+                }''')
+                if reading:
+                    marker = page.locator('.message.assistant').nth(7)
+                    marker.scroll_into_view_if_needed()
+                    box = marker.bounding_box()
+                    page.mouse.move(box['x'] + 20, max(120, box['y'] + 20))
+                    page.mouse.wheel(0, -180)
+                    expect(page.get_by_role('button', name='回到底部', exact=True)).to_be_visible()
+                    page.wait_for_timeout(200)
+                page.evaluate('''() => {
+                    const panel = document.querySelector('.chat-panel');
+                    const marker = [...document.querySelectorAll('.message.assistant')]
+                      .find(node => node.textContent.startsWith('历史回复 7'));
+                    window.replacementSamples = [];
+                    window.sampleReplacement = true;
+                    window.replyElement = [...document.querySelectorAll('.latest-reply')].at(-1);
+                    const sample = () => {
+                      replacementSamples.push({top:panel.scrollTop, height:panel.scrollHeight,
+                        stage:window.replacementStage, markerY:marker.getBoundingClientRect().y});
+                      if (sampleReplacement) requestAnimationFrame(sample);
+                    };
+                    sample();
+                }''')
+                page.evaluate('''async () => {
+                    for (let i = 0; i < 4; i++) {
+                      window.replacementStage = 'tool-' + i;
+                      emitStream('tool_call', {id:'call-' + i, name:'command', arguments:{command:'example'}});
+                      emitStream('tool_result', {id:'call-' + i, name:'command', result:'done'});
+                      await new Promise(resolve => setTimeout(resolve, 80));
+                      window.replacementStage = 'reply-' + i;
+                      emitStream('assistant_delta', {delta:i % 2 ? '继续输出。'.repeat(120) : '新的简短进度。'});
+                      await new Promise(resolve => setTimeout(resolve, 160));
+                    }
+                    window.replacementStage = 'final';
+                    emitStream('tool_call', {id:'final', name:'command', arguments:{command:'example'}});
+                    emitStream('tool_result', {id:'final', name:'command', result:'done'});
+                    emitStream('assistant_delta', {delta:'最终回答。'});
+                }''')
+                expect(page.locator('.latest-reply').last).to_have_text('最终回答。')
+                state['active'] = False
+                row['status'] = 'completed'
+                page.evaluate("window.replacementStage = 'done'; emitStream('assistant_done')")
+                expect(page.locator('.input-status')).to_have_class('input-status input-status-idle')
+                page.wait_for_timeout(350)
+                metrics = page.evaluate('''() => {
+                    sampleReplacement = false;
+                    const rows = replacementSamples;
+                    const deltas = rows.slice(1).map((row, i) => row.top - rows[i].top);
+                    return {minStep:Math.min(...deltas), backwards:deltas.filter(delta => delta < -1).length,
+                      markerDrift:Math.max(...rows.map(row => Math.abs(row.markerY - rows[0].markerY))),
+                      drops:rows.slice(1).flatMap((row,i) => row.top < rows[i].top - 1 ? [{before:rows[i], after:row}] : []),
+                      sameReplyElement:replyElement === [...document.querySelectorAll('.latest-reply')].at(-1)};
+                }''')
+                self.assertTrue(metrics['sameReplyElement'])
+                self.assertEqual(metrics['backwards'], 0, metrics)
+                if reading:
+                    self.assertLessEqual(metrics['markerDrift'], 1, metrics)
+                else:
+                    reclaim = page.evaluate('''() => {
+                        const panel = document.querySelector('.chat-panel');
+                        const reply = [...document.querySelectorAll('.latest-reply')].at(-1);
+                        const content = reply.querySelector('.message-content');
+                        const before = content.getBoundingClientRect().top;
+                        const reserved = parseFloat(reply.style.minHeight);
+                        panel.dispatchEvent(new WheelEvent('wheel', {deltaY:-100}));
+                        return {reserved, remaining:reply.style.minHeight, drift:content.getBoundingClientRect().top - before};
+                    }''')
+                    self.assertGreater(reclaim['reserved'], 1000)
+                    self.assertEqual(reclaim['remaining'], '')
+                    self.assertLessEqual(abs(reclaim['drift']), 1, reclaim)
+                self.assertLessEqual(page.evaluate('document.documentElement.scrollWidth'), width)
+                self.assertEqual(errors, [])
+                print(f'{width}px replacement metrics (reading={reading}): {metrics}')
+                page.close()
+
+    def test_replacement_desktop(self):
+        self.exercise_replacement(1280)
+
+    def test_replacement_mobile(self):
+        self.exercise_replacement(390)
 
     def test_desktop(self):
         self.exercise(1280, 800)
