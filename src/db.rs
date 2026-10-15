@@ -129,11 +129,18 @@ pub async fn optimize() -> anyhow::Result<()> {
     .await
 }
 
-/// Explicit initialization only: never silently create an empty production DB.
+/// Explicit provisioning ahead of startup; requires an absolute path so the
+/// new database location is chosen deliberately. Startup itself creates a
+/// missing database through `init`.
 pub async fn initialize(url: &str) -> anyhow::Result<()> {
     let options = options(url, false)?;
-    let path = options.get_filename();
-    anyhow::ensure!(path.is_absolute(), "initialization requires an absolute database path");
+    anyhow::ensure!(options.get_filename().is_absolute(), "initialization requires an absolute database path");
+    create_database(&options).await
+}
+
+/// Creates `options`' database file owner-only and applies all migrations.
+/// `create_new` refuses to replace an existing file.
+async fn create_database(options: &SqliteConnectOptions) -> anyhow::Result<()> {
     let mut file = std::fs::OpenOptions::new();
     file.write(true).create_new(true);
     #[cfg(unix)]
@@ -141,8 +148,8 @@ pub async fn initialize(url: &str) -> anyhow::Result<()> {
         use std::os::unix::fs::OpenOptionsExt;
         file.mode(0o600);
     }
-    file.open(path)?;
-    let pool = SqlitePoolOptions::new().max_connections(1).connect_with(options).await?;
+    file.open(options.get_filename())?;
+    let pool = SqlitePoolOptions::new().max_connections(1).connect_with(options.clone()).await?;
     check_version(&pool).await?;
     MIGRATOR.run(&pool).await?;
     sqlx::query("PRAGMA wal_checkpoint(TRUNCATE)").execute(&pool).await?;
@@ -150,9 +157,32 @@ pub async fn initialize(url: &str) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Mirrors SQLx's URL parsing to spot databases that never touch disk:
+/// `sqlite::memory:` and `?mode=memory` URLs have no file to create.
+fn is_in_memory(url: &str) -> bool {
+    let rest = url.trim_start_matches("sqlite://").trim_start_matches("sqlite:");
+    let (database, params) = rest.split_once('?').unwrap_or((rest, ""));
+    database == ":memory:" || params.split('&').any(|param| param == "mode=memory")
+}
+
+/// Creates the database for `url` when it names a file that does not exist
+/// yet, returning true when one was created. Existing files pass through so
+/// the migrations-table check in `init` can reject a foreign database, and
+/// in-memory URLs have nothing to create.
+async fn create_database_if_missing(url: &str, options: &SqliteConnectOptions) -> anyhow::Result<bool> {
+    if is_in_memory(url) || options.get_filename().exists() {
+        return Ok(false);
+    }
+    let path = options.get_filename().to_path_buf();
+    create_database(options).await.with_context(|| format!("failed to create SQLite database {}", path.display()))?;
+    tracing::info!("created SQLite database {} and applied migrations", path.display());
+    Ok(true)
+}
+
 pub async fn init(url: &str) -> anyhow::Result<()> {
     let cfg = crate::config::get();
     let opts = options(url, false)?;
+    create_database_if_missing(url, &opts).await?;
     let pool = SqlitePoolOptions::new()
         .after_connect(|conn, _| Box::pin(crate::db_functions::install(conn)))
         .max_connections(cfg.db_max_connections.max(2))
@@ -160,13 +190,13 @@ pub async fn init(url: &str) -> anyhow::Result<()> {
         .idle_timeout(Duration::from_secs(cfg.db_idle_timeout_secs))
         .connect_with(opts)
         .await
-        .context("failed to open SQLite database (initialize it with --init-db first)")?;
+        .context("failed to open SQLite database; check DATABASE_URL and directory permissions")?;
     check_version(&pool).await?;
     let initialized: bool =
         sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='_sqlx_migrations')")
             .fetch_one(&pool)
             .await?;
-    anyhow::ensure!(initialized, "database was not initialized; use --init-db explicitly");
+    anyhow::ensure!(initialized, "database file exists but is not initialized; move it aside or delete it so startup can create a fresh one");
     MIGRATOR.run(&pool).await.context("SQLite migrations failed")?;
     DB_POOL.set(pool).map_err(|_| anyhow::anyhow!("database pool already initialized"))?;
     Ok(())
@@ -262,6 +292,53 @@ mod tests {
         retry_busy("test write", write).await.unwrap();
         release.await.unwrap();
         let count: i64 = sqlx::query_scalar("SELECT count(*) FROM assistant_conversations").fetch_one(&holder).await.unwrap();
+        assert_eq!(count, 1);
+    }
+
+    #[test]
+    fn db_tests_in_memory_urls_have_no_file_to_create() {
+        assert!(is_in_memory("sqlite::memory:"));
+        assert!(is_in_memory("sqlite://:memory:"));
+        assert!(is_in_memory("sqlite://scratch?cache=shared&mode=memory"));
+        assert!(!is_in_memory("sqlite://firefly.sqlite3"));
+        assert!(!is_in_memory("sqlite:///var/lib/firefly/firefly.sqlite3?cache=shared"));
+    }
+
+    #[tokio::test]
+    async fn db_tests_create_database_if_missing_skips_in_memory() {
+        let opts = options("sqlite::memory:", false).unwrap();
+        assert!(!create_database_if_missing("sqlite::memory:", &opts).await.unwrap());
+    }
+
+    #[tokio::test]
+    async fn db_tests_create_database_if_missing_is_owner_only_and_keeps_data() {
+        let directory = tempfile::tempdir().unwrap();
+        let url = format!("sqlite://{}", directory.path().join("auto.sqlite3").display());
+        let opts = options(&url, false).unwrap();
+
+        assert!(create_database_if_missing(&url, &opts).await.unwrap());
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            assert_eq!(std::fs::metadata(opts.get_filename()).unwrap().permissions().mode() & 0o777, 0o600);
+        }
+
+        let first = SqlitePoolOptions::new().max_connections(1).connect_with(opts.clone()).await.unwrap();
+        let migrated: bool =
+            sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM sqlite_master WHERE type='table' AND name='_sqlx_migrations')")
+                .fetch_one(&first)
+                .await
+                .unwrap();
+        assert!(migrated);
+        sqlx::query("INSERT INTO assistant_conversations (user_id,system_prompt,title) VALUES ('test','','keep')")
+            .execute(&first)
+            .await
+            .unwrap();
+        first.close().await;
+
+        assert!(!create_database_if_missing(&url, &opts).await.unwrap());
+        let second = SqlitePoolOptions::new().max_connections(1).connect_with(opts).await.unwrap();
+        let count: i64 = sqlx::query_scalar("SELECT count(*) FROM assistant_conversations").fetch_one(&second).await.unwrap();
         assert_eq!(count, 1);
     }
 }
