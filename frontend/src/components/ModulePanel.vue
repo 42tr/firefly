@@ -2,7 +2,6 @@
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 import UiIcon from './UiIcon.vue'
 import ModuleApp from './ModuleApp.vue'
-import ModuleIndicator from './ModuleIndicator.vue'
 import { useModules, moduleRequest, jsonRequest } from '../composables/useModules'
 import { formatAppDateTime } from '../composables/appTimezone.js'
 
@@ -17,7 +16,7 @@ const { modules, diagnostics, loading, error, load, save, activeIndicators } = u
 const opened = ref(false), dialog = ref(null), selectedId = ref(''), draft = ref({}), enabled = ref(false), jobs = ref([]), busy = ref(false), notice = ref('')
 const discovered = ref([]), toolName = ref(''), argumentsText = ref('{}'), toolResult = ref(''), runs = ref([]), activePage = ref(null)
 const selected = computed(() => modules.value.find(m => m.id === selectedId.value))
-const entries = computed(() => modules.value.filter(m => m.enabled).flatMap(module => (module.pages || []).map(page => ({ module, page }))))
+const entries = computed(() => modules.value.filter(m => m.enabled).flatMap(module => (module.pages || []).map(page => ({ module, page, indicator: activeIndicators.value.find(value => value.module_id === module.id) || null }))))
 watch(activePage, value => emit('page-open', Boolean(value)))
 const fields = computed(() => Object.entries(selected.value?.config_schema?.properties || {}).map(([name, schema]) => ({ name, schema })))
 const stateLabels = { disabled: '已停用', ready: '可用', error: '连接异常', running: '执行中' }
@@ -84,7 +83,7 @@ onBeforeUnmount(() => dialog.value?.close())
 
 <template>
   <template v-if="showPages">
-    <button v-for="entry in entries" :key="entry.module.id + '/' + entry.page.id" class="button ghost small" type="button" role="menuitem" @click="activePage = entry"><UiIcon :name="entry.page.icon || 'file'" /><span>{{ entry.page.title }}</span><ModuleIndicator :indicator="activeIndicators.find(value => value.module_id === entry.module.id)" /></button>
+    <button v-for="entry in entries" :key="entry.module.id + '/' + entry.page.id" class="button ghost small" type="button" role="menuitem" :title="entry.indicator?.label" @click="activePage = entry"><UiIcon :name="entry.page.icon || 'file'" :class="entry.indicator && 'indicator-' + entry.indicator.tone" /><span>{{ entry.page.title }}</span><span v-if="entry.indicator" class="indicator-label">{{ entry.indicator.label }}</span></button>
   </template>
   <button v-if="showManagement && showTrigger" class="button ghost small" type="button" role="menuitem" aria-haspopup="dialog" @click="show"><UiIcon name="puzzle" /><span>扩展模块</span></button>
   <ModuleApp v-if="showPages && activePage" :key="activePage.module.id + '/' + activePage.page.id" :module="activePage.module" :page="activePage.page" @close="activePage = null; emit('closed')" />
@@ -128,6 +127,9 @@ onBeforeUnmount(() => dialog.value?.close())
 </template>
 
 <style scoped>
+/* Indicator tones recolor the page icon instead of appending a separate badge. */
+.ui-icon.indicator-info { color: #2362a2; } .ui-icon.indicator-warning { color: #956211; } .ui-icon.indicator-error { color: #b73b44; } .ui-icon.indicator-success { color: #23764a; }
+.indicator-label { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0; }
 .modules-dialog { width: min(900px, calc(100vw - 24px)); max-width: none; max-height: 90dvh; padding: 0; border: 1px solid var(--border-soft); border-radius: 14px; color: var(--text-primary); background: var(--bg-panel); }
 .modules-dialog::backdrop { background: rgba(15,23,42,.35); }
 header { position: sticky; top: 0; z-index: 1; display: flex; justify-content: space-between; align-items: center; padding: 16px; border-bottom: 1px solid var(--border-soft); background: var(--bg-panel); }
