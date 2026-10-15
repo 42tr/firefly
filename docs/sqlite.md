@@ -11,7 +11,7 @@ cargo test --locked
 cargo build --locked
 ```
 
-仅新安装执行显式初始化，目录须已存在，目标文件必须不存在：
+数据库文件不存在时，启动会自动以 0600 权限创建并执行全部基线迁移，父目录须已存在且可写。已存在的文件不会被自动接管：缺少 `_sqlx_migrations` 表时启动拒绝继续。也可用显式初始化预先建库，要求绝对路径且目标文件必须不存在：
 
 ```sh
 ./target/debug/firefly --init-db sqlite:///absolute/new-install/firefly.sqlite3

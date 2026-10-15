@@ -23,11 +23,10 @@ chmod 600 .env
 **初始化前编辑 `.env`**，替换 `AUTH_PASSWORD`（至少 9 个字符，使用强密码）和 `JWT_SECRET`（至少 32 字节）。可用 `openssl rand -hex 32` 分别生成两个独立随机值。本机 HTTP 访问保留 `SITE_URL=http://localhost:3003`、`COOKIE_SECURE=false`；HTTPS 部署改为实际站点地址和 `COOKIE_SECURE=true`。示例凭据会被拒绝，不能直接启动。
 
 ```sh
-./firefly --init-db "sqlite://$(pwd)/firefly.sqlite3"
 ./firefly
 ```
 
-访问 `http://localhost:3003/`，输入本站访问密码；`/health` 为健康检查。初始化只用于不存在的新数据库，已有数据库直接启动。始终从同一个安装目录启动，以确保配置、数据库、附件和工作区指向同一实例。
+访问 `http://localhost:3003/`，输入本站访问密码；`/health` 为健康检查。数据库文件不存在时启动会自动创建（0600 权限）并执行基线迁移，也可用 `./firefly --init-db "sqlite://$(pwd)/firefly.sqlite3"` 预先显式建库。始终从同一个安装目录启动，以确保配置、数据库、附件和工作区指向同一实例。
 
 ### 从源码安装
 
@@ -42,7 +41,6 @@ chmod 600 .env
 npm ci
 npm run build
 cargo build --release --locked
-./target/release/firefly --init-db "sqlite://$(pwd)/firefly.sqlite3"
 ./target/release/firefly
 ```
 
