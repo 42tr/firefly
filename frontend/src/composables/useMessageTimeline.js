@@ -4,7 +4,16 @@ import { apiFetch } from '@/utils/http'
 import { useAssistantRealtime } from './useAssistantRealtime.js'
 import { appDateParts, formatAppDateTime } from './appTimezone.js'
 
-export function useMessageTimeline({ messages, activeConversationId, transformServerMessages, includeQueued = false }) {
+export function useMessageTimeline({ messages, activeConversationId, transformServerMessages, includeQueued = false, isStreaming = ref(false) }) {
+  // Remember live turns through completion and snapshot replacement. Folding is
+  // explicit for this visit; history still uses the compact result/process view.
+  const liveTurns = new Set()
+  const collapsedLiveTurns = reactive(new Set())
+  const collapseLiveTurn = key => collapsedLiveTurns.add(key)
+  watch(activeConversationId, () => {
+    liveTurns.clear()
+    collapsedLiveTurns.clear()
+  }, { flush: 'sync' })
   // 稳定的消息 key：按对象身份分配自增 id
   const msgUidMap = new WeakMap()
   let msgUidCounter = 0
@@ -74,6 +83,7 @@ export function useMessageTimeline({ messages, activeConversationId, transformSe
   }
 
   const groupedMessages = computed(() => {
+    void activeConversationId.value
     void processDetailTick.value
     const list = orderMessagesByTurn(messages.value, { includeQueued })
     const items = []
@@ -120,6 +130,8 @@ export function useMessageTimeline({ messages, activeConversationId, transformSe
       let j = i
       while (j < list.length && list[j].role !== 'user') j += 1
       const segment = list.slice(i, j)
+      const turnKey = segment.find(message => message.jobId)?.jobId || getMsgKey(segment[0])
+      if (isStreaming.value && j === list.length) liveTurns.add(turnKey)
       // 结果区以「最后一条 assistant 文本消息」定位：它之后的工具步骤（如收尾命令）
       // 仍收进过程块，保证回复是外面最后一条可见消息；整轮没有文本回复时退回旧规则
       let resultStart = segment.length
@@ -158,6 +170,7 @@ export function useMessageTimeline({ messages, activeConversationId, transformSe
             steps,
             timingSteps,
             running,
+            collapseRequested: collapsedLiveTurns.has(turnKey),
             jobId,
             detailKey,
             detailQuery,
@@ -165,6 +178,25 @@ export function useMessageTimeline({ messages, activeConversationId, transformSe
           },
         )
         pendingSteps = []
+      }
+      if (liveTurns.has(turnKey) && !collapsedLiveTurns.has(turnKey)) {
+        const firstItem = items.length
+        for (const step of segment) {
+          if (isToolStep(step)) {
+            if (pendingSteps.length && pendingSteps[0].jobId !== step.jobId) flushSteps()
+            pendingSteps.push(step)
+          } else {
+            flushSteps()
+            pushItem({ type: 'msg', msg: step, key: getMsgKey(step) })
+          }
+        }
+        flushSteps()
+        if (!isStreaming.value && segment.filter(isReplyTextMessage).length > 1) {
+          const process = items.slice(firstItem).find(item => item.type === 'process')
+          if (process) process.collapseTurnKey = turnKey
+        }
+        i = j
+        continue
       }
       segment.slice(0, resultStart).forEach((stepMsg) => {
         if (isProcessStep(stepMsg)) {
@@ -280,5 +312,5 @@ export function useMessageTimeline({ messages, activeConversationId, transformSe
     }
   }
 
-  return { groupedMessages, loadingProcessJobs, processDetailErrors, loadProcessDetail }
+  return { groupedMessages, loadingProcessJobs, processDetailErrors, loadProcessDetail, collapseLiveTurn }
 }

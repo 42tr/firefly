@@ -170,6 +170,9 @@
 }
 
 .input-status-text { overflow: hidden; text-overflow: ellipsis; }
+.input-status-idle { visibility: hidden; }
+.collapse-process-notes { padding: 3px 6px; border: 0; background: transparent; color: var(--muted); font: inherit; font-size: 12px; cursor: pointer; }
+.collapse-process-notes:hover { color: var(--text-primary); }
 
 .input-status-dot {
   flex-shrink: 0;

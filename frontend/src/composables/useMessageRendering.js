@@ -18,8 +18,8 @@ export function useMessageRendering({ activeConversation, isStreaming, imagePrev
 
   // 流式输出期间，正在增长的消息每个 delta 都会全量重算 markdown
   // （marked + DOMPurify + DOMParser 重写链接），长消息下开销呈 O(n²)。
-  // 这里按固定间隔节流，定时器到点后通过 streamRenderTick 触发重渲染。
-  const STREAM_RENDER_INTERVAL_MS = 120
+  // 按解析耗时节流，定时器到点后通过 streamRenderTick 触发重渲染。
+  const STREAM_RENDER_INTERVAL_MS = 40
   const streamRenderTick = ref(0)
   let streamRenderTimer = null
 
@@ -40,13 +40,17 @@ export function useMessageRendering({ activeConversation, isStreaming, imagePrev
     const cached = cache.get(msg)
     const sameContext = cached && cached.cwd === cwd
     if (sameContext && cached.content === content) return cached.html
-    const remaining = cached ? STREAM_RENDER_INTERVAL_MS - (Date.now() - cached.renderedAt) : 0
+    // Slow devices/large messages get a larger budget instead of parsing at 60Hz.
+    const interval = cached ? Math.min(120, Math.max(STREAM_RENDER_INTERVAL_MS, cached.renderCost * 4)) : STREAM_RENDER_INTERVAL_MS
+    const remaining = cached ? interval - (Date.now() - cached.renderedAt) : 0
     if (streaming && sameContext && remaining > 0) {
       scheduleStreamRender(remaining)
       return cached.html
     }
+    const startedAt = Date.now()
     const html = enhanceCodeBlocks(rewriteWorkspaceLinks(renderMarkdown(content, { resolveUrl }), cwd))
-    cache.set(msg, { content, html, renderedAt: Date.now(), cwd })
+    const renderedAt = Date.now()
+    cache.set(msg, { content, html, renderedAt, renderCost: renderedAt - startedAt, cwd })
     return html
   }
 
@@ -78,7 +82,7 @@ export function useMessageRendering({ activeConversation, isStreaming, imagePrev
     return doc.body.innerHTML
   }
 
-  // 复制按钮经 v-html 渲染且会被流式重渲染替换，用事件委托处理点击
+  // MarkdownMessage 保留复制按钮节点；用事件委托处理注入 HTML 中的点击。
   const handleChatPanelClick = (event) => {
     const image = event.target?.closest?.('.markdown-body img, .tool-output-image-preview')
     if (image) {

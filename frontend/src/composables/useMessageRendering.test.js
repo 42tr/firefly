@@ -67,11 +67,11 @@ test('long conversation streams bound parse frequency and render a trailing delt
     messages.value.at(-1).content += ` delta${i}`
     await nextTick()
   }
-  assert.ok(parse.mock.callCount() - initial <= 4, '80 deltas over 400ms should require at most four reparses')
-  t.mock.timers.tick(120)
+  assert.ok(parse.mock.callCount() - initial <= 11, '80 deltas over 400ms should be batched rather than parsed per delta')
+  t.mock.timers.tick(40)
   await nextTick()
   assert.match(view.html().at(-1), /delta79/)
-  assert.equal(parse.mock.callCount() - initial, 4)
+  assert.equal(parse.mock.callCount() - initial, 10)
   // Every other turn stays cached even though the stream invalidates the feed render effect.
   assert.equal(view.html().length, 101)
 })
@@ -88,6 +88,28 @@ test('ending a stream flushes its final delta immediately', async t => {
   view.isStreaming.value = false
   await nextTick()
   assert.match(view.html(), /final delta/)
+})
+
+test('expensive Markdown parsing increases the budget and still flushes the trailing content', async t => {
+  t.mock.timers.enable({ apis: ['Date', 'setTimeout'], now: 1000 })
+  const originalParse = marked.parse
+  const parse = t.mock.method(marked, 'parse', (...args) => {
+    const html = originalParse(...args)
+    t.mock.timers.tick(20)
+    return html
+  })
+  const message = ref({ content: 'first' })
+  const view = mount(t, api => api.renderMessageHtml(message.value))
+  view.isStreaming.value = true
+  message.value.content += ' trailing'
+  await nextTick()
+  t.mock.timers.tick(40)
+  await nextTick()
+  assert.equal(parse.mock.callCount(), 1)
+  t.mock.timers.tick(40)
+  await nextTick()
+  assert.equal(parse.mock.callCount(), 2)
+  assert.match(view.html(), /trailing/)
 })
 
 test('switching the working directory invalidates cached links', async t => {

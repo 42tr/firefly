@@ -61,6 +61,7 @@ npm run dev -- --host 127.0.0.1 --port 5199
 FIREFLY_TEST_URL=http://127.0.0.1:5199 python3 scripts/test_local_login_ui.py
 FIREFLY_TEST_URL=http://127.0.0.1:5199 python3 scripts/test_conversation_archive_ui.py
 FIREFLY_TEST_URL=http://127.0.0.1:5199 python3 scripts/test_workflow_ui.py
+FIREFLY_TEST_URL=http://127.0.0.1:5199 python3 scripts/test_streaming_ui.py
 python3 scripts/test_modules_ui.py
 ```
 
