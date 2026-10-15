@@ -1,8 +1,9 @@
-import { ref, nextTick, watch, onBeforeUnmount } from 'vue'
+import { ref, nextTick } from 'vue'
 import { useMarkdown } from '@/composables/useMarkdown'
 import { useEcharts } from './useEcharts'
 import { apiFetch } from '@/utils/http'
 import { generatedImageOutput } from './generatedImage.js'
+import { useMessageScroll } from './useMessageScroll.js'
 
 const welcomeMessage = () => [
   {
@@ -14,66 +15,10 @@ const welcomeMessage = () => [
 export function useMessages() {
   const messages = ref([])
   const isLoadingMessages = ref(false)
-  const chatPanel = ref(null)
+  const { chatPanel, isPinnedToBottom, scrollToBottom } = useMessageScroll()
 
   const { safeParseJson } = useMarkdown()
   const { renderChart, disposeAllCharts, extractEchartsFromText, extractEchartsFromTool, resolveChartTitle } = useEcharts()
-
-  const NEAR_BOTTOM_THRESHOLD = 120
-
-  // 「贴底钉住」状态：用户上翻阅读历史时置 false，回到底部附近或强制滚动时置 true。
-  // 流式 delta、markdown 节流重渲染、图片加载等撑高内容时，只有 pinned 才跟随，
-  // 避免用 isNearBottom 即时判断——内容先撑高再判断会误判为用户离开了底部。
-  let pinnedToBottom = true
-  // pinnedToBottom 的响应式镜像，供「回到底部」悬浮按钮显隐使用
-  const isPinnedToBottom = ref(true)
-  let contentResizeObserver = null
-
-  const isNearBottom = () => {
-    const panel = chatPanel.value
-    if (!panel) return true
-    return panel.scrollHeight - panel.scrollTop - panel.clientHeight < NEAR_BOTTOM_THRESHOLD
-  }
-
-  const stickToBottom = () => {
-    const panel = chatPanel.value
-    if (panel) panel.scrollTop = panel.scrollHeight
-  }
-
-  const handlePanelScroll = () => {
-    pinnedToBottom = isNearBottom()
-    isPinnedToBottom.value = pinnedToBottom
-  }
-
-  watch(chatPanel, (panel, previous) => {
-    previous?.removeEventListener('scroll', handlePanelScroll)
-    contentResizeObserver?.disconnect()
-    contentResizeObserver = null
-    if (!panel) return
-    panel.addEventListener('scroll', handlePanelScroll, { passive: true })
-    // 内容高度变化（流式输出、节流重渲染、图片/图表加载）时，若仍处于贴底状态则自动跟随
-    const inner = panel.firstElementChild
-    if (inner && typeof ResizeObserver !== 'undefined') {
-      contentResizeObserver = new ResizeObserver(() => {
-        if (pinnedToBottom) stickToBottom()
-      })
-      contentResizeObserver.observe(inner)
-    }
-  })
-
-  onBeforeUnmount(() => {
-    contentResizeObserver?.disconnect()
-  })
-
-  // 用户主动操作（发送消息、切换会话）传 { force: true } 强制滚到底。
-  const scrollToBottom = async ({ force = false } = {}) => {
-    if (force) {
-      pinnedToBottom = true
-      isPinnedToBottom.value = true
-    }
-    await nextTick()
-    if (pinnedToBottom) stickToBottom()
-  }
 
   const normalizeAttachments = (items = []) => {
     if (!Array.isArray(items)) return []

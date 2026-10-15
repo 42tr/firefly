@@ -1,5 +1,6 @@
 <script setup>
 import UiIcon from './UiIcon.vue'
+import MarkdownMessage from './MarkdownMessage.vue'
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
 import ToolCallDetails from './ToolCallDetails.vue'
 import CommandGroup from './CommandGroup.vue'
@@ -19,6 +20,7 @@ const props = defineProps({
     type: Boolean,
     default: false,
   },
+  collapseRequested: { type: Boolean, default: false },
   // 过程详情正在按需加载中
   loading: {
     type: Boolean,
@@ -44,6 +46,9 @@ const displaySteps = computed(() => groupConsecutiveCommands(props.steps))
 
 // 默认保持收起；用户手动展开/折叠后以其选择为准
 const userChoice = ref(null)
+watch(() => props.collapseRequested, requested => {
+  if (requested) userChoice.value = false
+}, { immediate: true })
 const open = computed(() => userChoice.value ?? false)
 const toggle = () => {
   userChoice.value = !open.value
@@ -109,11 +114,11 @@ const summaryText = computed(() => {
       <div v-if="error" class="process-error" role="alert">{{ error }} <button type="button" class="button ghost small" :disabled="loading" @click="emit('expand')">重试</button></div>
       <div v-if="loading" role="status">正在加载执行详情…</div>
       <template v-for="(step, index) in displaySteps" :key="step.id || `step-${index}`">
-        <div
+        <MarkdownMessage
           v-if="step.role === 'assistant'"
-          class="process-step-fragment markdown-body"
-          v-html="renderMessageHtml(step)"
-        ></div>
+          class="process-step-fragment"
+          :html="renderMessageHtml(step)"
+        />
         <ToolCallDetails v-else-if="step.kind === 'handoff'" class="handoff-panel" :step="step"
           :conversation-id="conversationId" :job-id="jobId" :format-tool-value="formatToolValue" :resolve-image-url="resolveImageUrl">
           <template #summary><span class="handoff-label">任务移交</span><strong class="handoff-agent">{{ step.agent }}</strong>

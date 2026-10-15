@@ -17,6 +17,7 @@ import { provideModules } from './composables/useModules'
 import AmbientBackdrop from './components/AmbientBackdrop.vue'
 import FireflyMoreMenu from './components/FireflyMoreMenu.vue'
 import ProcessGroup from './components/ProcessGroup.vue'
+import MarkdownMessage from './components/MarkdownMessage.vue'
 import ToolOutput from './components/ToolOutput.vue'
 import ConversationSidebar from './components/ConversationSidebar.vue'
 import ConversationContext from './components/ConversationContext.vue'
@@ -378,8 +379,8 @@ const { renderMessageHtml, handleChatPanelClick, resolveImageUrl } = useMessageR
   activeConversation, isStreaming, imagePreview,
 })
 
-const { groupedMessages, loadingProcessJobs, processDetailErrors, loadProcessDetail } = useMessageTimeline({
-  messages, activeConversationId, transformServerMessages,
+const { groupedMessages, loadingProcessJobs, processDetailErrors, loadProcessDetail, collapseLiveTurn } = useMessageTimeline({
+  messages, activeConversationId, transformServerMessages, isStreaming,
 })
 
 const statusText = computed(() => {
@@ -828,6 +829,7 @@ onMounted(() => {
                 :steps="item.steps"
                 :timing-steps="item.timingSteps"
                 :running="item.running"
+                :collapse-requested="item.collapseRequested"
                 :loading="loadingProcessJobs.has(item.detailKey)"
                 :error="processDetailErrors.get(item.detailKey) || ''"
                 :tool-status-text="toolStatusText"
@@ -835,7 +837,11 @@ onMounted(() => {
                 :render-message-html="renderMessageHtml"
                 :resolve-image-url="resolveImageUrl"
                 @expand="loadProcessDetail(item)"
-              />
+              >
+                <template v-if="item.collapseTurnKey" #actions>
+                  <button class="collapse-process-notes" type="button" @click="collapseLiveTurn(item.collapseTurnKey)">收起中间过程</button>
+                </template>
+              </ProcessGroup>
               <div
                 v-else
                 class="message"
@@ -845,11 +851,10 @@ onMounted(() => {
                 <div v-if="item.msg.title" class="message-title">{{ item.msg.title }}</div>
                 <div v-if="item.msg.chartOption" :id="item.msg.chartId" class="chart-card"></div>
                 <ToolOutput v-else-if="item.msg.imageOutput" :value="item.msg.imageOutput" :resolve-image-url="resolveImageUrl" />
-                <div
+                <MarkdownMessage
                   v-else-if="item.msg.role === 'assistant'"
-                  class="markdown-body"
-                  v-html="renderMessageHtml(item.msg)"
-                ></div>
+                  :html="renderMessageHtml(item.msg)"
+                />
                 <div v-else class="plain-text">{{ item.msg.content }}</div>
                 <div v-if="item.msg.processingStatus === 'failed'" class="message-send-error" role="alert">
                   <span>{{ item.msg.processingError === '用户已停止生成' ? '已停止当前回复' : `${item.msg.retryAttachments ? '发送失败' : '执行失败'}：${item.msg.processingError || '请稍后重试'}` }}</span>
@@ -898,14 +903,14 @@ onMounted(() => {
           />
           </div>
 
-          <div v-if="!isArchivedConversation && (queuedMessages.length || statusText !== '就绪')" class="composer-utilities">
+          <div v-if="!isArchivedConversation" class="composer-utilities">
             <div class="composer-utilities-inner">
               <InputQueue
                 v-if="queuedMessages.length"
                 :messages="queuedMessages"
                 @remove="removeQueuedMessage"
               />
-              <span class="input-status" role="status">
+              <span class="input-status" :class="{ 'input-status-idle': statusText === '就绪' }" role="status">
                 <span v-if="isStreaming" class="input-status-dot"></span>
                 <span class="input-status-text" :title="statusText">{{ statusText }}</span>
               </span>

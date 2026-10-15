@@ -10,6 +10,31 @@ const { useMessageTimeline } = await server.ssrLoadModule('/src/composables/useM
 const { provideAssistantRealtime } = await server.ssrLoadModule('/src/composables/useAssistantRealtime.js')
 const { default: ProcessGroup } = await server.ssrLoadModule('/src/components/ProcessGroup.vue')
 
+test('live text and tools keep append order through completion and fold only on request', async () => {
+  const isStreaming = ref(true), conversationId = ref(1)
+  const messages = ref([
+    { role: 'user', generationJobId: 'live', content: 'question' },
+    { role: 'assistant', jobId: 'live', content: 'visible progress note' },
+  ])
+  const timeline = useMessageTimeline({ messages, activeConversationId: conversationId, isStreaming })
+  const originalKey = timeline.groupedMessages.value[1].key
+  messages.value.push({ role: 'tool', kind: 'tool-run', jobId: 'live', id: 'call', status: 'running' })
+  assert.deepEqual(timeline.groupedMessages.value.map(item => item.type), ['msg', 'msg', 'process'])
+  messages.value.push({ role: 'assistant', jobId: 'live', content: 'new reply' })
+  assert.deepEqual(timeline.groupedMessages.value.map(item => item.type), ['msg', 'msg', 'process', 'msg'])
+  assert.equal(timeline.groupedMessages.value[1].key, originalKey)
+  isStreaming.value = false
+  messages.value = messages.value.map(message => ({ ...message, status: 'completed' }))
+  assert.equal(timeline.groupedMessages.value[1].msg.content, 'visible progress note')
+  assert.equal(timeline.groupedMessages.value[2].collapseTurnKey, 'live')
+  timeline.collapseLiveTurn('live')
+  assert.deepEqual(timeline.groupedMessages.value.map(item => item.type), ['msg', 'process', 'msg'])
+  assert.equal(timeline.groupedMessages.value[2].msg.content, 'new reply')
+  conversationId.value = 2
+  await nextTick()
+  assert.deepEqual(timeline.groupedMessages.value.map(item => item.type), ['msg', 'process', 'msg'])
+})
+
 test('streaming regrouping and snapshot replacement preserve the user’s process expansion choice', async t => {
   const messages = ref([
     { role: 'user', generationJobId: 'job', content: 'question' },
