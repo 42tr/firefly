@@ -22,11 +22,15 @@ Codex 对话标题栏提供“模型设置”，运行或排队时也可修改 A
 
 旧流萤记录作为各自独立的会话显示，不合并历史。旧引用分支继续使用保存的祖先上下文，消息接口的 `source_reply` 返回来源回复预览和可用的会话 ID；原会话删除后仍保留预览与继承上下文。旧 `/api/assistant/firefly/messages` 接口及实时订阅暂时保留，供升级前的客户端兼容使用。
 
-Claude 在新建对话、现有对话标题栏和定时任务中提供 API 平台、模型和推理级别选择。模型支持 `sonnet`、`opus`、`haiku` 等 CLI 别名或手动输入完整名称；`CLAUDE_MODELS` 配置 CLI 平台的逗号分隔下拉选项。推理级别提供默认、`low`、`medium`、`high`、`xhigh`、`max`，通过 Claude CLI 的 `--effort` 传入，实际支持范围由模型和平台决定；需要支持该参数的 Claude Code 版本。`CLAUDE_REASONING_LEVEL` 可设置服务默认值，留空沿用 CLI 环境和设置。
+Claude 在新建对话、现有对话标题栏和定时任务中提供 API 平台、模型和推理级别选择。默认平台 `cli` 读取服务运行账户的 `~/.claude/settings.json`，并沿用 Claude CLI 登录和环境；设置了 Claude 原生的 `CLAUDE_CONFIG_DIR` 时，配置目录随之改变。`CLAUDE_MODEL`、`CLAUDE_MODELS` 仅保留为旧部署的可选覆盖，不需要再在 `.env` 登记平台列表或默认推理级别。
 
-平台列表由 `CLAUDE_PROVIDERS` 的 JSON 数组配置，只支持提供 Anthropic Messages API 的服务（仅兼容 OpenAI API 的地址不能直接使用）。每项包含 `name`、`base_url`，以及 `api_key_env` 或 `auth_token_env` 之一；密钥字段填写服务端环境变量名称，分别对应 API Key 与 Bearer Token。可选的 `models` 和 `default_model` 提供该平台的模型列表和默认模型。示例见 [`.env.example`](../.env.example)。密钥和密钥环境变量名称不返回浏览器，执行时使用本轮私有临时配置及子进程环境覆盖 CLI 中的旧平台设置，不修改其他会话或服务器环境。临时配置在本轮退出后删除。
+额外平台放在 `<Claude 配置目录>/providers/*.json`，文件名就是平台标识，例如 `providers/relay.json` 对应 `relay`。**这个目录的发现规则由 Firefly 约定，文件内容使用 Claude 原生 settings 格式**，也可以直接用 `claude --settings ~/.claude/providers/relay.json` 运行。`cli` 是保留标识。配置按次读取，新增、修改和删除文件无需重启 Firefly；个别文件无效时返回具名提示，其他平台仍可选择。
 
-`CLAUDE_PROVIDER` 指定默认平台，未设置时为 `cli`；显式选择 `cli` 则沿用服务运行账户的 Claude CLI 登录及环境，包括已配置的 Bedrock、Vertex 或 Foundry。自定义平台的默认模型使用 `default_model`、`models` 首项，再回退 CLI 默认值；CLI 默认模型依次使用 `CLAUDE_MODEL`、`ANTHROPIC_MODEL`，均未配置时使用 Claude 的 `default` 模型设置。恢复默认也显式传递模型，避免恢复会话时沿用之前的模型覆盖。
+每个平台文件使用原生 `env.ANTHROPIC_BASE_URL` 指定 Anthropic Messages API 地址，或使用原生 Bedrock、Vertex、Foundry 开关；使用 `model` / `env.ANTHROPIC_MODEL` 设置默认模型，`availableModels` 及模型别名环境变量提供候选模型。`availableModels` 同时是 Claude 原生模型白名单，手动选择也受其约束；不需要限制模型时可省略该字段。平台对应的 Opus、Sonnet、Haiku、Fable 和子 agent 模型映射也在同一个原生文件中管理。示例见 [`examples/claude/providers/gateway.json`](../examples/claude/providers/gateway.json)。复制到用户配置目录后，将示例地址、模型和凭据来源替换为实际配置；凭据文件保持仅当前用户可读，不提交仓库。
+
+凭据采用原生 `env.ANTHROPIC_API_KEY`、`env.ANTHROPIC_AUTH_TOKEN` 或 `apiKeyHelper`。例如 `"apiKeyHelper": "printenv EXAMPLE_CLAUDE_API_KEY"` 可以复用现有密钥环境变量，无需复制密钥值；也支持原生凭据脚本。平台列表接口不运行凭据助手，仅 Claude 执行本轮请求时按原生机制调用。前端只收到平台名、地址、模型和默认推理级别，原始 `env`、密钥、凭据助手和其他私有设置不会返回浏览器。
+
+默认推理级别读取原生 `env.CLAUDE_CODE_EFFORT_LEVEL` / `effortLevel`，界面提供默认、`low`、`medium`、`high`、`xhigh`、`max`，具体可用档位由模型和平台决定。选定平台后，将其原生 settings 与本轮选择合并为私有临时配置，并通过 `--settings`、`--model`、`--effort` 启动 Claude；平台文件中的权限、模型映射等原生配置保留。覆盖本轮的平台路由和认证变量，防止继承其他平台的凭据，不修改全局 settings 或服务器环境。临时配置随本轮回收；空模型仍显式选择该平台当前默认模型，避免恢复会话时沿用之前的模型覆盖。
 
 `GET /api/assistant/claude/models` 返回平台列表、默认平台、各平台候选模型和推理选项。创建 Claude 对话使用 `provider`、`model`、`reasoning_level`；现有对话通过 `PATCH /api/assistant/conversations/{id}/claude-settings` 整体替换三项，例如 `{"provider":"relay","model":"opus","reasoning_level":"high"}`，空值恢复服务默认。保存与消息提交使用同一数据库写锁，每条消息保存三项配置快照；修改只影响之后提交的消息，重试和重启恢复继续使用原快照。会话 ID、历史和工作目录保留。运行和排队时可以保存，归档对话须先取消归档。
 

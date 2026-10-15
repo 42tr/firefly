@@ -11,7 +11,7 @@ use tracing::warn;
 use crate::config;
 
 mod settings;
-pub use settings::{default_provider, effective_model, normalize_provider, normalize_reasoning_level, providers, resolve_provider, REASONING_LEVELS};
+pub use settings::{cli_defaults, effective_model, normalize_provider, normalize_reasoning_level, providers, REASONING_LEVELS};
 
 pub struct ClaudeTurn {
     child: Child,
@@ -63,7 +63,7 @@ impl ClaudeTurn {
 static CLAUDE_APPEND_SYSTEM_PROMPT: &str = include_str!("../prompts/claude.md");
 
 /// 构建 claude CLI 参数。
-fn claude_args(cfg: &config::Config, session_id: Option<&str>, model: Option<&str>, reasoning_level: Option<&str>, prompt: &str) -> Vec<String> {
+fn claude_args(cfg: &config::Config, session_id: Option<&str>, model: &str, reasoning_level: Option<&str>, prompt: &str) -> Vec<String> {
     let mut args = vec![
         "--print".to_string(),
         "--verbose".to_string(),
@@ -82,8 +82,7 @@ fn claude_args(cfg: &config::Config, session_id: Option<&str>, model: Option<&st
     // Always specify a model so resuming a session cannot retain a previous
     // per-conversation override after the user restores the default.
     args.push("--model".to_string());
-    args.push(model.map(str::trim).filter(|value| !value.is_empty())
-        .map(str::to_owned).unwrap_or_else(|| default_model(cfg)));
+    args.push(model.to_owned());
     if let Some(level) = reasoning_level {
         args.extend(["--effort".to_owned(), level.to_owned()]);
     }
@@ -100,15 +99,14 @@ fn claude_args(cfg: &config::Config, session_id: Option<&str>, model: Option<&st
 
 pub async fn start_turn(cwd: &Path, session_id: Option<&str>, provider: Option<&str>, model: Option<&str>, reasoning_level: Option<&str>, prompt: &str) -> anyhow::Result<ClaudeTurn> {
     let cfg = config::get();
-    let profile = settings::resolve_provider(&cfg, provider)?;
-    let model = effective_model(&cfg, profile.as_ref(), model);
-    let reasoning_level = normalize_reasoning_level(reasoning_level.map(str::to_owned))?
-        .or(normalize_reasoning_level(Some(cfg.claude_reasoning_level.clone()))?);
+    let profile = settings::resolve_provider(provider)?;
+    let model = effective_model(&cfg, profile.as_ref(), model)?;
+    let reasoning_level = normalize_reasoning_level(reasoning_level.map(str::to_owned))?;
     let mut command = Command::new("claude");
     let settings_file = settings::configure_command(&mut command, profile.as_ref(), reasoning_level.as_deref())?;
     command
         .current_dir(cwd)
-        .args(claude_args(&cfg, session_id, Some(&model), reasoning_level.as_deref(), prompt))
+        .args(claude_args(&cfg, session_id, &model, reasoning_level.as_deref(), prompt))
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -117,24 +115,6 @@ pub async fn start_turn(cwd: &Path, session_id: Option<&str>, provider: Option<&
     let mut turn = spawn_turn(command, "启动 Claude CLI 失败，请确认 Claude Code 已安装并完成登录").await?;
     turn._settings_file = settings_file;
     Ok(turn)
-}
-
-pub fn default_model(cfg: &config::Config) -> String {
-    if !cfg.claude_model.trim().is_empty() { return cfg.claude_model.trim().to_owned(); }
-    std::env::var("ANTHROPIC_MODEL").ok().map(|value| value.trim().to_owned())
-        .filter(|value| !value.is_empty()).unwrap_or_else(|| "default".to_owned())
-}
-
-pub fn model_choices(cfg: &config::Config) -> Vec<String> {
-    let configured = cfg.claude_models.trim();
-    let values = if configured.is_empty() { "sonnet,opus,haiku" } else { configured };
-    let mut models = Vec::new();
-    for value in values.split(',').map(str::trim).filter(|value| !value.is_empty()) {
-        if !models.iter().any(|model| model == value) { models.push(value.to_owned()); }
-    }
-    let default = default_model(cfg);
-    if default != "default" && !models.contains(&default) { models.insert(0,default); }
-    models
 }
 
 pub fn normalize_model(model: Option<String>) -> anyhow::Result<Option<String>> {
@@ -216,7 +196,7 @@ mod tests {
     #[test]
     fn one_shot_prompt_precedes_positional_prompt() {
         crate::config::init_test_config();
-        let args = claude_args(&crate::config::get(), Some("session-1"), None, None, "--not-a-flag");
+        let args = claude_args(&crate::config::get(), Some("session-1"), "default", None, "--not-a-flag");
         let system = args.iter().position(|arg| arg == "--append-system-prompt").unwrap();
         assert!(args[system + 1].contains("no task-completion notification"));
         assert_eq!(&args[args.len() - 2..], ["--", "--not-a-flag"]);
@@ -235,25 +215,25 @@ mod tests {
             "claude_models":" sonnet,opus,custom-model,opus "
         })).unwrap();
         for session in [None,Some("same-session")] {
-            for (selection,expected) in [(Some(" opus "),"opus"),(None,"global-model")] {
-                let args = claude_args(&cfg,session,selection,None,"question");
+            for expected in ["opus","global-model"] {
+                let args = claude_args(&cfg,session,expected,None,"question");
                 let model = args.iter().position(|arg| arg == "--model").unwrap();
                 assert_eq!(args[model+1],expected);
                 assert_eq!(args.iter().any(|arg| arg == "--resume"),session.is_some());
                 assert_eq!(args.last().unwrap(),"question");
             }
         }
-        assert_eq!(super::model_choices(&cfg),["global-model","sonnet","opus","custom-model"]);
+        assert_eq!(super::cli_defaults(&cfg).unwrap().models,["global-model","sonnet","opus","custom-model"]);
     }
 
     #[test]
     fn claude_effort_is_explicit_on_new_and_resumed_turns_and_default_omits_flag() {
         crate::config::init_test_config();
         for session in [None, Some("same-session")] {
-            let args = claude_args(&crate::config::get(), session, Some("opus"), Some("max"), "question");
+            let args = claude_args(&crate::config::get(), session, "opus", Some("max"), "question");
             let effort = args.iter().position(|arg| arg == "--effort").unwrap();
             assert_eq!(args[effort + 1], "max");
-            let defaults = claude_args(&crate::config::get(), session, None, None, "question");
+            let defaults = claude_args(&crate::config::get(), session, "default", None, "question");
             assert!(!defaults.iter().any(|arg| arg == "--effort"));
         }
     }

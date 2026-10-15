@@ -38,7 +38,7 @@ pub(super) async fn prepare_conversation(payload: &CreateConversationRequest) ->
             (provider, model, normalize(&payload.reasoning_level))
         }
         "claude" => (
-            claude::normalize_provider(&config::get(), payload.provider.clone()).map_err(AppError::bad_request)?,
+            claude::normalize_provider(payload.provider.clone()).map_err(AppError::bad_request)?,
             claude::normalize_model(payload.model.clone()).map_err(AppError::bad_request)?,
             claude::normalize_reasoning_level(payload.reasoning_level.clone()).map_err(AppError::bad_request)?,
         ),
@@ -381,7 +381,7 @@ pub async fn update_claude_settings(
     let user_id = auth_user.storage_scope();
     assistant_store::get_conversation_for_read(conversation_id,user_id).await
         .map_err(AppError::internal_server_error)?.ok_or(AppError::not_found("Conversation not found"))?;
-    let provider = claude::normalize_provider(&config::get(), payload.provider).map_err(AppError::bad_request)?;
+    let provider = claude::normalize_provider(payload.provider).map_err(AppError::bad_request)?;
     let model = claude::normalize_model(payload.model).map_err(AppError::bad_request)?;
     let reasoning_level = claude::normalize_reasoning_level(payload.reasoning_level).map_err(AppError::bad_request)?;
     let record = assistant_store::set_claude_settings(conversation_id,user_id,provider.as_deref(),model.as_deref(),reasoning_level.as_deref()).await

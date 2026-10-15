@@ -9,11 +9,14 @@ export function useClaudeModels() {
   const cliModels = ref([])
   const cliDefaultModel = ref('')
   const defaultProvider = ref('cli')
-  const defaultReasoningLevel = ref('')
+  const cliDefaultReasoningLevel = ref('')
   const reasoningOptions = ref(['low', 'medium', 'high', 'xhigh', 'max'])
   const currentProvider = computed(() => providers.value.find(item => item.name === (provider.value || defaultProvider.value)))
   const modelOptions = computed(() => currentProvider.value?.models || cliModels.value)
-  const defaultModel = computed(() => currentProvider.value?.default_model || currentProvider.value?.models?.[0] || cliDefaultModel.value)
+  const defaultModel = computed(() => currentProvider.value
+    ? currentProvider.value.default_model || 'default' : cliDefaultModel.value)
+  const defaultReasoningLevel = computed(() => currentProvider.value
+    ? currentProvider.value.default_reasoning_level || '' : cliDefaultReasoningLevel.value)
   const modelsLoading = ref(false)
   const modelsError = ref('')
   let request = 0
@@ -32,7 +35,8 @@ export function useClaudeModels() {
       defaultProvider.value = data.default || 'cli'
       cliModels.value = Array.isArray(data.models) ? data.models : []
       cliDefaultModel.value = data.cli_default_model || data.default_model || ''
-      defaultReasoningLevel.value = data.default_reasoning_level || ''
+      cliDefaultReasoningLevel.value = data.default_reasoning_level || ''
+      modelsError.value = data.models_error || ''
       reasoningOptions.value = data.reasoning_levels || ['low', 'medium', 'high', 'xhigh', 'max']
       return true
     } catch (error) {

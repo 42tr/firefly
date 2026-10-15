@@ -209,3 +209,30 @@ test('Claude saves platform, model, and effort together and changes the model li
   assert.deepEqual(state.claudeModelOptions.value, ['sonnet', 'opus'])
   assert.equal(state.defaultClaudeModel.value, 'sonnet')
 })
+
+test('Claude displays each native profile default and keeps valid platforms when another file is invalid', async t => {
+  const { state, requests } = await setup(t, {
+    conversation: { id: 8, agent: 'claude', claude_provider: 'relay' },
+    catalog: async () => ({ ok: true, json: async () => ({
+      default: 'cli', models: ['sonnet', 'opus'], cli_default_model: 'opus', default_reasoning_level: 'low',
+      providers: [
+        { name: 'relay', models: ['custom-model'], default_model: 'custom-model', default_reasoning_level: 'high' },
+        { name: 'allowlist', models: ['expensive-model', 'small-model'] },
+      ],
+      models_error: 'broken.json: Claude settings JSON 格式无效',
+    }) }),
+  })
+  assert.equal(state.defaultClaudeModel.value, 'custom-model')
+  assert.equal(state.defaultClaudeReasoningLevel.value, 'high')
+  assert.match(state.claudeModelsError.value, /broken.json/)
+  await state.save()
+  assert.deepEqual(requests[0].payload, { provider: 'relay', model: null, reasoning_level: null })
+  state.claudeProvider.value = 'cli'
+  state.changeClaudeProvider()
+  assert.equal(state.defaultClaudeModel.value, 'opus')
+  assert.equal(state.defaultClaudeReasoningLevel.value, 'low')
+  state.claudeProvider.value = 'allowlist'
+  state.changeClaudeProvider()
+  assert.equal(state.defaultClaudeModel.value, 'default')
+  assert.equal(state.defaultClaudeReasoningLevel.value, '')
+})

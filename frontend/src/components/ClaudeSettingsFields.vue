@@ -29,7 +29,7 @@ const selectProvider = event => {
       <label :for="providerId">API 平台</label>
       <select :id="providerId" :value="provider" :disabled="disabled" @change="selectProvider">
         <option value="">默认平台（{{ defaultProvider === 'cli' ? 'Claude CLI' : defaultProvider }}）</option>
-        <option value="cli">Claude CLI（当前登录 / 环境）</option>
+        <option value="cli">Claude CLI（原生配置 / 登录）</option>
         <option v-if="provider && provider !== 'cli' && !providers.some(item => item.name === provider)" :value="provider">{{ provider }}</option>
         <option v-for="item in providers" :key="item.name" :value="item.name">{{ item.name }}</option>
       </select>

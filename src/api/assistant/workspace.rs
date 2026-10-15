@@ -47,15 +47,16 @@ pub async fn codex_providers(_auth_user: Session) -> Json<Value> {
 
 pub async fn claude_models(_auth_user: Session) -> Result<Json<Value>, AppError> {
     let cfg = config::get();
-    let providers = claude::providers(&cfg).map_err(AppError::internal_server_error)?;
-    let profile = claude::resolve_provider(&cfg, None).map_err(AppError::internal_server_error)?;
+    let listing = claude::providers().map_err(AppError::internal_server_error)?;
+    let defaults = claude::cli_defaults(&cfg).map_err(AppError::internal_server_error)?;
     Ok(Json(json!({
-        "default": claude::default_provider(&cfg),
-        "providers": providers,
-        "default_model": claude::effective_model(&cfg, profile.as_ref(), None),
-        "cli_default_model": claude::default_model(&cfg),
-        "default_reasoning_level": cfg.claude_reasoning_level,
-        "models": claude::model_choices(&cfg),
+        "default": "cli",
+        "providers": listing.providers,
+        "default_model": defaults.model,
+        "cli_default_model": defaults.model,
+        "default_reasoning_level": defaults.reasoning_level,
+        "models": defaults.models,
+        "models_error": listing.warnings.join("；"),
         "reasoning_levels": claude::REASONING_LEVELS,
     })))
 }

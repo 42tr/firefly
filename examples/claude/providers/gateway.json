@@ -1,0 +1,16 @@
+{
+  "model": "gateway-model",
+  "availableModels": ["gateway-model", "gateway-model-fast"],
+  "effortLevel": "high",
+  "apiKeyHelper": "printenv EXAMPLE_CLAUDE_API_KEY",
+  "env": {
+    "ANTHROPIC_API_KEY": "",
+    "ANTHROPIC_AUTH_TOKEN": "",
+    "ANTHROPIC_BASE_URL": "https://claude.example.com",
+    "ANTHROPIC_DEFAULT_OPUS_MODEL": "gateway-model",
+    "ANTHROPIC_DEFAULT_SONNET_MODEL": "gateway-model",
+    "ANTHROPIC_DEFAULT_HAIKU_MODEL": "gateway-model-fast",
+    "ANTHROPIC_DEFAULT_FABLE_MODEL": "gateway-model",
+    "CLAUDE_CODE_SUBAGENT_MODEL": "gateway-model"
+  }
+}

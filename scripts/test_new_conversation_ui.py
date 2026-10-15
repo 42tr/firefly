@@ -121,9 +121,9 @@ class NewConversationUI(unittest.TestCase):
                         providers=[], official_models=['test-model'], model_reasoning=[
                             dict(model='test-model', reasoning_levels=['low', 'medium', 'high'], default_reasoning_level='medium')])
         elif path.endswith('/claude/models'):
-            data = dict(default='cli', cli_default_model='sonnet', default_model='sonnet',
+            data = dict(default='cli', cli_default_model='sonnet', default_model='sonnet', default_reasoning_level='medium',
                         models=['sonnet', 'opus', 'haiku'], reasoning_levels=['low', 'medium', 'high', 'xhigh', 'max'],
-                        providers=[dict(name='relay', models=['custom-sonnet', 'custom-opus'], default_model='custom-sonnet')])
+                        providers=[dict(name='relay', models=['custom-sonnet', 'custom-opus'], default_model='custom-sonnet', default_reasoning_level='high')])
         elif path.endswith('/active-generation'):
             data = {'active': False}
         elif path.endswith('/messages'):
@@ -206,6 +206,8 @@ class NewConversationUI(unittest.TestCase):
         settings = self.page.get_by_role('group', name='Claude 配置', exact=True)
         expect(settings.get_by_role('combobox', name='API 平台', exact=True)).to_be_visible()
         settings.get_by_role('combobox', name='API 平台', exact=True).select_option('relay')
+        expect(settings.get_by_role('combobox', name='模型', exact=True).locator('option[value=""]')).to_have_text('默认模型（custom-sonnet）')
+        expect(settings.get_by_role('combobox', name='推理级别', exact=True).locator('option[value=""]')).to_have_text('默认推理级别（high）')
         settings.get_by_role('combobox', name='模型', exact=True).select_option('custom-opus')
         settings.get_by_role('combobox', name='推理级别', exact=True).select_option('high')
         for width in [320, 390, 1280]:
@@ -232,6 +234,7 @@ class NewConversationUI(unittest.TestCase):
             self.assertLessEqual(bounds['x'] + bounds['width'], width)
             self.page.screenshot(path=str(captures / f'{name}.png'))
         dialog.get_by_role('combobox', name='API 平台', exact=True).select_option('cli')
+        expect(dialog.get_by_role('combobox', name='推理级别', exact=True).locator('option[value=""]')).to_have_text('默认推理级别（medium）')
         expect(dialog.get_by_role('combobox', name='模型', exact=True)).to_have_value('')
         dialog.get_by_role('combobox', name='模型', exact=True).select_option('opus')
         dialog.get_by_role('combobox', name='推理级别', exact=True).select_option('low')
