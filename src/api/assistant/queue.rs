@@ -577,7 +577,7 @@ mod tests {
         sqlx::query("INSERT INTO assistant_firefly_branches (conversation_id, user_id, request_id, context) VALUES (?1, 'owner', ?2, ?3)")
             .bind(conversation).bind(uuid::Uuid::new_v4()).bind(serde_json::to_value(inherited).unwrap())
             .execute(&pool).await.unwrap();
-        let first = uuid::Uuid::new_v4();
+        let first = uuid::Uuid::from_u128(3);
         assistant_store::create_queued_user_turn(first, conversation, "owner", true, "first question".into(), &[]).await.unwrap();
         assistant_store::claim_next_queued_generation(conversation, "owner").await.unwrap().unwrap();
         assistant_store::append_message(conversation, assistant_store::StoredMessage {
@@ -586,9 +586,14 @@ mod tests {
         }).await.unwrap();
         sqlx::query("UPDATE assistant_generation_jobs SET status='completed' WHERE id=?1")
             .bind(first).execute(&pool).await.unwrap();
-        let second = uuid::Uuid::new_v4();
+        let second = uuid::Uuid::from_u128(2);
         assistant_store::create_queued_user_turn(second, conversation, "owner", true, "follow-up".into(), &[]).await.unwrap();
-        assistant_store::create_queued_user_turn(uuid::Uuid::new_v4(), conversation, "owner", true, "future question".into(), &[]).await.unwrap();
+        let future = uuid::Uuid::from_u128(1);
+        assistant_store::create_queued_user_turn(future, conversation, "owner", true, "future question".into(), &[]).await.unwrap();
+        // Fast submissions can share SQLite's millisecond timestamp. Reverse
+        // UUID order must neither reorder the queue nor the completed history.
+        sqlx::query("UPDATE assistant_generation_jobs SET created_at=1000000 WHERE conversation_id=?1")
+            .bind(conversation).execute(&pool).await.unwrap();
         let claimed = assistant_store::claim_next_queued_generation(conversation, "owner").await.unwrap().unwrap();
         assert_eq!(claimed.id, second);
         let context = load_generation_conversation(conversation, "owner", second).await.unwrap();

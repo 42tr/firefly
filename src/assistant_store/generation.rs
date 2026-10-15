@@ -243,7 +243,7 @@ pub(super) async fn claim_next_queued_generation_with_pool(
                   SELECT 1 FROM assistant_generation_jobs active
                   WHERE active.conversation_id = ?1 AND active.status = 'running'
               )
-            ORDER BY created_at ASC, id ASC
+            ORDER BY created_at ASC, rowid ASC
             LIMIT 1
         )
         UPDATE assistant_generation_jobs
@@ -281,6 +281,7 @@ struct GenerationContextRow {
     #[sqlx(flatten)]
     message: MessageRecord,
     context_created_at: i64,
+    context_job_sequence: Option<i64>,
 }
 
 pub async fn fetch_generation_context_messages(
@@ -292,7 +293,8 @@ pub async fn fetch_generation_context_messages(
                m.metadata, m.is_error, m.created_at, m.generation_job_id,
                j.status AS processing_status, j.error_message AS processing_error,
                j.started_at AS processing_started_at, j.completed_at AS processing_completed_at,
-               COALESCE(j.created_at, m.created_at) AS context_created_at
+               COALESCE(j.created_at, m.created_at) AS context_created_at,
+               j.rowid AS context_job_sequence
         FROM assistant_messages m
         JOIN assistant_conversations c ON c.id = m.conversation_id
         LEFT JOIN assistant_generation_jobs j ON j.id = m.generation_job_id
@@ -309,9 +311,10 @@ pub async fn fetch_generation_context_messages(
     // The context is already materialized here. Sort its small keys in memory
     // instead of copying message/tool payloads into SQLite's temporary sorter.
     // A non-null job id that survives the WHERE clause always has a joined job.
+    // Match queue order when SQLite timestamps tie; UUID order is random.
     rows.sort_unstable_by_key(|row| (
         row.message.generation_job_id.is_some(), row.context_created_at,
-        row.message.generation_job_id, row.message.id,
+        row.context_job_sequence, row.message.id,
     ));
     Ok(preserve_failed_tool_facts(rows.into_iter().map(|row| row.message).collect()))
 }
