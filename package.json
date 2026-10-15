@@ -1,0 +1,33 @@
+{
+  "name": "firefly",
+  "version": "0.1.1",
+  "private": true,
+  "license": "MIT",
+  "engines": { "node": "24.x" },
+  "type": "module",
+  "scripts": {
+    "build": "vite build --config frontend/vite.config.ts",
+    "dev": "vite --config frontend/vite.config.ts",
+    "preview": "vite preview --config frontend/vite.config.ts",
+    "test": "node --test --test-concurrency=1 frontend/src/composables/*.test.js frontend/src/components/*.test.js",
+    "typecheck": "vue-tsc --noEmit -p frontend/tsconfig.json",
+    "audit:deps": "npm audit --audit-level=moderate --registry=https://registry.npmjs.org",
+    "check": "npm run typecheck && npm test && npm run build",
+    "test:module-sdk": "node --test --test-concurrency=1 crates/module-sdk/ui/composables/*.test.js",
+    "build:example:module-sdk": "cargo build --locked -p firefly-sdk-counter-example && node examples/modules/rust-sdk-counter/build.mjs"
+  },
+  "dependencies": {
+    "dompurify": "^3.4.16",
+    "echarts": "^6.1.0",
+    "marked": "^15.0.0",
+    "vue": "^3.5.43"
+  },
+  "devDependencies": {
+    "@types/node": "^26.0.0",
+    "@vitejs/plugin-vue": "^6.0.0",
+    "@vue/tsconfig": "^0.7.0",
+    "typescript": "~5.7.2",
+    "vite": "^6.3.1",
+    "vue-tsc": "^2.2.8"
+  }
+}

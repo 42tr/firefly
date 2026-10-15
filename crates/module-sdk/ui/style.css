@@ -1,0 +1,67 @@
+:root {
+  /* ---------- 流萤设计语言：墨蓝 + 萤火暖光 ---------- */
+  --ink: #172033;
+  --ink-2: #26324d;
+  --glow: #f6b545;
+  --glow-2: #a3e05b;
+  --glow-soft: rgba(246, 181, 69, 0.16);
+  --glow-gradient: linear-gradient(135deg, #ffcf6b 0%, #f6a93b 45%, #9bd65a 100%);
+  --ink-gradient: linear-gradient(145deg, #2b3857 0%, #172033 100%);
+
+  --text-primary: #1b2233;
+  --text-secondary: #4a5368;
+  /* 4.28:1 -> 5.4:1：原值在 --bg-body 上低于 WCAG AA 的 4.5:1，
+     而它承担大量 11-13px 次要文字（侧栏、面板说明、时间戳）。 */
+  --muted: #5b6478;
+  --accent: #1f2a44;
+  --accent-strong: #121a2c;
+  --accent-soft: #eef0f6;
+  --accent-border: #d5d9e4;
+  --focus-ring: rgba(246, 169, 59, 0.7);
+  --focus-soft: rgba(246, 169, 59, 0.16);
+  --bg-subtle: #f3f4f8;
+  --bg-hover: #eaecf2;
+  --font-body: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+  --font-display: var(--font-body);
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+  --danger: #dc2626;
+  /* 状态语义色 */
+  --success-text: #15803d;
+  --warning-text: #a16207;
+  --error-text: #b91c1c;
+  --status-idle: #64748b;
+  --bg-body: #fcfcfb;
+  --bg-panel: #ffffff;
+  --bg-glass: rgba(255, 255, 255, 0.72);
+  --bg-glass-strong: rgba(255, 255, 255, 0.86);
+  --border-soft: #e4e6ee;
+  --border-glass: rgba(23, 32, 51, 0.07);
+  --code-bg: #f3f4f5;
+  --code-header: #eceef0;
+  --code-text: #26324d;
+  --code-muted: #5b6478;
+  --code-border: #e4e6ee;
+  --chat-content-width: 800px;
+  --chat-gutter: 24px;
+  --shadow-xs: 0 1px 2px rgba(23, 32, 51, 0.06);
+  --shadow-soft: 0 1px 2px rgba(23, 32, 51, 0.05), 0 10px 32px -8px rgba(23, 32, 51, 0.16);
+  --shadow-float: 0 2px 6px rgba(23, 32, 51, 0.05), 0 18px 48px -12px rgba(23, 32, 51, 0.22);
+  --shadow-dialog: 0 24px 64px -12px rgba(23, 32, 51, 0.32);
+  --shadow-glow: 0 0 0 1px rgba(246, 169, 59, 0.35), 0 8px 28px -6px rgba(246, 169, 59, 0.45);
+  --radius-sm: 10px;
+  --radius: 14px;
+  --radius-lg: 22px;
+  --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+  --ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+* { box-sizing: border-box; } body { margin: 0; color: var(--text-primary); background: var(--bg-panel,#fff); font: 14px/1.5 system-ui,sans-serif; }
+button,input,textarea,select { font: inherit; } button { cursor: pointer; } button:disabled { cursor: default; opacity: .55; }
+.button { padding: 8px 14px; border: 1px solid var(--border-soft); border-radius: 8px; color: var(--text-primary); background: var(--bg-panel); }
+.button.primary { background: var(--ink); color: white; } .button.ghost { background: transparent; } .button.small { padding: 6px 10px; } .button.icon { min-width: 38px; min-height: 38px; }
+input,textarea,select { padding: 8px; border: 1px solid var(--border-soft); border-radius: 7px; color: inherit; background: var(--bg-panel); } textarea { resize: vertical; }
+a { color: var(--accent); } :focus-visible { outline: 2px solid #d49114; outline-offset: 2px; }
+.hint { color: var(--muted); } .error { color: #b42318; } .header-action-icon { width:18px; height:18px; }
+/* Module owns the whole iframe, so its original dialog becomes the embedded page. */
+.module-page { position: static !important; display: block !important; width: 100% !important; max-width: none !important; height: auto !important; max-height: none !important; margin: 0 !important; border: 0 !important; border-radius: 0 !important; box-shadow: none !important; }
+.module-page::backdrop { background: transparent; } .module-page header button[aria-label^="关闭"] { display:none; }
+.module-confirm { max-width: min(440px,90vw); border: 1px solid var(--border-soft); border-radius: 12px; padding: 20px; color: inherit; background: var(--bg-panel); } .module-confirm::backdrop { background: #0005; } .module-confirm footer { display: flex; justify-content: flex-end; gap: 10px; }

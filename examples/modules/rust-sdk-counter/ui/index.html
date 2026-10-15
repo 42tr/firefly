@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>SDK 计数器</title>
+  <style>__MODULE_STYLE__</style>
+</head>
+<body>
+  <main class="counter-page">
+    <header><h1 id="label">计数器</h1><button id="close" class="button ghost" type="button">关闭</button></header>
+    <p class="hint">数值保存在模块自己的数据库中，关闭页面后仍会保留。</p>
+    <output id="value" aria-label="当前数值" aria-live="polite">—</output>
+    <p id="step" class="hint"></p>
+    <div class="actions">
+      <button id="increment" class="button primary" type="button" disabled>增加</button>
+      <button id="reset" class="button" type="button" disabled>清零</button>
+    </div>
+    <p id="status" class="hint" role="status">正在加载…</p>
+    <p id="error" class="error" role="alert" hidden></p>
+    <button id="retry" class="button" type="button" hidden>重新加载</button>
+  </main>
+  <script type="module">__MODULE_SCRIPT__</script>
+</body>
+</html>

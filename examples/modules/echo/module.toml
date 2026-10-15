@@ -1,0 +1,7 @@
+id = "echo-example"
+name = "工具模块模板"
+description = "最小 MCP 工具示例，可复制后替换成自己的业务逻辑。"
+[mcp]
+transport = "stdio"
+command = "python3"
+args = ["server.py"]

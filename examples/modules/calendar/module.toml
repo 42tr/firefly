@@ -1,0 +1,24 @@
+manifest_version = 1
+id = "personal-calendar"
+name = "重要日期示例"
+version = "0.1.0"
+host_api = "1"
+description = "独立的日期管理模块：页面、AI 工具、SQLite 存储和自动检查。初始没有个人数据。"
+config_schema = "config.schema.json"
+
+[mcp]
+transport = "stdio"
+command = "python3"
+args = ["server.py"]
+
+[[pages]]
+id = "calendar"
+title = "我的重要日期"
+open_tool = "list_dates"
+
+[[jobs]]
+id = "daily-check"
+tool = "check_reminders"
+cron = "0 9 * * *"
+timezone = "Asia/Shanghai"
+enabled_by_default = false

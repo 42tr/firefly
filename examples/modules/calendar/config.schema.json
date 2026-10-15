@@ -1,0 +1,8 @@
+{
+  "type": "object",
+  "properties": {
+    "timezone": { "type": "string", "title": "日期计算时区", "default": "Asia/Shanghai", "enum": ["Asia/Shanghai", "UTC", "America/New_York", "Europe/London"] }
+  },
+  "required": ["timezone"],
+  "additionalProperties": false
+}

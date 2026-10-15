@@ -1,0 +1,18 @@
+manifest_version = 1
+host_api = "1"
+id = "rust-sdk-counter"
+name = "Rust SDK 示例"
+version = "0.1.0"
+description = "使用 Rust SDK、SQLite 和页面桥实现的独立计数器。"
+config_schema = "config.schema.json"
+allowed_tools = ["open_app", "read", "request"]
+
+[mcp]
+transport = "stdio"
+command = "./firefly-sdk-counter-example"
+
+[[pages]]
+id = "counter"
+title = "SDK 计数器"
+icon = "activity"
+open_tool = "open_app"

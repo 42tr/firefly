@@ -1,0 +1,17 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-labelledby="title desc">
+  <title id="title">Firefly</title>
+  <desc id="desc">A firefly with a glowing abdomen</desc>
+  <rect width="64" height="64" rx="15" fill="#172033"/>
+  <circle cx="32" cy="40" r="14" fill="#FFBE55" opacity="0.18"/>
+  <circle cx="32" cy="40" r="9.5" fill="#FFBE55" opacity="0.3"/>
+  <path d="M28.5 22.5C21 12.5 9.5 14 12.5 23c2 6 9.5 7.5 15 4.5Z" fill="#F7FAFC" opacity="0.92"/>
+  <path d="M35.5 22.5C43 12.5 54.5 14 51.5 23c-2 6-9.5 7.5-15 4.5Z" fill="#F7FAFC" opacity="0.92"/>
+  <ellipse cx="32" cy="40" rx="5.6" ry="8.6" fill="#FFD67A"/>
+  <ellipse cx="32" cy="42.5" rx="4" ry="6.2" fill="#FFBE55"/>
+  <path d="M32 32v16" stroke="#E89B2E" stroke-width="1.2" stroke-linecap="round" opacity="0.7"/>
+  <ellipse cx="32" cy="25" rx="3.4" ry="4.8" fill="#24304D"/>
+  <path d="M32 15.4a3.2 3.2 0 0 0-3.2 3.2v.6h6.4v-.6a3.2 3.2 0 0 0-3.2-3.2Z" fill="#F7FAFC"/>
+  <path d="M30.6 18.2a1 1 0 1 0 0 2 1 1 0 0 0 0-2Zm2.8 0a1 1 0 1 0 0 2 1 1 0 0 0 0-2Z" fill="#24304D"/>
+  <path d="M29.8 15.8c-2.2-2.6-4.4-3.2-6.4-2M34.2 15.8c2.2-2.6 4.4-3.2 6.4-2" fill="none" stroke="#F7FAFC" stroke-width="1.5" stroke-linecap="round"/>
+  <path d="M47.5 8.5c.45 2.7 1.65 3.9 4.35 4.35-2.7.45-3.9 1.65-4.35 4.35-.45-2.7-1.65-3.9-4.35-4.35 2.7-.45 3.9-1.65 4.35-4.35Z" fill="#FFBE55"/>
+</svg>

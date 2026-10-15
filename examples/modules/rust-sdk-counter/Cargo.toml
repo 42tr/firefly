@@ -1,0 +1,21 @@
+[package]
+name = "firefly-sdk-counter-example"
+version = "0.1.0"
+edition = "2021"
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+description = "Runnable Rust and UI SDK example for Firefly external modules"
+publish = false
+
+[dependencies]
+firefly-module-sdk = { path = "../../../crates/module-sdk" }
+anyhow = { workspace = true }
+axum = { workspace = true }
+serde = { workspace = true }
+sqlx = { workspace = true }
+tokio = { workspace = true }
+
+[dev-dependencies]
+serde_json = { workspace = true }
+tempfile = { workspace = true }

@@ -1,0 +1,558 @@
+:root {
+  /* ---------- 流萤设计语言：墨蓝 + 萤火暖光 ---------- */
+  --ink: #172033;
+  --glow: #f6b545;
+  --glow-soft: rgba(246, 181, 69, 0.16);
+  --glow-gradient: linear-gradient(135deg, #ffcf6b 0%, #f6a93b 45%, #9bd65a 100%);
+  --ink-gradient: linear-gradient(145deg, #2b3857 0%, #172033 100%);
+
+  --text-primary: #1b2233;
+  --text-secondary: #4a5368;
+  /* 4.28:1 -> 5.4:1：原值在 --bg-body 上低于 WCAG AA 的 4.5:1，
+     而它承担大量 11-13px 次要文字（侧栏、面板说明、时间戳）。 */
+  --muted: #5b6478;
+  --accent: #1f2a44;
+  --accent-strong: #121a2c;
+  --accent-soft: #eef0f6;
+  --accent-border: #d5d9e4;
+  --focus-ring: rgba(246, 169, 59, 0.7);
+  --focus-soft: rgba(246, 169, 59, 0.16);
+  --bg-subtle: #f3f4f8;
+  --bg-hover: #eaecf2;
+  --font-body: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+  --font-display: var(--font-body);
+  --font-mono: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+  --danger: #dc2626;
+  /* 状态语义色 */
+  --success-text: #15803d;
+  --warning-text: #a16207;
+  --error-text: #b91c1c;
+  --status-idle: #64748b;
+  --bg-body: #fcfcfb;
+  --bg-panel: #ffffff;
+  --bg-glass: rgba(255, 255, 255, 0.72);
+  --bg-glass-strong: rgba(255, 255, 255, 0.86);
+  --border-soft: #e4e6ee;
+  --border-glass: rgba(23, 32, 51, 0.07);
+  --code-bg: #f3f4f5;
+  --code-header: #eceef0;
+  --code-text: #26324d;
+  --code-muted: #5b6478;
+  --code-border: #e4e6ee;
+  --chat-content-width: 800px;
+  --chat-gutter: 24px;
+  --shadow-xs: 0 1px 2px rgba(23, 32, 51, 0.06);
+  --shadow-soft: 0 1px 2px rgba(23, 32, 51, 0.05), 0 10px 32px -8px rgba(23, 32, 51, 0.16);
+  --shadow-float: 0 2px 6px rgba(23, 32, 51, 0.05), 0 18px 48px -12px rgba(23, 32, 51, 0.22);
+  --shadow-dialog: 0 24px 64px -12px rgba(23, 32, 51, 0.32);
+  --shadow-glow: 0 0 0 1px rgba(246, 169, 59, 0.35), 0 8px 28px -6px rgba(246, 169, 59, 0.45);
+  --radius-sm: 10px;
+  --radius: 14px;
+  --radius-lg: 22px;
+  --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+  --ease-spring: cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+
+* {
+  box-sizing: border-box;
+}
+
+/* dvh follows browser chrome, but need not shrink for the on-screen keyboard.
+   App.vue separately anchors the mobile shell to the visual viewport. */
+html {
+  height: 100%;
+  height: 100dvh;
+}
+
+body,
+#app {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  font-family: var(--font-body);
+  font-size: 14px;
+  color: var(--text-primary);
+  background: var(--bg-body);
+  overflow: hidden;
+  -webkit-font-smoothing: antialiased;
+  -webkit-text-size-adjust: 100%;
+}
+
+body.sidebar-open {
+  overflow: hidden;
+}
+
+::selection {
+  background: rgba(246, 181, 69, 0.28);
+}
+
+/* 键盘聚焦可见性：仅键盘导航触发，鼠标点击不出现 */
+:where(button, a, [role='button'], input, textarea, summary):focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 1px;
+}
+
+@media (max-width: 768px) {
+  /* Override component outlines as well as the global button focus ring. */
+  :is(button, a.button, [role='button'], summary):focus {
+    outline: none !important;
+  }
+}
+
+button {
+  -webkit-tap-highlight-color: transparent;
+}
+
+/* 细滚动条 */
+* {
+  scrollbar-width: thin;
+  scrollbar-color: rgba(100, 116, 139, 0.35) transparent;
+}
+
+*::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+*::-webkit-scrollbar-thumb {
+  background: rgba(100, 116, 139, 0.35);
+  border-radius: 999px;
+}
+
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+/* ---------- 按钮体系（全局，各组件共用） ---------- */
+
+.button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 8px 16px;
+  min-height: 36px;
+  border-radius: var(--radius-sm);
+  border: 1px solid transparent;
+  background: transparent;
+  font-family: inherit;
+  font-size: 14px;
+  font-weight: 500;
+  line-height: 1.4;
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: background 0.2s var(--ease-out), border-color 0.2s var(--ease-out), color 0.2s var(--ease-out),
+    box-shadow 0.2s var(--ease-out), transform 0.2s var(--ease-spring);
+  user-select: none;
+}
+
+.button:active:not(:disabled) {
+  transform: scale(0.97);
+}
+
+.button:disabled {
+  cursor: not-allowed;
+}
+
+.button.primary {
+  background: var(--ink-gradient);
+  color: #fff;
+  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.12) inset, 0 6px 16px -6px rgba(23, 32, 51, 0.55);
+}
+
+.button.primary:hover:not(:disabled) {
+  background: var(--ink-gradient);
+  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.12) inset, 0 10px 24px -8px rgba(23, 32, 51, 0.6), 0 0 0 3px var(--focus-soft);
+  transform: translateY(-1px);
+}
+
+.button.primary:disabled {
+  background: var(--bg-hover);
+  color: var(--muted);
+  box-shadow: none;
+}
+
+.button.ghost {
+  background: var(--bg-glass-strong);
+  border-color: var(--border-glass);
+  color: var(--text-secondary);
+  box-shadow: var(--shadow-xs);
+}
+
+.button.ghost:hover:not(:disabled) {
+  background: var(--bg-panel);
+  border-color: var(--accent-border);
+  color: var(--text-primary);
+  box-shadow: 0 6px 18px -8px rgba(23, 32, 51, 0.28);
+  transform: translateY(-1px);
+}
+
+.button.danger {
+  background: var(--danger);
+  color: #fff;
+}
+
+.button.danger:hover:not(:disabled) {
+  background: #b91c1c;
+}
+
+.button.small {
+  padding: 5px 12px;
+  border-radius: 999px;
+  font-size: 13px;
+}
+
+.button.icon,
+.button.quiet { background: transparent; border-color: transparent; }
+.button.quiet:hover:not(:disabled) { background: var(--bg-hover); color: var(--text-primary); }
+.button.icon { width: 36px; height: 36px; padding: 8px; }
+.button.icon svg { width: 18px; height: 18px; }
+
+.ui-icon { display: inline-block; width: 18px; height: 18px; flex: 0 0 auto; vertical-align: middle; }
+code, pre { font-family: var(--font-mono); }
+
+/* ---------- Markdown 排版（v-html 渲染内容，需全局样式） ---------- */
+
+.markdown-body {
+  white-space: normal;
+  font-size: 16px;
+  line-height: 1.8;
+}
+
+.coding-workspace {
+  --code-bg: #141b2d;
+  --code-header: #1b2439;
+  --code-text: #e6e9f2;
+  --code-muted: #b8c0d4;
+  --code-border: #303a50;
+}
+
+.markdown-body > :first-child {
+  margin-top: 0;
+}
+
+.markdown-body > :last-child {
+  margin-bottom: 0;
+}
+
+.markdown-body p {
+  margin: 0 0 1em;
+}
+
+.markdown-body h1,
+.markdown-body h2,
+.markdown-body h3,
+.markdown-body h4 {
+  margin: 1.5em 0 0.65em;
+  font-weight: 700;
+  line-height: 1.4;
+}
+
+.markdown-body h1 { font-size: 1.6em; }
+.markdown-body h2 { font-size: 1.35em; }
+.markdown-body h3 { font-size: 1.15em; }
+.markdown-body h4 { font-size: 1em; }
+
+.markdown-body ul,
+.markdown-body ol {
+  margin: 0 0 0.7em;
+  padding-left: 1.4em;
+}
+
+.markdown-body li {
+  margin: 0.25em 0;
+}
+
+.markdown-body li::marker {
+  color: var(--text-secondary);
+}
+
+.markdown-body blockquote {
+  margin: 0 0 0.9em;
+  padding: 0.6em 1em;
+  border-left: 3px solid var(--accent-border);
+  border-radius: 0 10px 10px 0;
+  background: var(--bg-subtle);
+  color: var(--text-secondary);
+}
+
+.markdown-body code {
+  font-family: var(--font-mono);
+  font-size: 0.86em;
+  background: var(--bg-subtle);
+  color: var(--text-primary);
+  padding: 2px 6px;
+  border-radius: 6px;
+}
+
+.markdown-body pre {
+  margin: 0 0 0.9em;
+  padding: 14px 16px;
+  border-radius: var(--radius);
+  background: var(--code-bg);
+  border: 1px solid var(--code-border);
+  color: var(--code-text);
+  overflow-x: auto;
+  font-size: 14px;
+  line-height: 1.65;
+  box-shadow: none;
+}
+
+/* 带语言标签 + 复制按钮的代码块（由 enhanceCodeBlocks 注入） */
+.markdown-body .code-block {
+  margin: 0 0 0.9em;
+  border: 1px solid var(--code-border);
+  border-radius: var(--radius);
+  overflow: hidden;
+  background: var(--code-bg);
+  box-shadow: none;
+}
+
+.markdown-body .code-block-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 7px 8px 7px 14px;
+  background: var(--code-header);
+  border-bottom: 1px solid var(--code-border);
+}
+
+.markdown-body .code-block-lang {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 12px;
+  color: var(--code-muted);
+  font-family: var(--font-mono);
+  letter-spacing: 0.02em;
+}
+
+.markdown-body .code-copy-btn {
+  border: 1px solid transparent;
+  background: transparent;
+  padding: 3px 10px;
+  border-radius: 999px;
+  color: var(--code-muted);
+  font-size: 12px;
+  font-family: inherit;
+  cursor: pointer;
+  transition: background 0.2s var(--ease-out), color 0.2s var(--ease-out), border-color 0.2s var(--ease-out);
+}
+
+.markdown-body .code-copy-btn:hover {
+  background: rgba(246, 181, 69, 0.16);
+  border-color: rgba(246, 181, 69, 0.4);
+  color: var(--code-text);
+}
+
+/* 移动端适配统一放在一处：文本输入不小于 16px（否则 iOS Safari 聚焦时会自动
+   放大整个页面，见 index.html 已允许缩放），按钮与 Markdown 复制按钮放大到
+   44px 触控目标。原先三处同断点的媒体查询已合并，顺序保持原样。 */
+@media (max-width: 768px) {
+  :root { --chat-gutter: 16px; }
+  input:not([type='checkbox']):not([type='radio']):not([type='range']),
+  textarea {
+    font-size: 16px;
+  }
+
+  .button,
+  .button.small {
+    min-height: 44px;
+    border-radius: var(--radius-sm);
+    padding: 8px 14px;
+  }
+
+  .button.small {
+    min-width: 56px;
+    padding: 8px 10px;
+  }
+
+  .button.icon {
+    width: 44px;
+    min-width: 44px;
+    height: 44px;
+    padding: 0;
+  }
+
+  .button.ghost,
+  .button.primary { box-shadow: none; }
+
+  .markdown-body .code-copy-btn {
+    min-width: 56px;
+    min-height: 44px;
+    padding: 8px 10px;
+    border-radius: var(--radius-sm);
+  }
+}
+
+.markdown-body .code-block pre {
+  margin: 0;
+  border: none;
+  border-radius: 0;
+  background: transparent;
+}
+
+.markdown-body pre code {
+  background: transparent;
+  padding: 0;
+  color: inherit;
+  font-size: inherit;
+}
+
+.markdown-body a {
+  color: #2f5bd3;
+  text-decoration: none;
+  background-image: linear-gradient(currentColor, currentColor);
+  background-size: 0% 1.5px;
+  background-position: 0 100%;
+  background-repeat: no-repeat;
+  border-bottom: 1px solid rgba(47, 91, 211, 0.25);
+  transition: background-size 0.3s var(--ease-out), color 0.2s ease;
+}
+
+.markdown-body a:hover {
+  color: #1d44b0;
+  background-size: 100% 1.5px;
+}
+
+.markdown-body table {
+  display: block;
+  overflow-x: auto;
+  width: 100%;
+  border-collapse: collapse;
+  margin: 0 0 0.7em;
+  font-size: 13px;
+}
+
+@media (pointer: coarse) {
+  .button, .button.small, .button.icon { min-height: 44px; }
+  .button.icon { width: 44px; height: 44px; }
+  .code-copy-btn { min-height: 44px; }
+}
+
+.markdown-body th,
+.markdown-body td {
+  border: 1px solid var(--border-soft);
+  padding: 7px 10px;
+  text-align: left;
+}
+
+.markdown-body th {
+  background: var(--bg-subtle);
+  font-weight: 600;
+}
+
+.markdown-body tr:hover td {
+  background: rgba(246, 181, 69, 0.06);
+}
+
+.markdown-body hr {
+  border: none;
+  border-top: 1px solid var(--border-soft);
+  margin: 1em 0;
+}
+
+.markdown-body img {
+  max-width: 100%;
+  border-radius: var(--radius-sm);
+  cursor: zoom-in;
+}
+
+/* ---------- 动画 ---------- */
+
+@keyframes fadeSlide {
+  from {
+    opacity: 0;
+    transform: translateY(10px);
+    filter: blur(4px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+    filter: blur(0);
+  }
+}
+
+/* 只用缩放与透明度：元素的最终布局盒不变，打开瞬间测量位置也不会偏移 */
+@keyframes popIn {
+  from {
+    opacity: 0;
+    transform: scale(0.96);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+/* 侧边抽屉：clip-path 从右向左揭开，不影响布局盒 */
+@keyframes drawerReveal {
+  from {
+    opacity: 0.4;
+    clip-path: inset(0 0 0 100%);
+  }
+  to {
+    opacity: 1;
+    clip-path: inset(0 0 0 0);
+  }
+}
+
+@keyframes backdropIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes glowPulse {
+  0%, 100% { box-shadow: 0 0 0 0 rgba(246, 181, 69, 0.55); }
+  50% { box-shadow: 0 0 0 6px rgba(246, 181, 69, 0); }
+}
+
+@keyframes shimmer {
+  from { background-position: -200% 0; }
+  to { background-position: 200% 0; }
+}
+
+/* 原生 dialog 与弹出菜单统一的出现动效 */
+dialog[open] {
+  animation: popIn 0.24s var(--ease-out);
+}
+
+dialog::backdrop {
+  background: rgba(15, 20, 34, 0.42);
+  backdrop-filter: blur(6px);
+  -webkit-backdrop-filter: blur(6px);
+  animation: backdropIn 0.25s ease both;
+}
+
+[role='menu'],
+[role='listbox'] {
+  animation: popIn 0.18s var(--ease-out);
+}
+
+.files-drawer[open] {
+  animation: drawerReveal 0.36s var(--ease-out);
+}
+
+@keyframes floatIn {
+  from {
+    opacity: 0;
+    transform: translateY(14px) scale(0.98);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0) scale(1);
+  }
+}
+
+/* 系统开启「减弱动态效果」时停用所有动画/过渡 */
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+  }
+}

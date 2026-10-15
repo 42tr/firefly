@@ -1,0 +1,7 @@
+.counter-page { width: min(100%, 560px); margin: 0 auto; padding: 24px; }
+.counter-page header { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+.counter-page h1 { margin: 0; font-size: 24px; overflow-wrap: anywhere; }
+.counter-page output { display: block; margin: 24px 0 0; font-size: clamp(40px, 10vw, 64px); font-variant-numeric: tabular-nums; overflow-wrap: anywhere; }
+.counter-page .actions { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 24px; }
+.counter-page button { min-height: 44px; }
+@media (max-width: 360px) { .counter-page { padding: 16px; } }
