@@ -27,7 +27,7 @@ async function mount(t) {
     set scrollTop(value) { top = Math.round(Math.min(Math.max(0, value), this.scrollHeight - this.clientHeight)); writes.push(top) },
     addEventListener: (name, handler) => listeners.set(name, handler),
     removeEventListener: name => listeners.delete(name),
-    getBoundingClientRect: () => ({ left: 0 }),
+    getBoundingClientRect: () => ({ left: 0, top: 0, bottom: 100 }),
   })
   const renderer = createRenderer({ createComment: () => ({}), insert() {}, remove() {}, parentNode() {}, nextSibling() {} })
   const app = renderer.createApp({ setup() { model = useMessageScroll(); return () => null } })
@@ -112,4 +112,45 @@ test('touch and keyboard release follow while editing and ordinary panel clicks 
   view.listeners.get('keydown')({ key: 'PageUp' })
   assert.equal(view.model.isPinnedToBottom.value, false)
   assert.equal(view.frames.size, 0)
+})
+
+async function replaceLongReply(t) {
+  const view = await mount(t)
+  let naturalHeight = 600
+  const element = { style: {}, get offsetHeight() { return Math.max(naturalHeight, parseFloat(this.style.minHeight) || 0) } }
+  const body = { getBoundingClientRect: () => ({
+    top: 400 + element.offsetHeight - naturalHeight - view.panel.scrollTop,
+    bottom: 400 + element.offsetHeight - view.panel.scrollTop,
+  }) }
+  view.panel.querySelectorAll = () => [body]
+  Object.defineProperty(view.panel, 'scrollHeight', { get: () => 400 + element.offsetHeight })
+  await view.model.scrollToBottom({ force: true })
+  view.model.vStableReply.beforeUpdate(element, { value: {}, oldValue: {} })
+  naturalHeight = 40
+  return { ...view, element, body }
+}
+
+test('a shorter replacement preserves the scroll range and deliberate scrolling reclaims space without moving its content', async t => {
+  const view = await replaceLongReply(t)
+  assert.equal(view.panel.scrollHeight, 1000)
+  assert.equal(view.panel.scrollTop, 900)
+  const before = view.body.getBoundingClientRect().top
+  view.listeners.get('wheel')({ deltaY: -10 })
+  assert.equal(view.element.style.minHeight, '')
+  assert.equal(view.panel.scrollHeight, 440)
+  assert.equal(view.panel.scrollTop, 340)
+  assert.equal(view.body.getBoundingClientRect().top, before)
+  assert.equal(view.model.isPinnedToBottom.value, false)
+})
+
+test('a new turn or an explicit return to the bottom releases reserved reply space', async t => {
+  const view = await replaceLongReply(t)
+  view.model.vStableReply.mounted({}, { value: {} })
+  assert.equal(view.element.style.minHeight, '')
+  assert.equal(view.panel.scrollTop, 340)
+  assert.equal(view.model.isPinnedToBottom.value, true)
+  view.model.vStableReply.beforeUpdate(view.element, { value: {}, oldValue: {} })
+  await view.model.scrollToBottom({ force: true })
+  assert.equal(view.element.style.minHeight, '')
+  assert.equal(view.panel.scrollTop, 340)
 })

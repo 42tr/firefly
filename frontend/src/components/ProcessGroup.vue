@@ -16,11 +16,11 @@ const props = defineProps({
     default: () => [],
   },
   timingSteps: { type: Array, default: null },
+  showDuration: { type: Boolean, default: true },
   running: {
     type: Boolean,
     default: false,
   },
-  collapseRequested: { type: Boolean, default: false },
   // 过程详情正在按需加载中
   loading: {
     type: Boolean,
@@ -45,14 +45,10 @@ const emit = defineEmits(['expand'])
 const displaySteps = computed(() => groupConsecutiveCommands(props.steps))
 
 // 默认保持收起；用户手动展开/折叠后以其选择为准
-const userChoice = ref(null)
-watch(() => props.collapseRequested, requested => {
-  if (requested) userChoice.value = false
-}, { immediate: true })
-const open = computed(() => userChoice.value ?? false)
+const open = ref(false)
 const toggle = () => {
-  userChoice.value = !open.value
-  if (userChoice.value) emit('expand')
+  open.value = !open.value
+  if (open.value) emit('expand')
 }
 
 const currentTime = ref(Date.now())
@@ -79,10 +75,11 @@ const formatCompactDuration = (durationMs) => {
   const remainingMinutes = minutes % 60
   return remainingMinutes ? `${hours}h ${remainingMinutes}m` : `${hours}h`
 }
-const durationText = computed(() => formatCompactDuration(
+const durationText = computed(() => props.showDuration ? formatCompactDuration(
   getProcessDurationMs(props.timingSteps || props.steps, props.running, currentTime.value),
-))
+) : '')
 const summaryText = computed(() => {
+  if (!props.showDuration) return '执行过程'
   return durationText.value ? `执行了 ${durationText.value}` : '执行了'
 })
 </script>

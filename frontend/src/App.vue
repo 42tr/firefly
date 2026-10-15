@@ -262,6 +262,7 @@ const {
   isPinnedToBottom,
   welcomeMessage,
   scrollToBottom,
+  vStableReply,
   normalizeAttachments,
   transformServerMessages,
   loadConversationMessages,
@@ -383,8 +384,8 @@ const { renderMessageHtml, handleChatPanelClick, resolveImageUrl } = useMessageR
   activeConversation, isStreaming, imagePreview,
 })
 
-const { groupedMessages, loadingProcessJobs, processDetailErrors, loadProcessDetail, collapseLiveTurn } = useMessageTimeline({
-  messages, activeConversationId, transformServerMessages, isStreaming,
+const { groupedMessages, loadingProcessJobs, processDetailErrors, loadProcessDetail } = useMessageTimeline({
+  messages, activeConversationId, transformServerMessages,
 })
 
 const statusText = computed(() => {
@@ -834,8 +835,8 @@ onMounted(() => {
                 :job-id="item.jobId"
                 :steps="item.steps"
                 :timing-steps="item.timingSteps"
+                :show-duration="item.showDuration"
                 :running="item.running"
-                :collapse-requested="item.collapseRequested"
                 :loading="loadingProcessJobs.has(item.detailKey)"
                 :error="processDetailErrors.get(item.detailKey) || ''"
                 :tool-status-text="toolStatusText"
@@ -843,15 +844,12 @@ onMounted(() => {
                 :render-message-html="renderMessageHtml"
                 :resolve-image-url="resolveImageUrl"
                 @expand="loadProcessDetail(item)"
-              >
-                <template v-if="item.collapseTurnKey" #actions>
-                  <button class="collapse-process-notes" type="button" @click="collapseLiveTurn(item.collapseTurnKey)">收起中间过程</button>
-                </template>
-              </ProcessGroup>
+              />
               <div
                 v-else
+                v-stable-reply="item.latestReply ? item.msg : null"
                 class="message"
-                :class="[item.msg.role, item.msg.chartOption ? 'chart' : '', item.msg.kind || '']"
+                :class="[item.msg.role, item.msg.chartOption ? 'chart' : '', item.msg.kind || '', { 'latest-reply': item.latestReply }]"
               >
               <div class="message-content">
                 <div v-if="item.msg.title" class="message-title">{{ item.msg.title }}</div>
@@ -859,6 +857,7 @@ onMounted(() => {
                 <ToolOutput v-else-if="item.msg.imageOutput" :value="item.msg.imageOutput" :resolve-image-url="resolveImageUrl" />
                 <MarkdownMessage
                   v-else-if="item.msg.role === 'assistant'"
+                  :key="item.messageKey"
                   :html="renderMessageHtml(item.msg)"
                 />
                 <div v-else class="plain-text">{{ item.msg.content }}</div>

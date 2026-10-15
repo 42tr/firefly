@@ -1,4 +1,4 @@
-import { nextTick, onBeforeUnmount, ref, watch } from 'vue'
+import { nextTick, onBeforeUnmount, onBeforeUpdate, onUpdated, ref, watch } from 'vue'
 
 export function useMessageScroll() {
   const chatPanel = ref(null)
@@ -10,6 +10,9 @@ export function useMessageScroll() {
   let touchY = null
   let observer = null
   let removeListeners = () => {}
+  const reservedReplies = new Set()
+  let reserveRevision = 0
+  let layoutBeforeUpdate = null
 
   const cancelFollow = () => {
     if (frame !== null) cancelAnimationFrame(frame)
@@ -48,7 +51,60 @@ export function useMessageScroll() {
   const scheduleFollow = () => {
     if (chatPanel.value && isPinnedToBottom.value && frame === null) frame = requestAnimationFrame(follow)
   }
-  const releaseFollow = () => setPinned(false)
+  const releaseReplySpace = () => {
+    const panel = chatPanel.value
+    if (!panel || !reservedReplies.size) return
+    const viewport = panel.getBoundingClientRect()
+    const anchor = [...panel.querySelectorAll('.message-content, .process-group-header')].find(element => {
+      const rect = element.getBoundingClientRect()
+      return rect.bottom > viewport.top && rect.top < viewport.bottom
+    })
+    const before = anchor?.getBoundingClientRect().top
+    const top = panel.scrollTop
+    const anchoring = panel.style.overflowAnchor
+    panel.style.overflowAnchor = 'none'
+    for (const element of reservedReplies) element.style.minHeight = ''
+    reservedReplies.clear()
+    reserveRevision += 1
+    if (anchor) writeTop(panel, top + anchor.getBoundingClientRect().top - before)
+    panel.style.overflowAnchor = anchoring
+  }
+  // Replacing a long reply must not shorten the scroll range under the reader.
+  // The stable outer element keeps its footprint and bottom-aligns new content.
+  // Reclaim the temporary space on deliberate scrolling or a new turn.
+  const vStableReply = {
+    mounted(element, { value }) {
+      if (value) releaseReplySpace()
+    },
+    beforeUpdate(element, { value, oldValue }) {
+      if (!value || value === oldValue || !isPinnedToBottom.value) return
+      element.style.minHeight = `${element.offsetHeight}px`
+      reservedReplies.add(element)
+    },
+    beforeUnmount(element) { reservedReplies.delete(element) },
+  }
+  // Finishing a turn can also remove its workflow above the reply. Preserve
+  // the whole scroll range before paint, unless space was deliberately freed.
+  onBeforeUpdate(() => {
+    const panel = chatPanel.value
+    layoutBeforeUpdate = panel && isPinnedToBottom.value && reservedReplies.size
+      ? { panel, height: panel.scrollHeight, top: panel.scrollTop, revision: reserveRevision } : null
+  })
+  onUpdated(() => {
+    const before = layoutBeforeUpdate
+    layoutBeforeUpdate = null
+    if (!before || before.panel !== chatPanel.value || !isPinnedToBottom.value
+      || before.revision !== reserveRevision || !reservedReplies.size) return
+    const shrink = before.height - before.panel.scrollHeight
+    if (shrink <= 0) return
+    const element = [...reservedReplies].at(-1)
+    element.style.minHeight = `${element.offsetHeight + shrink}px`
+    writeTop(before.panel, before.top)
+  })
+  const releaseFollow = () => {
+    setPinned(false)
+    releaseReplySpace()
+  }
   const handleScroll = () => {
     const panel = chatPanel.value
     if (!panel) return
@@ -63,7 +119,7 @@ export function useMessageScroll() {
       setPinned(true)
       scheduleFollow()
     }
-    observedTop = top
+    observedTop = panel.scrollTop
   }
   const handleWheel = event => { if (event.deltaY < 0) releaseFollow() }
   const handleTouchStart = event => { touchY = event.touches[0]?.clientY ?? null }
@@ -87,6 +143,8 @@ export function useMessageScroll() {
     observer = null
     cancelFollow()
     writtenTop = null
+    for (const element of reservedReplies) element.style.minHeight = ''
+    reservedReplies.clear()
     if (!panel) return
     observedTop = panel.scrollTop
     panel.style.overflowAnchor = isPinnedToBottom.value ? 'none' : ''
@@ -108,6 +166,7 @@ export function useMessageScroll() {
     await nextTick()
     if (force) {
       cancelFollow()
+      releaseReplySpace()
       setPinned(true)
       const panel = chatPanel.value
       if (panel) writeTop(panel, Math.max(0, panel.scrollHeight - panel.clientHeight))
@@ -117,6 +176,7 @@ export function useMessageScroll() {
     cancelFollow()
     observer?.disconnect()
     removeListeners()
+    reservedReplies.clear()
   })
-  return { chatPanel, isPinnedToBottom, scrollToBottom }
+  return { chatPanel, isPinnedToBottom, scrollToBottom, vStableReply }
 }
