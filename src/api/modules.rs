@@ -2,7 +2,7 @@ use super::{auth::Session, error::AppError};
 use crate::modules;
 use axum::{
     extract::{DefaultBodyLimit, Path},
-    http::{header, HeaderMap},
+    http::header,
     response::{IntoResponse, Response},
     routing::{get, post, put},
     Json, Router,
@@ -30,18 +30,15 @@ fn failure(error: anyhow::Error) -> AppError {
 async fn list(_: Session) -> Result<Json<Value>, AppError> {
     Ok(Json(modules::get()?.list().await))
 }
-async fn reload(_: Session, headers: HeaderMap) -> Result<Json<Value>, AppError> {
-    super::auth::check_origin(&headers)?;
+async fn reload(_: Session) -> Result<Json<Value>, AppError> {
     modules::get()?.reload().await.map_err(failure)?;
     Ok(Json(modules::get()?.list().await))
 }
 async fn update(
     _: Session,
-    headers: HeaderMap,
     Path(id): Path<String>,
     Json(input): Json<modules::Update>,
 ) -> Result<Json<Value>, AppError> {
-    super::auth::check_origin(&headers)?;
     modules::get()?.update(&id, input).await.map_err(failure)?;
     Ok(Json(modules::get()?.list().await))
 }
@@ -63,11 +60,9 @@ struct Call {
 }
 async fn call(
     _: Session,
-    headers: HeaderMap,
     Path(id): Path<String>,
     Json(input): Json<Call>,
 ) -> Result<Json<Value>, AppError> {
-    super::auth::check_origin(&headers)?;
     let module = modules::get()?.module(&id).await.map_err(failure)?;
     Ok(Json(
         module
@@ -86,10 +81,8 @@ async fn runs(_: Session, Path(id): Path<String>) -> Result<Json<Value>, AppErro
 }
 async fn open_page(
     _: Session,
-    headers: HeaderMap,
     Path((id, page)): Path<(String, String)>,
 ) -> Result<Json<Value>, AppError> {
-    super::auth::check_origin(&headers)?;
     let module = modules::get()?.module(&id).await.map_err(failure)?;
     let definition = module
         .manifest

@@ -20,7 +20,7 @@ cp .env.example .env
 chmod 600 .env
 ```
 
-**初始化前编辑 `.env`**，替换 `AUTH_PASSWORD`（至少 9 个字符，使用强密码）和 `JWT_SECRET`（至少 32 字节）。可用 `openssl rand -hex 32` 分别生成两个独立随机值。本机 HTTP 访问保留 `SITE_URL=http://localhost:3003`、`COOKIE_SECURE=false`；HTTPS 部署改为实际站点地址和 `COOKIE_SECURE=true`。示例凭据会被拒绝，不能直接启动。
+**初始化前编辑 `.env`**，替换 `AUTH_PASSWORD`（至少 9 个字符，使用强密码）和 `JWT_SECRET`（至少 32 字节）。可用 `openssl rand -hex 32` 分别生成两个独立随机值。本机 HTTP 访问保留 `COOKIE_SECURE=false`；HTTPS 部署设置 `COOKIE_SECURE=true`。示例凭据会被拒绝，不能直接启动。
 
 ```sh
 ./firefly
@@ -71,7 +71,7 @@ workspace/                        # Agent 工作目录
 modules/                          # 独立模块包
 ```
 
-模型及模块密钥存储在本地数据库，接口读回脱敏；数据库备份仍包含密钥，必须妥善保管。服务默认监听 `0.0.0.0:3003`，仅本机使用时将 `BIND_ADDRESS` 改为 `127.0.0.1:3003`。反向代理提供 HTTPS 时配置准确的 `SITE_URL`，必要时设置 `SITE_URL_ALIASES`；工作区不是隔离不可信使用者的沙箱。
+模型及模块密钥存储在本地数据库，接口读回脱敏；数据库备份仍包含密钥，必须妥善保管。服务默认监听 `0.0.0.0:3003`，仅本机使用时将 `BIND_ADDRESS` 改为 `127.0.0.1:3003`。反向代理提供 HTTPS 时设置 `COOKIE_SECURE=true`。登录和 WebSocket 使用密码与 JWT 会话认证，不检查 Origin 白名单；旧配置中的 `SITE_URL`、`SITE_URL_ALIASES` 可删除。工作区不是隔离不可信使用者的沙箱。
 
 `CONVERSATION_RETENTION_DAYS` 配置对话未更新的保留天数，默认 30，设置为 0 关闭自动清理。启用时每日维护任务删除达到期限的对话、关联消息、记录及附件；查看不会延长保留期，归档和置顶同样遵循该配置。`APP_TIMEZONE` 配置核心调度、周统计、日志与页面时间显示的 IANA 时区，默认 `Asia/Shanghai`。修改后重启；已有定时任务的下次运行时间会在时区变化时重新计算，普通重启保留原触发时间。模块任务继续使用各自清单中的显式时区。
 

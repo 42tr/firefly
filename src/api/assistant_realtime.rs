@@ -9,7 +9,6 @@ use axum::{
         ws::{Message, WebSocket},
         Path, Query, WebSocketUpgrade,
     },
-    http::HeaderMap,
     response::Response,
 };
 use chrono::Utc;
@@ -68,9 +67,8 @@ struct Subscription {
 }
 
 pub async fn connect(
-    user: Session, cookies: Cookies, headers: HeaderMap, ws: WebSocketUpgrade,
+    user: Session, cookies: Cookies, ws: WebSocketUpgrade,
 ) -> Result<Response, AppError> {
-    super::auth::check_origin(&headers)?;
     let cookie = cookies.get("firefly_session").ok_or_else(|| AppError::unauthorized("Missing session"))?;
     let expires = super::jwt::validate(cookie.value()).map_err(|_| AppError::unauthorized("Invalid session"))?.exp;
     Ok(ws.max_message_size(4096).max_frame_size(4096).on_upgrade(move |socket| serve(socket, user.storage_scope().to_owned(), expires)))
@@ -237,6 +235,39 @@ async fn serve(mut socket: WebSocket, user: String, expires: i64) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn websocket_handshakes_require_sessions_but_not_origin_allowlists() {
+        crate::config::init_test_config();
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            axum::serve(listener, super::super::app()).await.unwrap();
+        });
+        let client = reqwest::Client::builder().no_proxy().timeout(Duration::from_secs(5)).build().unwrap();
+        let session = super::super::jwt::create(&super::super::jwt::Claims::new(1)).unwrap();
+        let expired = super::super::jwt::create(&super::super::jwt::Claims::new(-1)).unwrap();
+        for origin in [None, Some("null"), Some("http://192.168.1.3:5173"), Some("https://different.example")] {
+            for (token, status) in [
+                (Some(session.as_str()), reqwest::StatusCode::SWITCHING_PROTOCOLS),
+                (None, reqwest::StatusCode::UNAUTHORIZED),
+                (Some("invalid"), reqwest::StatusCode::UNAUTHORIZED),
+                (Some(expired.as_str()), reqwest::StatusCode::UNAUTHORIZED),
+            ] {
+                let mut request = client.get(format!("http://{address}/api/assistant/ws"))
+                    .header("connection", "upgrade")
+                    .header("upgrade", "websocket")
+                    .header("sec-websocket-version", "13")
+                    .header("sec-websocket-key", "dGhlIHNhbXBsZSBub25jZQ==");
+                if let Some(origin) = origin { request = request.header("origin", origin); }
+                if let Some(token) = token { request = request.header("cookie", format!("firefly_session={token}")); }
+                let response = request.send().await.unwrap();
+                assert_eq!(response.status(), status, "Origin: {origin:?}");
+            }
+        }
+        server.abort();
+        let _ = server.await;
+    }
 
     #[test]
     fn subscription_protocol_is_bounded_to_supported_read_topics() {

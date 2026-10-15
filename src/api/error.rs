@@ -35,10 +35,6 @@ impl AppError {
         Self { status: StatusCode::UNAUTHORIZED, message: msg.to_string(), source: None, retry_after_secs: None }
     }
 
-    pub fn forbidden(msg: impl std::fmt::Display) -> Self {
-        Self { status: StatusCode::FORBIDDEN, message: msg.to_string(), source: None, retry_after_secs: None }
-    }
-
     pub fn not_found(msg: impl std::fmt::Display) -> Self {
         Self { status: StatusCode::NOT_FOUND, message: msg.to_string(), source: None, retry_after_secs: None }
     }

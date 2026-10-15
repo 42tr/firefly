@@ -31,10 +31,8 @@ async fn read(_: Session) -> Result<(HeaderMap, Json<Value>), AppError> {
 
 async fn update(
     _: Session,
-    headers: HeaderMap,
     Json(settings): Json<Settings>,
 ) -> Result<(HeaderMap, Json<Value>), AppError> {
-    super::auth::check_origin(&headers)?;
     settings.validate().map_err(AppError::bad_request)?;
     let saved = settings
         .save(db::pool())

@@ -1,16 +1,10 @@
 import { defineConfig, loadEnv, type HttpProxy } from 'vite'
 import vue from '@vitejs/plugin-vue'
-import type { ClientRequest, IncomingMessage } from 'node:http'
+import type { IncomingMessage } from 'node:http'
 import { fileURLToPath } from 'node:url'
 
-// The backend rejects POSTs whose Origin is not its own site URL, so the dev
-// proxy rewrites Origin to the API target to keep login working through it.
 const proxyTarget = 'http://localhost:3003'
-const backendOrigin = 'http://127.0.0.1:3003'
 const configureProxy = (proxy: HttpProxy.Server) => {
-  const rewrite = (req: ClientRequest) => req.setHeader('origin', backendOrigin)
-  proxy.on('proxyReq', rewrite)
-  proxy.on('proxyReqWs', rewrite)
   // Release backends mark the session cookie Secure; drop that flag so the
   // cookie survives on plain-HTTP dev origins (e.g. LAN access).
   proxy.on('proxyRes', (res) => {
