@@ -21,7 +21,6 @@ const props = defineProps({
     type: Boolean,
     default: false,
   },
-  collapseRequested: { type: Boolean, default: false },
   // 过程详情正在按需加载中
   loading: {
     type: Boolean,
@@ -46,14 +45,10 @@ const emit = defineEmits(['expand'])
 const displaySteps = computed(() => groupConsecutiveCommands(props.steps))
 
 // 默认保持收起；用户手动展开/折叠后以其选择为准
-const userChoice = ref(null)
-watch(() => props.collapseRequested, requested => {
-  if (requested) userChoice.value = false
-}, { immediate: true })
-const open = computed(() => userChoice.value ?? false)
+const open = ref(false)
 const toggle = () => {
-  userChoice.value = !open.value
-  if (userChoice.value) emit('expand')
+  open.value = !open.value
+  if (open.value) emit('expand')
 }
 
 const currentTime = ref(Date.now())

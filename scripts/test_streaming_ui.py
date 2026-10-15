@@ -144,19 +144,29 @@ class StreamingUI(unittest.TestCase):
         page.get_by_role('button', name='回到底部', exact=True).click()
         self.assertLessEqual(panel.evaluate('(node) => node.scrollHeight - node.clientHeight - node.scrollTop'), 1)
 
-        before_tool_height = panel.evaluate('(node) => node.scrollHeight')
         emit('tool_call', id='call', name='command', arguments={'command': 'example'})
         expect(page.locator('.process-group')).to_have_count(1)
         expect(page.locator('.message.assistant')).to_have_count(1)
+        self.assertTrue(page.evaluate('saved.body.isConnected'))
         emit('tool_result', id='call', name='command', result='done')
+        emit('assistant_delta', delta='继续检查中。')
+        expect(page.locator('.message.assistant')).to_have_count(1)
+        expect(page.locator('.message.assistant')).to_contain_text('继续检查中。')
+        self.assertFalse(page.evaluate('saved.body.isConnected'))
+        emit('tool_call', id='next-call', name='command', arguments={'command': 'next example'})
+        expect(page.locator('.process-group')).to_have_count(1)
+        expect(page.locator('.message.assistant')).to_contain_text('继续检查中。')
+        emit('tool_result', id='next-call', name='command', result='done')
         emit('assistant_delta', delta='最终回答。\n\n| 列一 | 列二 |\n')
-        expect(page.locator('.message.assistant')).to_have_count(2)
+        expect(page.locator('.message.assistant')).to_have_count(1)
+        expect(page.locator('.message.assistant')).not_to_contain_text('继续检查中。')
         emit('assistant_delta', delta='| --- | --- |\n| 内容 | 内容 |\n')
         expect(page.locator('.message.assistant table')).to_have_count(1)
-        self.assertGreaterEqual(panel.evaluate('(node) => node.scrollHeight'), before_tool_height)
-        self.assertTrue(page.evaluate('saved.body.isConnected'))
+        expect(page.locator('.process-group-title')).to_have_count(1)
         page.locator('.process-group-header').click()
         expect(page.locator('.process-group-body')).to_be_visible()
+        expect(page.locator('.process-step-fragment').first).to_contain_text('稳定段落：')
+        expect(page.locator('.process-step-fragment').last).to_contain_text('继续检查中。')
 
         active_height = panel.evaluate('(node) => node.clientHeight')
         active = False
@@ -165,14 +175,18 @@ class StreamingUI(unittest.TestCase):
             page.get_by_role('button', name='停止当前回复', exact=True).click()
         elif ending == 'recovery':
             # Replace message objects with the committed snapshot, as happens
-            # when a replay log expires. Previously visible notes stay outside.
+            # when a replay log expires. Earlier notes remain in the process.
             records[0]['processing_status'] = 'completed'
             records.extend([
                 dict(id=2, conversation_id=1, role='assistant', content=opening + closing,
                      generation_job_id='job', processing_status='completed'),
                 dict(id=3, conversation_id=1, role='tool', tool_call_id='call',
                      content='done', metadata={'tool_name': 'command'}, generation_job_id='job'),
-                dict(id=4, conversation_id=1, role='assistant', content='最终回答。',
+                dict(id=4, conversation_id=1, role='assistant', content='继续检查中。',
+                     generation_job_id='job', processing_status='completed'),
+                dict(id=5, conversation_id=1, role='tool', tool_call_id='next-call',
+                     content='done', metadata={'tool_name': 'command'}, generation_job_id='job'),
+                dict(id=6, conversation_id=1, role='assistant', content='最终回答。',
                      generation_job_id='job', processing_status='completed'),
             ])
             emit('stream_reset', reason='log_expired')
@@ -180,13 +194,14 @@ class StreamingUI(unittest.TestCase):
             emit('assistant_done')
         expect(page.locator('.input-status')).to_have_class('input-status input-status-idle')
         self.assertEqual(panel.evaluate('(node) => node.clientHeight'), active_height)
-        expect(page.locator('.message.assistant')).to_have_count(2)
-        page.get_by_role('button', name='收起中间过程', exact=True).click()
         expect(page.locator('.message.assistant')).to_have_count(1)
+        expect(page.locator('.process-group-body')).to_be_visible()
+        page.get_by_role('button', name='收起执行过程', exact=True).click()
         expect(page.locator('.process-group-body')).to_have_count(0)
         expect(page.locator('.message.assistant')).to_contain_text('最终回答。')
         page.locator('.process-group-header').click()
-        expect(page.locator('.process-step-fragment')).to_contain_text('稳定段落：')
+        expect(page.locator('.process-step-fragment').first).to_contain_text('稳定段落：')
+        expect(page.locator('.process-step-fragment').last).to_contain_text('继续检查中。')
         self.assertLessEqual(page.evaluate('document.documentElement.scrollWidth'), width)
         self.assertEqual(errors, [])
         print(f'{width}px streaming metrics: {metrics}')

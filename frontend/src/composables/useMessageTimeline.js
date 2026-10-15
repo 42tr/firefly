@@ -4,16 +4,7 @@ import { apiFetch } from '@/utils/http'
 import { useAssistantRealtime } from './useAssistantRealtime.js'
 import { appDateParts, formatAppDateTime } from './appTimezone.js'
 
-export function useMessageTimeline({ messages, activeConversationId, transformServerMessages, includeQueued = false, isStreaming = ref(false) }) {
-  // Remember live turns through completion and snapshot replacement. Folding is
-  // explicit for this visit; history still uses the compact result/process view.
-  const liveTurns = new Set()
-  const collapsedLiveTurns = reactive(new Set())
-  const collapseLiveTurn = key => collapsedLiveTurns.add(key)
-  watch(activeConversationId, () => {
-    liveTurns.clear()
-    collapsedLiveTurns.clear()
-  }, { flush: 'sync' })
+export function useMessageTimeline({ messages, activeConversationId, transformServerMessages, includeQueued = false }) {
   // 稳定的消息 key：按对象身份分配自增 id
   const msgUidMap = new WeakMap()
   let msgUidCounter = 0
@@ -130,15 +121,14 @@ export function useMessageTimeline({ messages, activeConversationId, transformSe
       let j = i
       while (j < list.length && list[j].role !== 'user') j += 1
       const segment = list.slice(i, j)
-      const turnKey = segment.find(message => message.jobId)?.jobId || getMsgKey(segment[0])
-      if (isStreaming.value && j === list.length) liveTurns.add(turnKey)
-      // 结果区以「最后一条 assistant 文本消息」定位：它之后的工具步骤（如收尾命令）
-      // 仍收进过程块，保证回复是外面最后一条可见消息；整轮没有文本回复时退回旧规则
+      // 流式与历史记录均只在消息区显示最新一条文字回复，较早的说明收进过程块。
+      // 最新回复之后的工具步骤也并入过程，图表和图片等结果仍保持可见。
       let resultStart = segment.length
       for (let k = segment.length - 1; k >= 0; k -= 1) {
         if (isReplyTextMessage(segment[k])) { resultStart = k; break }
       }
-      while (resultStart > 0 && isResultMessage(segment[resultStart - 1])) resultStart -= 1
+      while (resultStart > 0 && isResultMessage(segment[resultStart - 1])
+        && !isReplyTextMessage(segment[resultStart - 1])) resultStart -= 1
       let pendingSteps = []
       const flushSteps = () => {
         if (!pendingSteps.length) return
@@ -170,7 +160,6 @@ export function useMessageTimeline({ messages, activeConversationId, transformSe
             steps,
             timingSteps,
             running,
-            collapseRequested: collapsedLiveTurns.has(turnKey),
             jobId,
             detailKey,
             detailQuery,
@@ -178,25 +167,6 @@ export function useMessageTimeline({ messages, activeConversationId, transformSe
           },
         )
         pendingSteps = []
-      }
-      if (liveTurns.has(turnKey) && !collapsedLiveTurns.has(turnKey)) {
-        const firstItem = items.length
-        for (const step of segment) {
-          if (isToolStep(step)) {
-            if (pendingSteps.length && pendingSteps[0].jobId !== step.jobId) flushSteps()
-            pendingSteps.push(step)
-          } else {
-            flushSteps()
-            pushItem({ type: 'msg', msg: step, key: getMsgKey(step) })
-          }
-        }
-        flushSteps()
-        if (!isStreaming.value && segment.filter(isReplyTextMessage).length > 1) {
-          const process = items.slice(firstItem).find(item => item.type === 'process')
-          if (process) process.collapseTurnKey = turnKey
-        }
-        i = j
-        continue
       }
       segment.slice(0, resultStart).forEach((stepMsg) => {
         if (isProcessStep(stepMsg)) {
@@ -223,7 +193,7 @@ export function useMessageTimeline({ messages, activeConversationId, transformSe
       })
       i = j
     }
-    // Progress notes split a live turn into several process blocks. Keep the
+    // Visible results can split a turn into several process blocks. Keep the
     // whole-turn clock and running indicator on its latest block only.
     const timedJobs = new Set()
     for (let index = items.length - 1; index >= 0; index -= 1) {
@@ -323,5 +293,5 @@ export function useMessageTimeline({ messages, activeConversationId, transformSe
     }
   }
 
-  return { groupedMessages, loadingProcessJobs, processDetailErrors, loadProcessDetail, collapseLiveTurn }
+  return { groupedMessages, loadingProcessJobs, processDetailErrors, loadProcessDetail }
 }

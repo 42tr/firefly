@@ -383,8 +383,8 @@ const { renderMessageHtml, handleChatPanelClick, resolveImageUrl } = useMessageR
   activeConversation, isStreaming, imagePreview,
 })
 
-const { groupedMessages, loadingProcessJobs, processDetailErrors, loadProcessDetail, collapseLiveTurn } = useMessageTimeline({
-  messages, activeConversationId, transformServerMessages, isStreaming,
+const { groupedMessages, loadingProcessJobs, processDetailErrors, loadProcessDetail } = useMessageTimeline({
+  messages, activeConversationId, transformServerMessages,
 })
 
 const statusText = computed(() => {
@@ -836,7 +836,6 @@ onMounted(() => {
                 :timing-steps="item.timingSteps"
                 :show-duration="item.showDuration"
                 :running="item.running"
-                :collapse-requested="item.collapseRequested"
                 :loading="loadingProcessJobs.has(item.detailKey)"
                 :error="processDetailErrors.get(item.detailKey) || ''"
                 :tool-status-text="toolStatusText"
@@ -844,11 +843,7 @@ onMounted(() => {
                 :render-message-html="renderMessageHtml"
                 :resolve-image-url="resolveImageUrl"
                 @expand="loadProcessDetail(item)"
-              >
-                <template v-if="item.collapseTurnKey" #actions>
-                  <button class="collapse-process-notes" type="button" @click="collapseLiveTurn(item.collapseTurnKey)">收起中间过程</button>
-                </template>
-              </ProcessGroup>
+              />
               <div
                 v-else
                 class="message"
