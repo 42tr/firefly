@@ -90,7 +90,7 @@ onBeforeUnmount(() => {
 
 <template>
   <div ref="root" class="recent-chats" @focusout="focusOut">
-    <button ref="trigger" class="recent-chats-toggle" type="button" title="最近聊天" aria-label="查看最近聊天"
+    <button ref="trigger" class="recent-chats-toggle" data-icon-motion="lift" type="button" title="最近聊天" aria-label="查看最近聊天"
       aria-haspopup="menu" :aria-expanded="open" aria-controls="recent-chats-menu"
       @click="open ? close() : show()" @keydown.down.prevent="show()" @keydown.up.prevent="show(true)">
       <UiIcon name="chat" />
@@ -124,7 +124,7 @@ onBeforeUnmount(() => {
 .recent-chats { width: 44px; flex-shrink: 0; }
 .recent-chats-toggle { display: flex; align-items: center; justify-content: center; width: 44px; height: 44px; padding: 6px; border: 0; border-radius: var(--radius-sm); background: transparent; color: var(--text-secondary); cursor: pointer; }
 .recent-chats-toggle .ui-icon { width: 22px; height: 22px; }
-.recent-chats-toggle:hover, .recent-chats-toggle[aria-expanded='true'] { background: var(--bg-hover); color: var(--text-primary); }
+.recent-chats-toggle:hover, .recent-chats-toggle[aria-expanded='true'] { color: var(--text-primary); }
 .recent-chats-menu { position: fixed; z-index: 110; display: flex; flex-direction: column; box-sizing: border-box; padding: 12px; border: 1px solid var(--border-soft); border-radius: 24px; background: var(--bg-panel); box-shadow: 0 6px 28px rgba(23, 32, 51, .08); transform-origin: top left; animation: none; }
 .recent-chats-heading { flex-shrink: 0; margin: 0; padding: 10px 12px 12px; color: var(--muted); font: inherit; font-size: 14px; font-weight: 600; line-height: 22px; }
 .recent-chats-list { min-height: 0; overflow-y: auto; overscroll-behavior: contain; }

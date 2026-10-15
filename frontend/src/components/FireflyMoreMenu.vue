@@ -65,7 +65,7 @@ onBeforeUnmount(() => {
 
 <template>
   <div ref="root" class="firefly-more" @focusout="onFocusOut">
-    <button ref="trigger" class="button ghost icon function-menu-trigger" type="button" aria-label="更多功能" title="功能菜单" aria-haspopup="menu" :aria-expanded="open" aria-controls="firefly-more-menu" @click="open ? close() : show()" @keydown.down.prevent="show()" @keydown.up.prevent="show(true)">
+    <button ref="trigger" class="button ghost icon function-menu-trigger" data-icon-motion="more" type="button" aria-label="更多功能" title="功能菜单" aria-haspopup="menu" :aria-expanded="open" aria-controls="firefly-more-menu" @click="open ? close() : show()" @keydown.down.prevent="show()" @keydown.up.prevent="show(true)">
       <UiIcon name="more-horizontal" />
     </button>
     <div v-show="open" id="firefly-more-menu" ref="menu" class="firefly-more-menu" role="menu" aria-label="更多功能" @click="select" @keydown="navigate">
@@ -82,11 +82,18 @@ onBeforeUnmount(() => {
 
 <style scoped>
 .firefly-more { position: relative; flex-shrink: 0; }
-.function-menu-trigger { position: relative; width: 44px; height: 44px; min-width: 44px; padding: 0; }
+.button.function-menu-trigger { position: relative; width: 44px; height: 44px; min-width: 44px; padding: 0; border: 1px solid transparent; border-radius: 14px; background: transparent; color: var(--muted); box-shadow: none; }
+.button.function-menu-trigger:hover:not(:disabled), .button.function-menu-trigger[aria-expanded='true'], .button.function-menu-trigger:focus-visible { background: transparent; border-color: transparent; color: var(--text-primary); box-shadow: none; transform: none; }
+.button.function-menu-trigger:active:not(:disabled) { transform: scale(.94); }
 .function-menu-trigger .ui-icon { width: 22px; height: 22px; }
-.firefly-more-menu { position: absolute; top: calc(100% + 8px); right: 0; z-index: 30; display: flex; flex-direction: column; width: 216px; max-width: calc(100vw - 32px); max-height: calc(100dvh - 88px); overflow-y: auto; overscroll-behavior: contain; padding: 6px; border: 1px solid var(--border-soft); border-radius: 14px; background: var(--bg-panel); box-shadow: 0 10px 28px rgba(23, 32, 51, .1); }
+/* The source SVG orders its dots center, right, left; stagger visually left to right. */
+.function-menu-trigger :deep(circle:nth-child(3)) { --icon-dot-delay: 0ms; }
+.function-menu-trigger :deep(circle:nth-child(1)) { --icon-dot-delay: 80ms; }
+.function-menu-trigger :deep(circle:nth-child(2)) { --icon-dot-delay: 160ms; }
+.firefly-more-menu { position: absolute; top: calc(100% + 8px); right: 0; z-index: 30; display: flex; flex-direction: column; width: 216px; max-width: calc(100vw - 32px); max-height: calc(100dvh - 88px); overflow-y: auto; overscroll-behavior: contain; padding: 6px; border: 1px solid var(--border-soft); border-radius: 16px; background: var(--bg-panel); box-shadow: var(--shadow-float); transform-origin: calc(100% - 22px) top; animation: moreMenuIn 200ms var(--ease-out); }
+@keyframes moreMenuIn { from { opacity: 0; transform: translateY(-6px) scale(.97); } to { opacity: 1; transform: translateY(0) scale(1); } }
 .function-menu-divider { height: 1px; flex-shrink: 0; margin: 5px -6px; background: var(--border-soft); }
-.firefly-more-menu :deep(.button.small) { position: relative; display: flex; align-items: center; gap: 12px; width: 100%; min-width: 0; min-height: 40px; justify-content: flex-start; padding: 8px 12px; border: 0; border-radius: 8px; text-align: left; background: transparent; box-shadow: none; transform: none; font-size: 14px; font-weight: 400; color: var(--text-primary); }
+.firefly-more-menu :deep(.button.small) { position: relative; display: flex; align-items: center; gap: 12px; width: 100%; min-width: 0; min-height: 40px; justify-content: flex-start; padding: 8px 12px; border: 0; border-radius: 10px; text-align: left; background: transparent; box-shadow: none; transform: none; font-size: 14px; font-weight: 400; color: var(--text-primary); }
 .firefly-more-menu :deep(.ui-icon) { display: block; width: 18px; height: 18px; flex-shrink: 0; }
 .firefly-more-menu :deep(.button.small:hover:not(:disabled)) { background: var(--bg-hover); box-shadow: none; transform: none; }
 @media (min-width: 769px) {
@@ -95,5 +102,10 @@ onBeforeUnmount(() => {
 @media (max-width: 768px) {
   .firefly-more-menu { width: 176px; }
   .firefly-more-menu :deep(.button.small) { min-height: 44px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .button.function-menu-trigger, .firefly-more-menu :deep(.button.small) { transition: none; }
+  .button.function-menu-trigger:active:not(:disabled) { transform: none; }
+  .firefly-more-menu { animation: none; }
 }
 </style>

@@ -11,12 +11,13 @@ export function useClaudeModels() {
   const defaultProvider = ref('cli')
   const cliDefaultReasoningLevel = ref('')
   const reasoningOptions = ref(['low', 'medium', 'high', 'xhigh', 'max'])
+  const usingCli = computed(() => (provider.value || defaultProvider.value) === 'cli')
   const currentProvider = computed(() => providers.value.find(item => item.name === (provider.value || defaultProvider.value)))
-  const modelOptions = computed(() => currentProvider.value?.models || cliModels.value)
+  const modelOptions = computed(() => currentProvider.value?.models || (usingCli.value ? cliModels.value : []))
   const defaultModel = computed(() => currentProvider.value
-    ? currentProvider.value.default_model || 'default' : cliDefaultModel.value)
+    ? currentProvider.value.default_model || 'default' : usingCli.value ? cliDefaultModel.value : '')
   const defaultReasoningLevel = computed(() => currentProvider.value
-    ? currentProvider.value.default_reasoning_level || '' : cliDefaultReasoningLevel.value)
+    ? currentProvider.value.default_reasoning_level || '' : usingCli.value ? cliDefaultReasoningLevel.value : '')
   const modelsLoading = ref(false)
   const modelsError = ref('')
   let request = 0
@@ -38,6 +39,9 @@ export function useClaudeModels() {
       cliDefaultReasoningLevel.value = data.default_reasoning_level || ''
       modelsError.value = data.models_error || ''
       reasoningOptions.value = data.reasoning_levels || ['low', 'medium', 'high', 'xhigh', 'max']
+      if (!provider.value) provider.value = defaultProvider.value
+      if (!model.value || model.value === 'default') selectModel()
+      if (!reasoningLevel.value) selectReasoningLevel()
       return true
     } catch (error) {
       if (current !== request) return
@@ -50,7 +54,19 @@ export function useClaudeModels() {
       if (current === request) modelsLoading.value = false
     }
   }
-  const changeProvider = () => { model.value = '' }
+  const selectModel = () => {
+    const configured = defaultModel.value
+    model.value = configured && configured !== 'default' ? configured : modelOptions.value[0] || ''
+  }
+  const selectReasoningLevel = () => {
+    const levels = reasoningOptions.value
+    reasoningLevel.value = [defaultReasoningLevel.value, 'medium']
+      .find(level => levels.includes(level)) || levels[0] || ''
+  }
+  const changeProvider = () => {
+    selectModel()
+    selectReasoningLevel()
+  }
   return { model, provider, reasoningLevel, providers, defaultProvider, defaultReasoningLevel,
     reasoningOptions, modelOptions, defaultModel, modelsLoading, modelsError, loadModels, cancelModelLoad, changeProvider }
 }

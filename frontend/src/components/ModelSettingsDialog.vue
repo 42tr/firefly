@@ -21,16 +21,16 @@ const providerResolved = ref(false)
 const agent = computed(() => props.conversation?.agent)
 const isClaude = computed(() => agent.value === 'claude')
 const {
-  model: claudeModel, modelOptions: claudeModelOptions, defaultModel: defaultClaudeModel,
-  provider: claudeProvider, providers: claudeProviders, defaultProvider: defaultClaudeProvider,
+  model: claudeModel, modelOptions: claudeModelOptions,
+  provider: claudeProvider, providers: claudeProviders,
   reasoningLevel: claudeReasoningLevel, reasoningOptions: claudeReasoningOptions,
-  defaultReasoningLevel: defaultClaudeReasoningLevel, changeProvider: changeClaudeProvider,
+  changeProvider: changeClaudeProvider,
   modelsLoading: claudeModelsLoading, modelsError: claudeModelsError,
   loadModels: loadClaudeModels, cancelModelLoad: cancelClaudeModelLoad,
 } = useClaudeModels()
 const {
   providers, modelsLoading, modelsError, defaultProvider, provider, model, reasoningLevel,
-  loadProviders, modelOptions, providerModelsError, reasoningOptions, changeProvider, cancelModelLoad,
+  loadProviders, modelOptions, providerModelsError, reasoningOptions, changeProvider, cancelModelLoad, resolveDefaults,
 } = useCodexModels(agent)
 const loading = computed(() => isClaude.value ? claudeModelsLoading.value : modelsLoading.value)
 const blockedReason = computed(() => {
@@ -65,6 +65,7 @@ const loadCurrentProviders = async (current, token) => {
   if (token !== opening) return
   providerResolved.value = !!current?.codex_provider || !!loaded
   if (!current?.codex_provider && loaded) provider.value = defaultProvider.value
+  if (loaded) resolveDefaults()
 }
 const selectProvider = () => {
   providerResolved.value = true
@@ -134,7 +135,7 @@ const save = async () => {
       <p class="settings-hint">保存后发送的新消息使用新设置，运行和排队的消息保持原设置。</p>
       <form @submit.prevent="save">
         <fieldset :disabled="saving || loading || !!blockedReason">
-          <ClaudeSettingsFields v-if="isClaude" v-model="claudeModel" v-model:provider="claudeProvider" v-model:reasoning-level="claudeReasoningLevel" :providers="claudeProviders" :default-provider="defaultClaudeProvider" :reasoning-levels="claudeReasoningOptions" :default-reasoning-level="defaultClaudeReasoningLevel" @change-provider="changeClaudeProvider" :models="claudeModelOptions" :default-model="defaultClaudeModel" :disabled="saving || loading || !!blockedReason" />
+          <ClaudeSettingsFields v-if="isClaude" v-model="claudeModel" v-model:provider="claudeProvider" v-model:reasoning-level="claudeReasoningLevel" :providers="claudeProviders" :reasoning-levels="claudeReasoningOptions" @change-provider="changeClaudeProvider" :models="claudeModelOptions" :disabled="saving || loading || !!blockedReason" />
           <template v-else>
           <label :for="providerId">API 平台</label>
           <select :id="providerId" v-model="provider" @change="selectProvider">
@@ -144,15 +145,15 @@ const save = async () => {
           </select>
           <label :for="modelId">模型</label>
           <select v-if="modelOptions.length" :id="modelId" v-model="model">
-            <option value="">默认模型</option>
+            <option v-if="!model" value="" disabled>请选择模型</option>
             <option v-if="model && !modelOptions.includes(model)" :value="model">{{ model }}</option>
             <option v-for="item in modelOptions" :key="item" :value="item">{{ item }}</option>
           </select>
-          <input v-else :id="modelId" v-model.trim="model" type="text" maxlength="256" placeholder="模型名称，留空使用默认模型" />
+          <input v-else :id="modelId" v-model.trim="model" type="text" maxlength="256" placeholder="输入模型名称" />
           <template v-if="reasoningOptions.length">
             <label :for="reasoningId">推理级别</label>
             <select :id="reasoningId" v-model="reasoningLevel">
-              <option value="">默认推理级别</option>
+              <option v-if="!reasoningLevel" value="" disabled>请选择推理级别</option>
               <option v-for="level in reasoningOptions" :key="level" :value="level">{{ level }}</option>
             </select>
           </template>

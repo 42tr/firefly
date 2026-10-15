@@ -29,9 +29,9 @@ const confirmedPath = ref('')
 
 const agent = ref(['firefly', 'codex', 'claude'].includes(props.defaultAgent) ? props.defaultAgent : 'firefly')
 const agentOptions = [
-  { id: 'firefly', name: '流萤', caption: '日常助手' },
-  { id: 'codex', name: 'Codex', caption: 'OpenAI' },
-  { id: 'claude', name: 'Claude', caption: 'Anthropic' },
+  { id: 'firefly', name: '流萤', icon: 'chat' },
+  { id: 'codex', name: 'Codex', icon: 'terminal' },
+  { id: 'claude', name: 'Claude', icon: 'tools' },
 ]
 const {
   providers, modelsLoading, modelsError, defaultProvider, defaultModel,
@@ -39,10 +39,10 @@ const {
   reasoningOptions, changeProvider, cancelModelLoad,
 } = useCodexModels(agent)
 const {
-  model: claudeModel, modelOptions: claudeModelOptions, defaultModel: defaultClaudeModel,
-  provider: claudeProvider, providers: claudeProviders, defaultProvider: defaultClaudeProvider,
+  model: claudeModel, modelOptions: claudeModelOptions,
+  provider: claudeProvider, providers: claudeProviders,
   reasoningLevel: claudeReasoningLevel, reasoningOptions: claudeReasoningOptions,
-  defaultReasoningLevel: defaultClaudeReasoningLevel, changeProvider: changeClaudeProvider,
+  changeProvider: changeClaudeProvider,
   modelsLoading: claudeModelsLoading, modelsError: claudeModelsError,
   loadModels: loadClaudeModels, cancelModelLoad: cancelClaudeModelLoad,
 } = useClaudeModels()
@@ -312,7 +312,7 @@ onBeforeUnmount(() => {
     </div>
 
     <div v-if="agent === 'claude'" class="claude-model-settings">
-      <ClaudeSettingsFields v-model="claudeModel" v-model:provider="claudeProvider" v-model:reasoning-level="claudeReasoningLevel" :providers="claudeProviders" :default-provider="defaultClaudeProvider" :reasoning-levels="claudeReasoningOptions" :default-reasoning-level="defaultClaudeReasoningLevel" @change-provider="changeClaudeProvider" :models="claudeModelOptions" :default-model="defaultClaudeModel" :disabled="creating || claudeModelsLoading" />
+      <ClaudeSettingsFields v-model="claudeModel" v-model:provider="claudeProvider" v-model:reasoning-level="claudeReasoningLevel" :providers="claudeProviders" :reasoning-levels="claudeReasoningOptions" @change-provider="changeClaudeProvider" :models="claudeModelOptions" :disabled="creating || claudeModelsLoading" />
       <p v-if="claudeModelsLoading" class="models-note" role="status">正在读取模型选项…</p>
       <p v-else-if="claudeModelsError" class="models-note" role="status">{{ claudeModelsError }} <button class="button ghost small" type="button" @click="loadClaudeModels">重试</button></p>
     </div>
@@ -365,10 +365,16 @@ onBeforeUnmount(() => {
   <div v-if="open" ref="controls" class="new-conversation-controls">
     <div class="agent-picker">
       <button ref="agentTrigger" class="creation-control agent-control" type="button" aria-label="选择 Agent" aria-haspopup="menu" :aria-expanded="pane === 'agent'" :aria-controls="agentMenuId" :disabled="creating" @click="openPane('agent', $event)" @keydown.down.prevent="openPane('agent', $event)">
-        <span>{{ agentOptions.find(option => option.id === agent)?.name }}</span><UiIcon name="chevron-down" />
+        <UiIcon class="agent-control-icon" :name="agentOptions.find(option => option.id === agent)?.icon" />
+        <span :key="agent" class="agent-control-label">{{ agentOptions.find(option => option.id === agent)?.name }}</span>
+        <UiIcon class="agent-control-chevron" name="chevron-down" />
       </button>
       <div v-if="pane === 'agent'" :id="agentMenuId" ref="agentMenu" class="agent-selection-menu" role="menu" aria-label="选择 Agent" @keydown="navigateAgents">
-        <button v-for="option in agentOptions" :key="option.id" type="button" role="menuitemradio" :aria-checked="agent === option.id" :disabled="creating" @click="changeAgent(option.id); close()"><strong>{{ option.name }}</strong><span>{{ option.caption }}</span></button>
+        <button v-for="option in agentOptions" :key="option.id" type="button" role="menuitemradio" :aria-checked="agent === option.id" :disabled="creating" @click="changeAgent(option.id); close()">
+          <UiIcon class="agent-option-icon" :name="option.icon" />
+          <span class="agent-option-name">{{ option.name }}</span>
+          <UiIcon v-if="agent === option.id" class="agent-option-check" name="check-square" />
+        </button>
       </div>
     </div>
     <button v-if="agent !== 'firefly'" class="creation-control directory-control" :class="{ expanded: pane === 'workspace' }" type="button" aria-label="选择工作目录" :title="directoryTitle" :aria-expanded="pane === 'workspace'" :aria-controls="workspacePanelId" :disabled="creating" @click="openPane('workspace', $event)">
@@ -381,41 +387,60 @@ onBeforeUnmount(() => {
 
 <style scoped>
 .new-conversation-controls { position: relative; display: flex; align-items: center; gap: 16px; width: 100%; min-width: 0; padding-bottom: 8px; }
-.creation-control { display: inline-flex; align-items: center; gap: 8px; min-height: 44px; padding: 0 6px; border: 0; border-radius: 8px; background: transparent; color: var(--text-secondary); font: inherit; font-size: 14px; cursor: pointer; }
-.creation-control:hover:not(:disabled) { background: var(--bg-hover); }
-.creation-control:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+.creation-control { display: inline-flex; align-items: center; gap: 8px; min-height: 44px; padding: 0 6px; border: 0; border-radius: 8px; background: transparent; color: var(--text-secondary); font: inherit; font-size: 14px; cursor: pointer; transition: color 180ms var(--ease-out), transform 180ms var(--ease-out); }
+.creation-control:hover:not(:disabled) { color: var(--text-primary); }
+.creation-control:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 1px; }
 .creation-control:disabled { opacity: .5; cursor: wait; }
 .creation-control .ui-icon { width: 18px; height: 18px; flex-shrink: 0; }
 .creation-control .ui-icon:last-child { width: 14px; height: 14px; }
 .agent-picker { position: relative; flex-shrink: 0; }
-.agent-control { color: var(--text-primary); }
+.agent-control { color: var(--text-secondary); }
+.agent-control[aria-expanded='true'] { color: var(--text-primary); }
+.agent-control:active:not(:disabled) { transform: scale(.97); }
+.agent-control-icon { transition: transform 240ms var(--ease-out); }
+.agent-control-label { animation: agentLabelIn 180ms var(--ease-out); }
+.agent-control .agent-control-chevron { color: var(--muted); transition: transform 240ms var(--ease-out), color 180ms var(--ease-out); }
+.agent-control[aria-expanded='true'] .agent-control-chevron { color: var(--text-primary); transform: rotate(180deg); }
+@media (hover: hover) and (pointer: fine) {
+  .agent-control:hover:not(:disabled) .agent-control-icon { transform: translateY(-1px); }
+}
 .directory-control { min-width: 0; max-width: 55%; }
 .directory-control span { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .settings-control { margin-left: auto; flex-shrink: 0; }
 .settings-control .ui-icon { width: 18px; height: 18px; }
 .creation-control .collapse-icon { width: 14px; height: 14px; transform: rotate(180deg); }
 .directory-control.expanded, .settings-control.expanded { color: var(--text-primary); }
+.model-settings, .claude-model-settings :deep(.claude-settings-fields) { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; margin-top: -4px; }
+.provider-picker, .claude-model-settings :deep(.setting-field), .claude-model-settings :deep(.claude-model-picker) { display: block; min-width: 0; }
+.field-label, .claude-model-settings :deep(label) { display: block; margin-bottom: 7px; color: var(--text-secondary); font-size: 12px; }
+.provider-select, .claude-model-settings :deep(select), .claude-model-settings :deep(input) { width: 100%; min-width: 0; height: 38px; min-height: 0; padding: 0 9px; border: 1px solid var(--border-soft); border-radius: var(--radius-sm); background: var(--bg-panel); color: var(--text-primary); font: inherit; font-size: 12px; text-overflow: ellipsis; }
+.claude-model-settings :deep(label:not(:first-child)) { margin-top: 8px; }
+.claude-model-settings :deep(.effort-hint) { grid-column: 1 / -1; }
 .inline-settings { display: flex; flex-direction: column; gap: 16px; min-width: 0; margin: 0 0 12px; padding: 4px 6px 0; border: 0; }
-.inline-settings .model-settings { margin: 0; }
-.inline-settings .field-label { font-size: 13px; }
-.inline-settings .provider-select { font-size: 14px; }
+.inline-settings .model-settings, .inline-settings .claude-model-settings :deep(.claude-settings-fields) { margin: 0; }
+.inline-settings .field-label, .inline-settings .claude-model-settings :deep(label) { font-size: 13px; }
+.inline-settings .provider-select, .inline-settings .claude-model-settings :deep(select), .inline-settings .claude-model-settings :deep(input) { font-size: 14px; }
 .inline-settings .parallel-option { min-height: 52px; padding: 12px 0 0; border-top: 1px solid var(--border-soft); border-radius: 0; background: transparent; }
 .inline-settings .parallel-copy strong { font-size: 14px; }
 @media (max-width: 768px) {
   .inline-settings { gap: 0; padding-top: 0; max-height: min(260px, calc(var(--app-viewport-height, 100dvh) * .4)); overflow-y: auto; overscroll-behavior: contain; }
-  .inline-settings .model-settings { grid-template-columns: 1fr; gap: 0; }
-  .inline-settings .provider-picker { display: grid; grid-template-columns: 80px minmax(0, 1fr); align-items: center; gap: 12px; min-height: 56px; padding: 6px 0; border-bottom: 1px solid var(--border-soft); }
-  .inline-settings .field-label { margin: 0; }
-  .inline-settings .provider-select { height: 44px; font-size: 16px; }
+  .inline-settings .model-settings, .inline-settings .claude-model-settings :deep(.claude-settings-fields) { grid-template-columns: 1fr; gap: 0; }
+  .inline-settings .provider-picker, .inline-settings .claude-model-settings :deep(.setting-field), .inline-settings .claude-model-settings :deep(.claude-model-picker) { display: grid; grid-template-columns: 80px minmax(0, 1fr); align-items: center; gap: 12px; min-height: 56px; padding: 6px 0; border-bottom: 1px solid var(--border-soft); }
+  .inline-settings .field-label, .inline-settings .claude-model-settings :deep(label) { margin: 0; }
+  .inline-settings .provider-select, .inline-settings .claude-model-settings :deep(select), .inline-settings .claude-model-settings :deep(input) { height: 44px; font-size: 16px; }
   .inline-settings .models-note { padding: 8px 0; }
-  .inline-settings .model-settings + .parallel-option { border-top: 0; }
+  .inline-settings .claude-model-settings :deep(.effort-hint) { padding: 4px 0; }
+  .inline-settings .model-settings + .parallel-option, .inline-settings .claude-model-settings + .parallel-option { border-top: 0; }
   .inline-settings .parallel-option { min-height: 60px; padding: 10px 0 0; }
 }
-.agent-selection-menu { position: absolute; left: 0; bottom: calc(100% + 6px); z-index: 25; width: 200px; padding: 6px; border: 1px solid var(--border-soft); border-radius: 14px; background: var(--bg-panel); box-shadow: var(--shadow-float); }
-.agent-selection-menu button { display: flex; align-items: center; justify-content: space-between; gap: 12px; width: 100%; min-height: 44px; padding: 8px 12px; border: 0; border-radius: 8px; background: transparent; color: var(--text-primary); font: inherit; font-size: 14px; text-align: left; cursor: pointer; }
-.agent-selection-menu button[aria-checked='true'], .agent-selection-menu button:hover { background: var(--accent-soft); }
-.agent-selection-menu button strong { font-weight: 500; }
-.agent-selection-menu button span { font-size: 12px; color: var(--muted); }
+.agent-selection-menu { position: absolute; left: 0; bottom: calc(100% + 8px); z-index: 25; width: 216px; max-width: calc(100vw - 32px); max-height: min(320px, calc(var(--app-viewport-height, 100dvh) - 160px)); overflow-y: auto; overscroll-behavior: contain; padding: 6px; border: 1px solid var(--border-soft); border-radius: 16px; background: var(--bg-panel); box-shadow: var(--shadow-float); transform-origin: 22px bottom; animation: agentMenuIn 200ms var(--ease-out); }
+.agent-selection-menu button { display: flex; align-items: center; gap: 12px; width: 100%; min-height: 44px; padding: 8px 12px; border: 0; border-radius: 10px; background: transparent; color: var(--text-primary); font: inherit; font-size: 14px; text-align: left; cursor: pointer; transition: background 160ms var(--ease-out); }
+.agent-selection-menu button:hover:not(:disabled), .agent-selection-menu button:focus-visible { background: var(--bg-hover); }
+.agent-option-icon { width: 18px; height: 18px; color: var(--text-secondary); }
+.agent-option-name { flex: 1; min-width: 0; }
+.agent-option-check { width: 16px; height: 16px; color: var(--text-secondary); }
+@keyframes agentMenuIn { from { opacity: 0; transform: translateY(6px) scale(.97); } to { opacity: 1; transform: translateY(0) scale(1); } }
+@keyframes agentLabelIn { from { opacity: 0; transform: translateY(3px); } to { opacity: 1; transform: translateY(0); } }
 .creation-error { margin: 0 0 8px; color: var(--danger); font-size: 13px; }
 .creation-error button { color: inherit; font: inherit; }
 @media (max-width: 768px) { .new-conversation-controls { gap: 8px; } .directory-control { flex: 0 1 auto; max-width: none; } }
@@ -428,10 +453,6 @@ onBeforeUnmount(() => {
 .workspace-actions .button { min-height: 36px; white-space: nowrap; }
 .workspace-hint { flex: 1; min-width: 0; color: var(--muted); font-size: 12px; }
 .section-label { display: block; color: var(--text-primary); font-size: 13px; font-weight: 600; }
-.model-settings { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; margin-top: -4px; }
-.provider-picker { min-width: 0; }
-.field-label { display: block; margin-bottom: 7px; color: var(--text-secondary); font-size: 12px; }
-.provider-select { width: 100%; min-width: 0; height: 38px; padding: 0 9px; border: 1px solid var(--border-soft); border-radius: var(--radius-sm); background: var(--bg-panel); color: var(--text-primary); font: inherit; font-size: 12px; text-overflow: ellipsis; }
 .models-note { grid-column: 1 / -1; margin: 0; color: var(--muted); font-size: 12px; line-height: 1.5; }
 .workspace-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 8px; }
 .workspace-header-actions { display: flex; align-items: center; gap: 8px; min-width: 0; }
@@ -488,5 +509,9 @@ onBeforeUnmount(() => {
 }
 @media (prefers-reduced-motion: reduce) {
   .parallel-switch, .parallel-switch::after { transition: none; }
+  .creation-control, .agent-control-icon, .agent-control .agent-control-chevron, .agent-selection-menu button { transition: none; }
+  .agent-selection-menu, .agent-control-label { animation: none; }
+  .agent-control:active:not(:disabled) { transform: none; }
+  .agent-control:hover:not(:disabled) .agent-control-icon { transform: none; }
 }
 </style>

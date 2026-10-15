@@ -1,10 +1,21 @@
-import { defineConfig, loadEnv, type HttpProxy } from 'vite'
+import { defineConfig, loadEnv, type HttpProxy, type ProxyOptions } from 'vite'
 import vue from '@vitejs/plugin-vue'
-import type { IncomingMessage } from 'node:http'
+import type { ClientRequest, IncomingMessage } from 'node:http'
 import { fileURLToPath } from 'node:url'
 
-const proxyTarget = 'http://localhost:3003'
-const configureProxy = (proxy: HttpProxy.Server) => {
+const proxyTarget = 'http://127.0.0.1:3003'
+const configureProxy = (proxy: HttpProxy.Server, options: ProxyOptions) => {
+  const upstreamOrigin = typeof options.target === 'string' ? new URL(options.target).origin : undefined
+  const forwardDevOrigin = (proxyReq: ClientRequest, req: IncomingMessage) => {
+    const protocol = 'encrypted' in req.socket && req.socket.encrypted ? 'https' : 'http'
+    // Only this dev server's own origin is translated. Foreign and missing
+    // Origins stay intact so the backend can apply its normal checks.
+    if (upstreamOrigin && req.headers.host && req.headers.origin === `${protocol}://${req.headers.host}`) {
+      proxyReq.setHeader('origin', upstreamOrigin)
+    }
+  }
+  proxy.on('proxyReq', forwardDevOrigin)
+  proxy.on('proxyReqWs', forwardDevOrigin)
   // Release backends mark the session cookie Secure; drop that flag so the
   // cookie survives on plain-HTTP dev origins (e.g. LAN access).
   proxy.on('proxyRes', (res) => {

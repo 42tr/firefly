@@ -80,7 +80,7 @@ onBeforeUnmount(() => {
 
 <template>
   <div ref="root" class="sidebar-settings" @focusout="focusOut">
-    <button ref="trigger" class="sidebar-settings-trigger" type="button" title="设置" aria-label="设置"
+    <button ref="trigger" class="sidebar-settings-trigger" data-icon-motion="settings" type="button" title="设置" aria-label="设置"
       aria-haspopup="menu" :aria-expanded="open" aria-controls="sidebar-settings-menu"
       @click="open ? close() : show()" @keydown.down.prevent="show()" @keydown.up.prevent="show(true)">
       <UiIcon name="settings" />
@@ -102,13 +102,25 @@ onBeforeUnmount(() => {
 
 <style scoped>
 .sidebar-settings { position: relative; flex-shrink: 0; margin-top: auto; }
-.sidebar-settings-trigger { display: grid; place-items: center; width: 44px; height: 44px; padding: 0; border: 0; border-radius: var(--radius-sm); background: transparent; color: var(--muted); cursor: pointer; transition: background 140ms, color 140ms; }
-.sidebar-settings-trigger .ui-icon { width: 18px; height: 18px; }
-.sidebar-settings-trigger:hover, .sidebar-settings-trigger[aria-expanded='true'] { background: var(--bg-hover); color: var(--text-primary); }
-.sidebar-settings-menu { position: fixed; z-index: 200; padding: 6px; overflow-y: auto; overscroll-behavior: contain; border: 1px solid var(--border-soft); border-radius: 12px; background: var(--bg-panel); color: var(--text-primary); box-shadow: 0 8px 24px rgba(23, 32, 51, .1); }
-.sidebar-settings-menu button { display: flex; align-items: center; gap: 12px; width: 100%; min-height: 44px; padding: 8px 12px; border: 0; border-radius: 7px; background: transparent; color: inherit; font: inherit; font-size: 14px; text-align: left; cursor: pointer; }
+.sidebar-settings-trigger { display: grid; place-items: center; width: 44px; height: 44px; padding: 0; border: 1px solid transparent; border-radius: 14px; background: transparent; color: var(--muted); cursor: pointer; }
+.sidebar-settings-trigger .ui-icon { width: 20px; height: 20px; transition: transform 520ms var(--ease-spring); }
+.sidebar-settings-trigger[aria-expanded='true'], .sidebar-settings-trigger:focus-visible { color: var(--text-primary); }
+.sidebar-settings-trigger[aria-expanded='true'] .ui-icon, .sidebar-settings-trigger:focus-visible .ui-icon { transform: rotate(90deg); }
+.sidebar-settings-trigger:active { transform: scale(.94); }
+@media (hover: hover) and (pointer: fine) {
+  .sidebar-settings-trigger:hover { color: var(--text-primary); }
+  .sidebar-settings-trigger:hover .ui-icon { transform: rotate(90deg); }
+}
+.sidebar-settings-menu { position: fixed; z-index: 200; padding: 6px; overflow-y: auto; overscroll-behavior: contain; border: 1px solid var(--border-soft); border-radius: 16px; background: var(--bg-panel); color: var(--text-primary); box-shadow: var(--shadow-float); transform-origin: 22px bottom; animation: settingsMenuIn 200ms var(--ease-out); }
+.sidebar-settings-menu button { display: flex; align-items: center; gap: 12px; width: 100%; min-height: 44px; padding: 8px 12px; border: 0; border-radius: 10px; background: transparent; color: inherit; font: inherit; font-size: 14px; text-align: left; cursor: pointer; transition: background 160ms var(--ease-out); }
 .sidebar-settings-menu button:hover, .sidebar-settings-menu button:focus-visible { background: var(--bg-hover); }
 .sidebar-settings-menu .ui-icon { width: 18px; height: 18px; flex-shrink: 0; }
 .sidebar-settings-divider { height: 1px; margin: 5px 6px; background: var(--border-soft); }
 .sidebar-settings-menu .sidebar-settings-logout { color: var(--muted); }
+@keyframes settingsMenuIn { from { opacity: 0; transform: translateY(6px) scale(.97); } to { opacity: 1; transform: translateY(0) scale(1); } }
+@media (prefers-reduced-motion: reduce) {
+  .sidebar-settings-trigger, .sidebar-settings-trigger .ui-icon, .sidebar-settings-menu button { transition: none; }
+  .sidebar-settings-trigger:is(:hover, :focus-visible, [aria-expanded='true']) .ui-icon, .sidebar-settings-trigger:active { transform: none; }
+  .sidebar-settings-menu { animation: none; }
+}
 </style>

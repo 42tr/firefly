@@ -8,9 +8,6 @@ defineProps({
   reasoningLevel: { type: String, default: '' },
   providers: { type: Array, default: () => [] },
   models: { type: Array, default: () => [] },
-  defaultProvider: { type: String, default: 'cli' },
-  defaultModel: { type: String, default: '' },
-  defaultReasoningLevel: { type: String, default: '' },
   reasoningLevels: { type: Array, default: () => [] },
   disabled: Boolean,
 })
@@ -28,17 +25,18 @@ const selectProvider = event => {
     <div class="setting-field">
       <label :for="providerId">API 平台</label>
       <select :id="providerId" :value="provider" :disabled="disabled" @change="selectProvider">
-        <option value="">默认平台（{{ defaultProvider === 'cli' ? 'Claude CLI' : defaultProvider }}）</option>
-        <option value="cli">Claude CLI（原生配置 / 登录）</option>
+        <option v-if="!provider" value="" disabled>请选择平台</option>
+        <option value="cli">Claude CLI</option>
         <option v-if="provider && provider !== 'cli' && !providers.some(item => item.name === provider)" :value="provider">{{ provider }}</option>
         <option v-for="item in providers" :key="item.name" :value="item.name">{{ item.name }}</option>
       </select>
     </div>
-    <ClaudeModelPicker :key="provider" :model-value="modelValue" :models="models" :default-model="defaultModel" :disabled="disabled" @update:model-value="emit('update:modelValue', $event)" />
+    <ClaudeModelPicker :key="provider" :model-value="modelValue" :models="models" :disabled="disabled" @update:model-value="emit('update:modelValue', $event)" />
     <div class="setting-field">
       <label :for="reasoningId">推理级别</label>
       <select :id="reasoningId" :value="reasoningLevel" :disabled="disabled" @change="emit('update:reasoningLevel', $event.target.value)">
-        <option value="">默认推理级别{{ defaultReasoningLevel ? `（${defaultReasoningLevel}）` : '' }}</option>
+        <option v-if="!reasoningLevel" value="" disabled>请选择推理级别</option>
+        <option v-if="reasoningLevel && !reasoningLevels.includes(reasoningLevel)" :value="reasoningLevel">{{ reasoningLevel }}</option>
         <option v-for="level in reasoningLevels" :key="level" :value="level">{{ level }}</option>
       </select>
     </div>

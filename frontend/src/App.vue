@@ -773,6 +773,7 @@ onMounted(() => {
             <div class="toolbar-left">
               <button
                 class="button ghost icon mobile-sidebar-toggle"
+                data-icon-motion="sidebar"
                 type="button"
                 @click="sidebarOpen = !sidebarOpen"
                 aria-label="展开侧边栏"
@@ -782,6 +783,7 @@ onMounted(() => {
               </button>
               <button
                 class="button ghost icon toolbar-create-button"
+                data-icon-motion="compose"
                 type="button"
                 title="新对话"
                 aria-label="新对话"
@@ -792,7 +794,7 @@ onMounted(() => {
             <div v-if="pendingConversation" class="toolbar-context new-conversation-title">新对话</div>
             <ConversationContext v-else :title="activeConversationTitle" :agent="activeConversation?.agent" :agent-label="activeModelLabel || activeAgentName" :workspace="activeWorkspaceDisplay" :workspace-label="activeWorkspaceLabel" />
             <div class="toolbar-actions">
-              <button v-if="!pendingConversation && ['codex', 'claude'].includes(activeConversation?.agent)" class="button ghost icon" type="button" title="模型设置" aria-label="模型设置" :disabled="isArchivedConversation || isSwitchingConversation" @click="showModelSettings = true"><UiIcon name="sliders" /></button>
+              <button v-if="!pendingConversation && ['codex', 'claude'].includes(activeConversation?.agent)" class="button ghost icon" data-icon-motion="sliders" type="button" title="模型设置" aria-label="模型设置" :disabled="isArchivedConversation || isSwitchingConversation" @click="showModelSettings = true"><UiIcon name="sliders" /></button>
               <FireflyMoreMenu @module-open="modulePageOpen = $event" :schedules-open="showScheduleDialog" :files-open="showWorkspaceFiles" :show-files="!pendingConversation && ['codex', 'claude'].includes(activeConversation?.agent)" :files-disabled="activeConversation?.workspace_mode === 'parallel' && activeConversation?.workspace_state !== 'ready'" @open-schedules="showScheduleDialog = true" @open-files="showWorkspaceFiles = true">
               </FireflyMoreMenu>
             </div>
