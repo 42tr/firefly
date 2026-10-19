@@ -1,5 +1,8 @@
 //! Atomic workspace submissions and durable identities for response-loss retries.
-use super::*;
+use sqlx::{query, query_as, query_scalar, SqliteConnection};
+
+use super::{AttachmentRecord, MessageRecord, NewAttachment};
+use crate::db;
 
 #[derive(Debug, thiserror::Error)]
 pub enum SubmissionConflict {
@@ -151,6 +154,10 @@ pub async fn submit_queued_user_turn(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use super::super::{
+        claim_next_queued_generation, create_queued_user_turn, delete_queued_generation,
+        update_generation_status,
+    };
 
     #[tokio::test]
     async fn db_tests_archival_and_submission_cannot_both_succeed() {

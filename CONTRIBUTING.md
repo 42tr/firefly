@@ -20,6 +20,8 @@ Rust workspace 中，根 `firefly` crate 负责服务启动、HTTP API 和业务
 
 `crates/claude-transport` 提供 Claude CLI 进程、事件传输和进程组中断，接收调用方构造的命令。主程序的 `src/claude.rs` 负责供应商和模型选择、CLI 参数、提示词及本轮临时 settings 文件的生命周期。
 
+业务存储入口 `src/assistant_store.rs` 保留统一重导出，记录类型、会话操作、消息分页和附件访问分别位于 `src/assistant_store/{types,conversations,messages,attachments}.rs`，相关回归位于同目录的 `tests.rs`。消息与附件共用的事务写入辅助函数仅在存储模块内共享。
+
 可以单独运行新库的测试：
 
 ```sh

@@ -6,7 +6,8 @@ use serde_json::Value;
 use sqlx::{query, query_as, query_scalar, FromRow, Sqlite, SqliteConnection};
 
 use super::{
-    insert_attachment_rows, insert_message, AttachmentRecord, MessageRecord, NewAttachment, StoredMessage,
+    attachments::insert_attachment_rows, messages::insert_message,
+    AttachmentRecord, MessageRecord, NewAttachment, StoredMessage,
     StoredToolCall,
 };
 use crate::db;
