@@ -1,4 +1,9 @@
-use super::*;
+use axum::{extract::Path, Json};
+use super::update_claude_settings;
+use crate::{
+    api::{assistant::{ClaudeSettingsRequest, ConversationSummary}, auth::Session, error::AppError},
+    assistant_store,
+};
 use axum::http::StatusCode;
 
 async fn update(id: i64, user: &str, model: Option<&str>) -> Result<ConversationSummary, AppError> {
