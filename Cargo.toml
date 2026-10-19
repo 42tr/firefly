@@ -9,6 +9,7 @@ description = "A self-hosted AI workspace with configurable agents and optional 
 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 [dependencies]
+firefly-claude-transport = { path = "crates/claude-transport" }
 firefly-codex-transport = { path = "crates/codex-transport" }
 firefly-db = { path = "crates/db" }
 firefly-llm = { path = "crates/llm" }
@@ -91,6 +92,7 @@ codegen-units = 16
 resolver = "2"
 members = [
     "crates/module-sdk",
+    "crates/claude-transport",
     "crates/codex-transport",
     "crates/db",
     "crates/llm",

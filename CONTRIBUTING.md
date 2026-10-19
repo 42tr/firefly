@@ -18,10 +18,12 @@ Rust workspace 中，根 `firefly` crate 负责服务启动、HTTP API 和业务
 
 `crates/db` 提供 SQLite 连接、时间戳转换、自定义函数、忙等重试和在线备份。主程序的 `src/db.rs` 持有全局连接池、应用迁移和业务表结构测试，将连接池参数、时区和迁移对象传入数据库库。
 
+`crates/claude-transport` 提供 Claude CLI 进程、事件传输和进程组中断，接收调用方构造的命令。主程序的 `src/claude.rs` 负责供应商和模型选择、CLI 参数、提示词及本轮临时 settings 文件的生命周期。
+
 可以单独运行新库的测试：
 
 ```sh
-cargo test --locked -p firefly-workspace -p firefly-module-host -p firefly-llm -p firefly-db
+cargo test --locked -p firefly-workspace -p firefly-module-host -p firefly-llm -p firefly-db -p firefly-claude-transport
 ```
 
 ## 验证修改

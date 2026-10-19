@@ -963,6 +963,7 @@ dependencies = [
  "croner",
  "dotenvy",
  "envy",
+ "firefly-claude-transport",
  "firefly-codex-transport",
  "firefly-db",
  "firefly-llm",
@@ -1003,6 +1004,18 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "uuid",
+]
+
+[[package]]
+name = "firefly-claude-transport"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "libc",
+ "serde_json",
+ "tempfile",
+ "tokio",
+ "tracing",
 ]
 
 [[package]]
