@@ -48,7 +48,9 @@ impl ContextModel {
         }
     }
 
-    pub(crate) async fn prepare(
+    /// Prepare a request and return any usage incurred by summarization.
+    /// `force` requests compaction even when the input is within budget.
+    pub async fn prepare(
         &self,
         original: ModelRequest,
         force: bool,

@@ -963,8 +963,8 @@ dependencies = [
  "croner",
  "dotenvy",
  "envy",
- "eventsource-stream",
  "firefly-codex-transport",
+ "firefly-llm",
  "firefly-module-host",
  "firefly-workspace",
  "futures-util",
@@ -984,7 +984,6 @@ dependencies = [
  "rusqlite",
  "rust-embed",
  "schemars 0.8.22",
- "scraper",
  "serde",
  "serde-inline-default",
  "serde_json",
@@ -1019,6 +1018,31 @@ dependencies = [
  "thiserror 1.0.69",
  "tokio",
  "tracing",
+]
+
+[[package]]
+name = "firefly-llm"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "axum",
+ "dotenvy",
+ "eventsource-stream",
+ "futures-util",
+ "glow-agent",
+ "jsonschema",
+ "libsqlite3-sys",
+ "reqwest",
+ "scraper",
+ "serde",
+ "serde_json",
+ "sha2 0.10.8",
+ "sqlx",
+ "tempfile",
+ "tokio",
+ "tracing",
+ "uuid",
 ]
 
 [[package]]

@@ -321,12 +321,17 @@ impl Settings {
             !profile.model.trim().is_empty(),
             "请在“更多功能 → Agent 配置”中填写模型名称"
         );
-        Ok(llm::AgentModel::new(
+        let mut model = llm::AgentModel::new(
+            crate::http_client::client().clone(),
             llm::normalize_bearer_secret(profile.api_key.as_deref().unwrap_or_default()),
             &profile.model,
         )
         .with_base_url(&profile.base_url)
-        .with_context_budget(profile.context_tokens))
+        .with_context_budget(profile.context_tokens);
+        if let Some(pool) = crate::db::maybe_pool() {
+            model = model.with_limits_cache(pool.clone());
+        }
+        Ok(model)
     }
 
     pub fn child_agents(

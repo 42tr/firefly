@@ -23,6 +23,29 @@ fn child(id: &str) -> AgentDefinition {
     }
 }
 
+#[tokio::test]
+async fn configured_models_persist_provider_limits_in_the_application_pool() {
+    use axum::{routing::get, Json, Router};
+    let pool = crate::db::test_pool().await;
+    crate::db::set_test_pool(pool.clone());
+    let app = Router::new().route("/models/fixture-model", get(|| async {
+        Json(json!({"id":"fixture-model","context_window":100000,"max_output_tokens":10000}))
+    }));
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let base = format!("http://{}", listener.local_addr().unwrap());
+    let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+    let mut settings = fixture();
+    settings.profiles[0].base_url = base;
+    settings.profiles[0].context_tokens = None;
+
+    let model = settings.model(&settings.firefly).unwrap();
+    assert_eq!(model.budget().resolve().await.unwrap(), 85500);
+    let count: i64 = sqlx::query_scalar("SELECT count(*) FROM model_limits_cache")
+        .fetch_one(&pool).await.unwrap();
+    assert_eq!(count, 1);
+    server.abort();
+}
+
 #[test]
 fn no_built_in_children_and_invalid_agent_definitions_are_rejected() {
     assert!(Settings::defaults().subagents.is_empty());

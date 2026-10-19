@@ -74,6 +74,8 @@ fn json_error_excerpt<'a>(raw: &'a [u8], error: &serde_json::Error) -> (std::bor
 
 #[derive(Clone)]
 pub struct AgentModel {
+    client: reqwest::Client,
+    limits_cache: Option<sqlx::SqlitePool>,
     api_key: String,
     model: String,
     base_url: String,
@@ -87,9 +89,17 @@ impl std::fmt::Debug for AgentModel {
 }
 
 impl AgentModel {
-    pub fn new(api_key: impl Into<String>, model: impl Into<String>) -> Self {
-        Self { api_key: api_key.into(), model: model.into(), base_url: "https://api.openai.com/v1".into(),
+    /// Reuse the caller's HTTP client for generation and provider metadata.
+    pub fn new(client: reqwest::Client, api_key: impl Into<String>, model: impl Into<String>) -> Self {
+        Self { client, limits_cache: None,
+            api_key: api_key.into(), model: model.into(), base_url: "https://api.openai.com/v1".into(),
             context_tokens: None }
+    }
+
+    /// Persist successful provider limits in an application-migrated database.
+    pub fn with_limits_cache(mut self, pool: sqlx::SqlitePool) -> Self {
+        self.limits_cache = Some(pool);
+        self
     }
 
     pub fn with_base_url(mut self, url: impl Into<String>) -> Self {
@@ -108,8 +118,12 @@ impl AgentModel {
     }
 
     pub fn budget(&self) -> super::ModelBudget {
-        super::ModelBudget::queried(&self.base_url, &self.api_key, &self.model,
-            self.context_tokens)
+        let budget = super::ModelBudget::queried(self.client.clone(), &self.base_url,
+            &self.api_key, &self.model, self.context_tokens);
+        match &self.limits_cache {
+            Some(pool) => budget.with_limits_cache(pool.clone()),
+            None => budget,
+        }
     }
 
     fn body(&self, request: ModelRequest, stream: bool, budget: usize) -> Result<Value, ModelError> {
@@ -126,13 +140,13 @@ impl AgentModel {
     }
 
     async fn send(&self, body: Value) -> Result<reqwest::Response, ModelError> {
-        let response = crate::http_client::client().post(format!("{}/responses", self.base_url))
+        let response = self.client.post(format!("{}/responses", self.base_url))
             .bearer_auth(&self.api_key).timeout(Duration::from_secs(180)).json(&body)
             .send().await.map_err(|e| ModelError::retryable(e.to_string()))?;
         if response.status().is_success() { return Ok(response); }
         let status = response.status();
         let mut body = response.text().await.unwrap_or_default();
-        crate::utils::truncate_to_char_boundary(&mut body, 1000);
+        body.truncate(body.floor_char_boundary(1000));
         let detail = serde_json::from_str::<Value>(&body).ok()
             .and_then(|value| value["error"]["message"].as_str().map(str::to_owned)).unwrap_or(body);
         let message = format!("模型请求失败 ({status}): {detail}");
@@ -466,7 +480,7 @@ mod tests {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let url = format!("http://{}", listener.local_addr().unwrap());
         let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
-        let response = AgentModel::new("test", "test").with_base_url(url).with_context_budget(Some(10000))
+        let response = AgentModel::new(crate::test_client(), "test", "test").with_base_url(url).with_context_budget(Some(10000))
             .generate(ModelRequest::new(vec![Message::user_content(vec![Content::text("look"), Content::image_url("data:image/png;base64,eA==")])], vec![])).await.unwrap();
         server.abort();
         assert_eq!(response.usage.input_tokens, 12);
@@ -509,7 +523,7 @@ mod stream_tests {
         let url = format!("http://{}", listener.local_addr().unwrap());
         let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
         let sink = Deltas(std::sync::Mutex::new(String::new()));
-        let response = AgentModel::new("fixture", "fixture").with_base_url(url).with_context_budget(Some(10000))
+        let response = AgentModel::new(crate::test_client(), "fixture", "fixture").with_base_url(url).with_context_budget(Some(10000))
             .generate_stream(ModelRequest::new(vec![Message::user("hello")], vec![]), &sink).await.unwrap();
         server.abort();
         assert_eq!(*sink.0.lock().unwrap(), "你好世界");
@@ -600,7 +614,7 @@ mod repair_tests {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let url = format!("http://{}", listener.local_addr().unwrap());
         let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
-        (AgentModel::new("fixture", "fixture").with_base_url(url).with_context_budget(Some(20000)), requests, server)
+        (AgentModel::new(crate::test_client(), "fixture", "fixture").with_base_url(url).with_context_budget(Some(20000)), requests, server)
     }
 
     #[tokio::test]

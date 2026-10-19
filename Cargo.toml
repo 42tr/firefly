@@ -10,6 +10,7 @@ description = "A self-hosted AI workspace with configurable agents and optional 
 # See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
 [dependencies]
 firefly-codex-transport = { path = "crates/codex-transport" }
+firefly-llm = { path = "crates/llm" }
 firefly-module-host = { path = "crates/module-host" }
 firefly-workspace = { path = "crates/workspace" }
 reqwest = { version = "0.13.4", features = [
@@ -21,21 +22,18 @@ anyhow = "1.0"
 async-trait = { workspace = true }
 serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
-jsonschema = { workspace = true }
 regex = "1.10"
 base64 = "0.22"
 # time
 chrono = { version = "0.4", features = ["serde", "std"] }
 chrono-tz = "0.10.0"
-# html
-scraper = "0.27"
 lopdf = "0.45"
 
 tokio = { version = "1", features = ["full"] }
 tokio-util = { workspace = true }
 tokio-cron-scheduler = "0.13.0"
 croner = { workspace = true }
-dotenvy = "0.15"
+dotenvy = { workspace = true }
 envy = "0.4"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
@@ -62,7 +60,6 @@ libc = "0.2"        # killpg for agent subprocess groups
 sqlx = { version = "0.9", default-features = false, features = ["runtime-tokio", "sqlite", "chrono", "uuid", "migrate", "macros", "json"] }
 uuid = { version = "1.0", features = ["v4", "serde"] }
 futures-util = { workspace = true }
-eventsource-stream = "0.2.3"
 tokio-stream = "0.1"
 bytes = "1"
 sha2 = { workspace = true }
@@ -80,6 +77,7 @@ tempfile = "3"
 mimalloc = "0.1.52"
 
 [dev-dependencies]
+jsonschema = { workspace = true }
 tokio = { version = "1", features = ["test-util"] }
 tower = { version = "0.5", features = ["util"] }
 
@@ -95,6 +93,7 @@ resolver = "2"
 members = [
     "crates/module-sdk",
     "crates/codex-transport",
+    "crates/llm",
     "crates/module-host",
     "crates/workspace",
     "examples/modules/rust-sdk-counter",
@@ -113,6 +112,8 @@ reqwest = { version = "0.13.4", features = [
 ], default-features = false }
 anyhow = "1.0"
 async-trait = "0.1"
+dotenvy = "0.15"
+eventsource-stream = "0.2.3"
 croner = "=2.1.0"
 futures-util = "0.3"
 flate2 = { version = "1.0", default-features = false, features = ["rust_backend"] }
@@ -120,6 +121,7 @@ g = { package = "glow-agent", version = "=0.1.0" }
 jsonschema = { version = "0.33", default-features = false }
 libsqlite3-sys = { version = "=0.37.0", features = ["bundled"] }
 rmcp = { version = "3.3", default-features = false, features = ["client", "transport-child-process", "transport-streamable-http-client-reqwest", "reqwest"] }
+scraper = "0.27"
 sha2 = "0.10"
 tokio-util = "0.7"
 toml = "0.9"

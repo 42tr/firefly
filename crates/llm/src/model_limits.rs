@@ -20,7 +20,10 @@ pub struct ModelBudget {
     cap: Option<usize>,
 }
 
+#[derive(Clone)]
 struct Query {
+    client: reqwest::Client,
+    pool: Option<SqlitePool>,
     base: String,
     key: String,
     model: String,
@@ -42,9 +45,11 @@ type Entry = Arc<tokio::sync::Mutex<Option<Cached>>>;
 static CACHE: OnceLock<Mutex<HashMap<[u8; 32], Entry>>> = OnceLock::new();
 
 impl ModelBudget {
-    pub fn queried(base: &str, key: &str, model: &str, cap: Option<usize>) -> Self {
+    pub fn queried(client: reqwest::Client, base: &str, key: &str, model: &str, cap: Option<usize>) -> Self {
         Self {
             source: Some(Arc::new(Query {
+                client,
+                pool: None,
                 base: base.trim_end_matches('/').into(),
                 key: key.into(),
                 model: model.into(),
@@ -53,12 +58,20 @@ impl ModelBudget {
         }
     }
 
-    #[cfg(test)]
-    pub(crate) fn fixed(cap: usize) -> Self {
+    /// Use an explicit input budget without provider metadata discovery.
+    pub fn fixed(cap: usize) -> Self {
         Self {
             source: None,
             cap: Some(cap),
         }
+    }
+
+    /// Persist successful provider limits in an application-migrated database.
+    pub fn with_limits_cache(mut self, pool: SqlitePool) -> Self {
+        if let Some(query) = &mut self.source {
+            Arc::make_mut(query).pool = Some(pool);
+        }
+        self
     }
 
     pub async fn resolve(&self) -> Result<usize, ModelError> {
@@ -147,7 +160,7 @@ impl Query {
         }
         // Persistent successes have no TTL: a restart or memory eviction must
         // not turn known limits into a dependency on provider/docs availability.
-        let pool = crate::db::maybe_pool();
+        let pool = self.pool.as_ref();
         if let Some(pool) = pool {
             match load_limits(pool, &key).await {
                 Ok(Some(limits)) => {
@@ -230,7 +243,7 @@ impl Query {
         }
         let mut listed = false;
         for url in urls {
-            if let Ok(body) = get(url.clone(), Some(&self.key)).await {
+            if let Ok(body) = get(&self.client, url.clone(), Some(&self.key)).await {
                 if let Ok(value) = serde_json::from_slice::<Value>(&body) {
                     if let Some(info) = model_info(&value, &self.model) {
                         listed = true;
@@ -253,7 +266,7 @@ impl Query {
             let slug = self.model.to_ascii_lowercase().replace(['.', '_'], "-");
             let url =
                 Url::parse(&format!("https://help.aliyun.com/zh/model-studio/{slug}")).unwrap();
-            let body = get(url.clone(), None)
+            let body = get(&self.client, url.clone(), None)
                 .await
                 .map_err(|_| "模型服务未返回窗口字段，官方模型文档查询失败")?;
             return parse_aliyun_doc(
@@ -299,8 +312,8 @@ fn aliyun_host(host: &str) -> bool {
         || host.ends_with(".dashscope-intl.aliyuncs.com")
 }
 
-async fn get(url: Url, key: Option<&str>) -> Result<Vec<u8>, String> {
-    let mut request = crate::http_client::client()
+async fn get(client: &reqwest::Client, url: Url, key: Option<&str>) -> Result<Vec<u8>, String> {
+    let mut request = client
         .get(url)
         .timeout(Duration::from_secs(8));
     if let Some(key) = key {
@@ -456,6 +469,18 @@ mod tests {
     use super::*;
     use serde_json::json;
 
+    static MIGRATOR: sqlx::migrate::Migrator = sqlx::migrate!("../../migrations_sqlite");
+
+    async fn test_pool() -> SqlitePool {
+        let pool = sqlx::sqlite::SqlitePoolOptions::new()
+            .max_connections(1)
+            .connect("sqlite::memory:")
+            .await
+            .unwrap();
+        MIGRATOR.run(&pool).await.unwrap();
+        pool
+    }
+
     #[test]
     fn exact_model_and_native_nullable_limits() {
         let data = json!({"output":{"models":[{"model":"other","model_info":{"context_window":999999}},
@@ -528,18 +553,18 @@ mod tests {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let base = format!("http://{}", listener.local_addr().unwrap());
         let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
-        let first = ModelBudget::queried(&base, "fixture-key", "test", None);
-        let second = ModelBudget::queried(&base, "fixture-key", "test", Some(20000));
+        let first = ModelBudget::queried(crate::test_client(), &base, "fixture-key", "test", None);
+        let second = ModelBudget::queried(crate::test_client(), &base, "fixture-key", "test", Some(20000));
         let (a, b) = tokio::join!(first.resolve(), second.resolve());
         assert_eq!(a.unwrap(), 85500);
         assert_eq!(b.unwrap(), 20000);
         assert_eq!(calls.load(Ordering::SeqCst), 1);
-        let different_account = ModelBudget::queried(&base, "fixture-key2", "test", None);
+        let different_account = ModelBudget::queried(crate::test_client(), &base, "fixture-key2", "test", None);
         assert_eq!(different_account.resolve().await.unwrap(), 85500);
         assert_eq!(calls.load(Ordering::SeqCst), 2);
-        let other_key = ModelBudget::queried(&base, "fixture-key2", "missing", Some(20000));
+        let other_key = ModelBudget::queried(crate::test_client(), &base, "fixture-key2", "missing", Some(20000));
         assert_eq!(other_key.resolve().await.unwrap(), 20000);
-        let no_default = ModelBudget::queried(&base, "fixture-key2", "missing", None);
+        let no_default = ModelBudget::queried(crate::test_client(), &base, "fixture-key2", "missing", None);
         assert!(no_default.resolve().await.is_err());
         server.abort();
     }
@@ -554,11 +579,10 @@ mod tests {
         );
         let pool = sqlx::sqlite::SqlitePoolOptions::new()
             .max_connections(1)
-            .connect_with(crate::db::options(&url, true).unwrap())
+            .connect_with(url.parse::<sqlx::sqlite::SqliteConnectOptions>().unwrap().create_if_missing(true))
             .await
             .unwrap();
-        crate::db::MIGRATOR.run(&pool).await.unwrap();
-        crate::db::set_test_pool(pool.clone());
+        MIGRATOR.run(&pool).await.unwrap();
 
         let calls = Arc::new(AtomicUsize::new(0));
         let count = calls.clone();
@@ -583,9 +607,9 @@ mod tests {
         let base = format!("http://{}", listener.local_addr().unwrap());
         let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
         // A caller's cap/fallback is not provider metadata and must not be saved.
-        let capped = ModelBudget::queried(&base, "fixture-key", "test", Some(20000));
+        let capped = ModelBudget::queried(crate::test_client(), &base, "fixture-key", "test", Some(20000)).with_limits_cache(pool.clone());
         assert_eq!(capped.resolve().await.unwrap(), 20000);
-        let uncapped = ModelBudget::queried(&base, "fixture-key", "test", None);
+        let uncapped = ModelBudget::queried(crate::test_client(), &base, "fixture-key", "test", None).with_limits_cache(pool.clone());
         let key = uncapped.source.as_ref().unwrap().cache_key();
         let stored = load_limits(&pool, &key).await.unwrap().unwrap();
         assert_eq!(
@@ -620,14 +644,16 @@ mod tests {
         let _ = server.await;
         let reopened = sqlx::sqlite::SqlitePoolOptions::new()
             .max_connections(1)
-            .connect_with(crate::db::options(&url, false).unwrap())
+            .connect_with(url.parse::<sqlx::sqlite::SqliteConnectOptions>().unwrap())
             .await
             .unwrap();
-        crate::db::set_test_pool(reopened.clone());
+        let uncapped = uncapped.with_limits_cache(reopened.clone());
+        let capped = capped.with_limits_cache(reopened.clone());
         assert_eq!(uncapped.resolve().await.unwrap(), 85500);
         assert_eq!(capped.resolve().await.unwrap(), 20000);
         assert_eq!(
-            ModelBudget::queried(&base, "fixture-key", "test", Some(200000))
+            ModelBudget::queried(crate::test_client(), &base, "fixture-key", "test", Some(200000))
+                .with_limits_cache(reopened.clone())
                 .resolve()
                 .await
                 .unwrap(),
@@ -638,14 +664,14 @@ mod tests {
         // Neither a different provider/model/credential nor explicit fallbacks
         // may reuse or populate this successful record while HTTP is offline.
         for other in [
-            ModelBudget::queried(&format!("{base}/other"), "fixture-key", "test", None),
-            ModelBudget::queried(&base, "fixture-key", "other", None),
-            ModelBudget::queried(&base, "other-key", "test", None),
+            ModelBudget::queried(crate::test_client(), &format!("{base}/other"), "fixture-key", "test", None).with_limits_cache(reopened.clone()),
+            ModelBudget::queried(crate::test_client(), &base, "fixture-key", "other", None).with_limits_cache(reopened.clone()),
+            ModelBudget::queried(crate::test_client(), &base, "other-key", "test", None).with_limits_cache(reopened.clone()),
         ] {
             assert!(other.resolve().await.is_err());
         }
         assert_eq!(
-            ModelBudget::queried(&base, "other-key", "test", Some(10000))
+            ModelBudget::queried(crate::test_client(), &base, "other-key", "test", Some(10000)).with_limits_cache(reopened.clone())
                 .resolve()
                 .await
                 .unwrap(),
@@ -660,8 +686,7 @@ mod tests {
 
     #[tokio::test]
     async fn invalid_persisted_limits_are_replaced_by_valid_provider_metadata() {
-        let pool = crate::db::test_pool().await;
-        crate::db::set_test_pool(pool.clone());
+        let pool = test_pool().await;
         let app = axum::Router::new()
             .route(
                 "/models/test",
@@ -682,7 +707,7 @@ mod tests {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let base = format!("http://{}", listener.local_addr().unwrap());
         let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
-        let budget = ModelBudget::queried(&base, "fixture-key", "test", None);
+        let budget = ModelBudget::queried(crate::test_client(), &base, "fixture-key", "test", None).with_limits_cache(pool.clone());
         let key = budget.source.as_ref().unwrap().cache_key();
         let invalid = Limits {
             window: 100000,
@@ -695,7 +720,7 @@ mod tests {
         let stored = load_limits(&pool, &key).await.unwrap().unwrap();
         assert_eq!(stored.output, Some(10000));
         assert_eq!(stored.source, format!("{base}/models/test"));
-        let invalid_budget = ModelBudget::queried(&base, "fixture-key", "invalid", Some(20000));
+        let invalid_budget = ModelBudget::queried(crate::test_client(), &base, "fixture-key", "invalid", Some(20000)).with_limits_cache(pool.clone());
         assert!(invalid_budget.resolve().await.is_err());
         let invalid_key = invalid_budget.source.as_ref().unwrap().cache_key();
         assert!(load_limits(&pool, &invalid_key).await.unwrap().is_none());
@@ -708,8 +733,10 @@ mod tests {
         dotenvy::from_path(std::env::var("FIREFLY_MODEL_CONTEXT_CHECK_ENV").unwrap()).unwrap();
         let model = std::env::var("OPENAI_MODEL").unwrap();
         let query = Query {
+            client: reqwest::Client::new(),
+            pool: None,
             base: std::env::var("OPENAI_BASE_URL").unwrap(),
-            key: crate::llm::normalize_bearer_secret(&std::env::var("OPENAI_API_KEY").unwrap()),
+            key: crate::normalize_bearer_secret(&std::env::var("OPENAI_API_KEY").unwrap()),
             model,
         };
         let limits = query.cached().await.unwrap();
