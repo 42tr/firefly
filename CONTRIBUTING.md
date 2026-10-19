@@ -31,7 +31,7 @@ PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s src/api -p '*_test.py'
 
 独立 Python 回归调用 `target/debug/firefly` 的原生工作区和文件服务，运行前先构建二进制；可用 `FIREFLY_TEST_BINARY` 指向其他构建产物。复制期间文件消失、来源变化与 I/O 故障的注入测试在 Rust 中运行。Python 是这些测试的驱动器，服务运行时不依赖 Python。
 
-依赖更新还需查看 RustSec / OSV 公告和依赖链，区分安全漏洞与停止维护通知，不将未解决漏洞直接加入忽略列表。更新后重新生成第三方许可证：
+依赖更新还需查看 RustSec / OSV 公告和依赖链，区分安全漏洞与停止维护通知，不将未解决漏洞直接加入忽略列表。更新后可在本地重新生成第三方许可证清单查看变化（生成文件不入库，发布流程自动生成）：
 
 ```sh
 python3 scripts/generate_third_party_licenses.py

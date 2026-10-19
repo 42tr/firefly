@@ -99,4 +99,4 @@ tag 必须与 `Cargo.toml`、`package.json` 版本一致。重新发布使用新
 
 ## 许可证
 
-项目采用 [MIT](LICENSE) 许可证。第三方资源与依赖保留各自许可证，见[第三方声明](THIRD_PARTY_NOTICES.md)及完整的[第三方许可证清单](THIRD_PARTY_LICENSES.md)。
+项目采用 [MIT](LICENSE) 许可证。第三方资源与依赖保留各自许可证，见[第三方声明](THIRD_PARTY_NOTICES.md)；完整的第三方许可证清单由发布流程生成并随二进制 Release 提供，也可运行 `python3 scripts/generate_third_party_licenses.py` 在本地生成。

@@ -1,6 +1,6 @@
 # 第三方声明
 
-Firefly 的 MIT 许可证不改变第三方软件、图标及其衍生资源的许可证。二进制 Release 同时提供本文件和 [THIRD_PARTY_LICENSES.md](THIRD_PARTY_LICENSES.md)，后者包含锁文件对应的 Rust / npm 依赖清单与原始许可证、NOTICE 文本，也涵盖构建、测试及平台相关依赖。
+Firefly 的 MIT 许可证不改变第三方软件、图标及其衍生资源的许可证。二进制 Release 同时提供本文件和 `THIRD_PARTY_LICENSES.md`，后者由发布流程根据锁文件生成（不提交进仓库），包含 Rust / npm 依赖清单与原始许可证、NOTICE 文本，也涵盖构建、测试及平台相关依赖。
 
 ## 随源码提供的图标
 
@@ -19,4 +19,4 @@ Codex、Claude Code、GitHub CLI、模型服务与外部业务模块由用户另
 
 ## 更新声明
 
-依赖变更后先执行 `npm ci`，再运行 `python3 scripts/generate_third_party_licenses.py` 并提交生成文件。脚本优先保留依赖包自带许可证和 NOTICE；少数未随注册表包提供许可文本的依赖使用 `scripts/license-texts/` 中来自 [SPDX License List](https://github.com/spdx/license-list-data) 的标准条款。发布流程检查清单是否与锁文件一致。
+依赖变更后先执行 `npm ci`，可运行 `python3 scripts/generate_third_party_licenses.py` 在本地查看清单变化；生成文件不入库，发布流程打包前自动重新生成并在 verify 阶段冒烟验证。脚本优先保留依赖包自带许可证和 NOTICE；少数未随注册表包提供许可文本的依赖使用 `scripts/license-texts/` 中来自 [SPDX License List](https://github.com/spdx/license-list-data) 的标准条款。

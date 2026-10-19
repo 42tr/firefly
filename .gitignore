@@ -30,6 +30,9 @@ news*.png
 /*.png
 gold_line_*.png
 
+# Generated at release time by scripts/generate_third_party_licenses.py
+/THIRD_PARTY_LICENSES.md
+
 # SQLite runtime/backup artifacts and Python test caches
 *.sqlite3*
 *.sqlite

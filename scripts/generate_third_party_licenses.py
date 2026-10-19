@@ -1,9 +1,11 @@
 #!/usr/bin/env python3
 """Collect shipped license/notice texts for locked Rust and npm dependencies.
 
-Run after npm ci / cargo fetch. --check verifies the checked-in release notice.
-Includes development and platform-specific dependencies for a conservative,
-platform-independent inventory. No dependency source code is copied.
+Run after npm ci / cargo fetch. The release workflow regenerates the inventory
+before packaging (the output file is gitignored, never committed); --check
+compares a fresh render against the local output file. Includes development and
+platform-specific dependencies for a conservative, platform-independent
+inventory. No dependency source code is copied.
 """
 import argparse
 import hashlib

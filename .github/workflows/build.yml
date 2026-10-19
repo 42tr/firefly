@@ -49,7 +49,10 @@ jobs:
       - name: Python file service regression
         run: PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s src/api -p '*_test.py'
       - run: npm run build:example:module-sdk
-      - run: python3 scripts/generate_third_party_licenses.py --check
+      - name: Verify license inventory renders
+        run: |
+          python3 scripts/generate_third_party_licenses.py
+          test -s THIRD_PARTY_LICENSES.md
 
   build:
     needs: verify
@@ -100,6 +103,8 @@ jobs:
           CARGO_PROFILE_RELEASE_LTO: 'true'
           CARGO_PROFILE_RELEASE_CODEGEN_UNITS: '1'
         run: cargo build --release --locked --target "$BUILD_TARGET"
+      - name: Generate third-party license inventory
+        run: python3 scripts/generate_third_party_licenses.py
       - name: Package binary, configuration and licenses
         env:
           BUILD_TARGET: ${{ matrix.target }}
