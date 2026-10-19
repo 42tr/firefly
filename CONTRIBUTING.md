@@ -22,6 +22,8 @@ Rust workspace 中，根 `firefly` crate 负责服务启动、HTTP API 和业务
 
 业务存储入口 `src/assistant_store.rs` 保留统一重导出，记录类型、会话操作、消息分页和附件访问分别位于 `src/assistant_store/{types,conversations,messages,attachments}.rs`，相关回归位于同目录的 `tests.rs`。消息与附件共用的事务写入辅助函数仅在存储模块内共享。
 
+生成入口 `src/api/assistant/generation.rs` 保留执行与消息转换接口，Firefly、Codex、Claude 的流程分别位于同目录下 `generation/{firefly,codex,claude}.rs`，共享事件持久化与消息转换位于 `generation/events.rs`。事件契约、Codex 重试和 handoff 工作流回归分文件保留。
+
 可以单独运行新库的测试：
 
 ```sh

@@ -23,7 +23,6 @@ use generation::*;
 mod turn_context;
 mod inputs;
 mod persistence;
-use persistence::*;
 mod tool_details;
 use tool_details::{save_tool_detail, ToolDetail};
 pub use tool_details::get_tool_detail;
@@ -41,6 +40,7 @@ use std::{
 };
 
 use anyhow::anyhow;
+#[cfg(test)]
 use async_trait::async_trait;
 use axum::{
     body::Body,
@@ -54,15 +54,14 @@ use axum::{
 };
 use backon::{ExponentialBuilder, Retryable};
 use g::{
-    Agent, Content as GContent, EventSink as GEventSink, Message as GMessage, Model, Role as GRole, RunEvent,
-    RunLimits, RunRequest, Runtime,
+    Agent, Content as GContent, Message as GMessage, Model, Role as GRole, RunLimits,
 };
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use tokio::{
     fs,
     io::AsyncWriteExt,
-    sync::{mpsc, oneshot},
+    sync::mpsc,
 };
 use tokio_stream::wrappers::ReceiverStream;
 use tracing::warn;
