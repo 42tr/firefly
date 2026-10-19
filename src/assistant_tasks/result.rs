@@ -1,6 +1,12 @@
 //! Model-facing access to the original, durable task result. Never replay a tool.
-use super::*;
-use g::{ToolBehavior, ToolSpec};
+use anyhow::{anyhow, Context};
+use async_trait::async_trait;
+use g::{Tool, ToolBehavior, ToolError, ToolSpec};
+use serde::Deserialize;
+use serde_json::{json, Value};
+use sqlx::{query_as, SqlitePool};
+
+use super::TaskRecord;
 
 const PAGE_BYTES: usize = 4096;
 

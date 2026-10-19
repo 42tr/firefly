@@ -26,6 +26,8 @@ Rust workspace 中，根 `firefly` crate 负责服务启动、HTTP API 和业务
 
 会话入口 `src/api/assistant/conversations.rs` 保留接口重导出和请求、响应类型；会话操作、执行设置校验、历史查询和展示转换分别位于 `conversations/{handlers,settings,history,presentation}.rs`。列表、过程摘要及 Codex/Claude 设置回归各自保留独立测试文件。
 
+持久任务入口 `src/assistant_tasks.rs` 保留统一导出、全局管理器初始化和共享配置；记录类型、调度执行、模型任务适配和有界结果预览分别位于 `assistant_tasks/{types,manager,backend,preview}.rs`。命令执行、原始结果分页读取及现有任务回归继续保留在 `command.rs`、`result.rs` 和 `tests.rs`。
+
 可以单独运行新库的测试：
 
 ```sh
