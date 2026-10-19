@@ -17,10 +17,21 @@ use std::{
 use tokio::sync::{Mutex, RwLock};
 use tokio_util::sync::CancellationToken;
 
+/// Application-owned paths and timezone used by the module host.
+#[derive(Clone, Debug)]
+pub struct Config {
+    pub directory: PathBuf,
+    pub data_directory: PathBuf,
+    /// Passed to module subprocesses as `FIREFLY_MODULE_TIMEZONE`.
+    /// Scheduled jobs use the timezone in their own manifests.
+    pub timezone: chrono_tz::Tz,
+}
+
 pub struct Module {
     pub manifest: manifest::Manifest,
     pub root: PathBuf,
     pub data_dir: PathBuf,
+    timezone: chrono_tz::Tz,
     pub schema: Value,
     pub settings: Value,
     pub enabled: bool,
@@ -38,6 +49,7 @@ pub struct Host {
     pub pool: SqlitePool,
     pub directory: PathBuf,
     pub data_directory: PathBuf,
+    timezone: chrono_tz::Tz,
     pub registry: RwLock<BTreeMap<String, Arc<Module>>>,
     diagnostics: RwLock<Vec<Diagnostic>>,
     mutation: Mutex<()>,
@@ -49,14 +61,9 @@ pub fn get() -> anyhow::Result<&'static Arc<Host>> {
     HOST.get().context("模块宿主尚未启动")
 }
 
-pub async fn start(pool: SqlitePool) -> anyhow::Result<()> {
-    let config = crate::config::get();
-    let host = Host::new(
-        pool,
-        PathBuf::from(&config.modules_dir),
-        PathBuf::from(&config.module_data_dir),
-    )
-    .await?;
+/// Start the process-wide host and its scheduler using an initialized database.
+pub async fn start(pool: SqlitePool, config: Config) -> anyhow::Result<()> {
+    let host = Host::new(pool, config).await?;
     HOST.set(host.clone())
         .map_err(|_| anyhow::anyhow!("模块宿主已启动"))?;
     tokio::spawn(async move {
@@ -94,17 +101,21 @@ pub struct Update {
 }
 
 impl Host {
-    pub async fn new(
-        pool: SqlitePool,
-        directory: PathBuf,
-        data_directory: PathBuf,
-    ) -> anyhow::Result<Arc<Self>> {
+    /// Load modules from disk using a database already migrated by the application.
+    /// Independent instances are driven by explicit calls to [`Self::tick`].
+    pub async fn new(pool: SqlitePool, config: Config) -> anyhow::Result<Arc<Self>> {
+        let Config {
+            directory,
+            data_directory,
+            timezone,
+        } = config;
         std::fs::create_dir_all(&directory)?;
         std::fs::create_dir_all(&data_directory)?;
         let host = Arc::new(Self {
             pool,
             directory: directory.canonicalize()?,
             data_directory: data_directory.canonicalize()?,
+            timezone,
             registry: RwLock::new(BTreeMap::new()),
             diagnostics: RwLock::new(Vec::new()),
             mutation: Mutex::new(()),
@@ -212,6 +223,7 @@ impl Host {
                 manifest: definition,
                 root,
                 data_dir,
+                timezone: self.timezone,
                 schema,
                 settings,
                 enabled: row.0 && valid,

@@ -23,7 +23,7 @@ latest_chapter.txt
 *.tsbuildinfo
 /storage/
 /output/
-workspace/
+/workspace/
 /modules/
 news*.png
 # Design mockups and screenshots belong outside the repo root

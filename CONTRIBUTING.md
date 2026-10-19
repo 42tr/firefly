@@ -14,6 +14,14 @@ cargo build --locked
 
 前端源码与 Vite 配置在 `frontend/`，npm 命令在仓库根目录执行。`npm run dev` 提供开发页面，另起 Rust 后端使用真实接口。纯前端测试模拟接口，无需模型凭据。
 
+Rust workspace 中，根 `firefly` crate 负责服务启动、HTTP API 和业务编排；`crates/workspace` 提供原生工作区准备与文件访问；`crates/module-host` 负责外部 MCP 模块的加载、连接和调度，由主程序传入目录、时区和数据库连接池。`crates/codex-transport` 提供 Codex CLI 传输，`crates/module-sdk` 供外部模块作者使用。数据库迁移统一保留在根目录的 `migrations_sqlite/`。
+
+可以单独运行新库的测试：
+
+```sh
+cargo test --locked -p firefly-workspace -p firefly-module-host
+```
+
 ## 验证修改
 
 按改动范围运行检查，完整基础检查如下：

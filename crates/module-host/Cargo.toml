@@ -1,0 +1,35 @@
+[package]
+name = "firefly-module-host"
+version = "0.1.0"
+edition = "2021"
+license.workspace = true
+repository.workspace = true
+rust-version.workspace = true
+description = "External MCP module hosting and scheduling for Firefly"
+
+[dependencies]
+anyhow = { workspace = true }
+async-trait = { workspace = true }
+axum = { workspace = true }
+base64 = { workspace = true }
+chrono = { workspace = true }
+chrono-tz = { workspace = true }
+croner = { workspace = true }
+futures-util = { workspace = true }
+g = { workspace = true }
+jsonschema = { workspace = true }
+reqwest = { workspace = true }
+rmcp = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+sha2 = { workspace = true }
+sqlx = { workspace = true }
+tokio = { workspace = true }
+tokio-util = { workspace = true }
+toml = { workspace = true }
+tracing = { workspace = true }
+uuid = { workspace = true }
+
+[dev-dependencies]
+libsqlite3-sys = { workspace = true }
+tempfile = { workspace = true }

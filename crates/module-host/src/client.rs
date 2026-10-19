@@ -59,7 +59,7 @@ impl Module {
                         std::env::var(source).map_err(|_| anyhow!("模块所需环境凭据未配置"))?,
                     );
                 }
-                process.env("FIREFLY_MODULE_TIMEZONE", crate::config::timezone().name());
+                process.env("FIREFLY_MODULE_TIMEZONE", self.timezone.name());
                 process.env("FIREFLY_MODULE_DATA_DIR", &self.data_dir).env(
                     "FIREFLY_MODULE_CONFIG",
                     serde_json::to_string(&self.settings)?,

@@ -163,7 +163,7 @@ stdio 模块收到以下宿主环境变量：
 ## 验证
 
 ```sh
-cargo test --locked modules::
+cargo test --locked -p firefly-module-host
 node --test --test-concurrency=1 frontend/src/composables/moduleBridge.test.js frontend/src/composables/useModules.test.js
 npm run test:module-sdk
 npm run check

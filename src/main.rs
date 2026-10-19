@@ -8,6 +8,8 @@ use std::{
 };
 
 use chrono::Utc;
+use firefly_module_host as modules;
+use firefly_workspace::{files as workspace_files, prepare as workspace_prepare};
 use tokio::{net::TcpListener, time::timeout};
 use tokio_cron_scheduler::{Job, JobScheduler};
 use tracing::{error, info};
@@ -34,14 +36,11 @@ mod http_client;
 mod llm;
 mod logx;
 mod mcp;
-mod modules;
 mod office;
 mod pdf;
 mod process_control;
 mod storage;
 mod utils;
-mod workspace_files;
-mod workspace_prepare;
 
 /// 检查运行环境（环境变量）
 ///
@@ -87,7 +86,14 @@ async fn run(args: Vec<String>) -> anyhow::Result<()> {
     let database_url = config::get().database_url.clone();
     db::init(&database_url).await?;
     assistant_store::schedules::synchronize_timezone(db::pool(), Utc::now(), config::timezone()).await?;
-    modules::start(db::pool().clone()).await?;
+    modules::start(
+        db::pool().clone(),
+        modules::Config {
+            directory: config::get().modules_dir.clone().into(),
+            data_directory: config::get().module_data_dir.clone().into(),
+            timezone: config::timezone(),
+        },
+    ).await?;
     agent_settings::Settings::load(db::pool()).await?;
     assistant_tasks::start(db::pool().clone()).await?;
 

@@ -1,6 +1,20 @@
 use super::*;
 use g::Tool;
 
+async fn test_pool() -> SqlitePool {
+    let pool = sqlx::sqlite::SqlitePoolOptions::new()
+        .max_connections(1)
+        .connect("sqlite::memory:")
+        .await
+        .unwrap();
+    // Exercise the application's actual schema without depending on its globals.
+    sqlx::migrate!("../../migrations_sqlite")
+        .run(&pool)
+        .await
+        .unwrap();
+    pool
+}
+
 #[test]
 fn public_download_prefix_cannot_capture_core_or_root_paths() {
     let temp = tempfile::tempdir().unwrap();
@@ -25,16 +39,19 @@ async fn calendar_host() -> (tempfile::TempDir, Arc<Host>) {
     ] {
         std::fs::copy(
             PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-                .join("examples/modules/calendar")
+                .join("../../examples/modules/calendar")
                 .join(file),
             installed.join(file),
         )
         .unwrap();
     }
     let host = Host::new(
-        crate::db::test_pool().await,
-        temp.path().join("modules"),
-        temp.path().join("data"),
+        test_pool().await,
+        Config {
+            directory: temp.path().join("modules"),
+            data_directory: temp.path().join("data"),
+            timezone: chrono_tz::Europe::London,
+        },
     )
     .await
     .unwrap();
@@ -47,6 +64,39 @@ fn enabled() -> Update {
         settings: None,
         enabled_jobs: None,
     }
+}
+
+#[tokio::test]
+async fn configured_timezone_is_passed_to_module_processes() {
+    let (temp, host) = calendar_host().await;
+    let directory = temp.path().join("modules/calendar");
+    std::fs::rename(
+        directory.join("server.py"),
+        directory.join("calendar_example.py"),
+    )
+    .unwrap();
+    std::fs::write(
+        directory.join("server.py"),
+        r#"import os
+import calendar_example as example
+original_call = example.call
+def call(name, arguments):
+    result = original_call(name, arguments)
+    result["structuredContent"]["host_timezone"] = os.environ["FIREFLY_MODULE_TIMEZONE"]
+    return result
+example.call = call
+example.serve()
+"#,
+    )
+    .unwrap();
+    host.update("personal-calendar", enabled()).await.unwrap();
+    let module = host.module("personal-calendar").await.unwrap();
+    let result = module
+        .call("list_dates", json!({}), "app", CancellationToken::new())
+        .await
+        .unwrap();
+    assert_eq!(result["structuredContent"]["host_timezone"], "Europe/London");
+    module.close().await;
 }
 
 #[tokio::test]
@@ -266,8 +316,11 @@ async fn scheduler_claims_once_and_does_not_replay_unknown_runs() {
         .await;
     let restarted = Host::new(
         host.pool.clone(),
-        host.directory.clone(),
-        host.data_directory.clone(),
+        Config {
+            directory: host.directory.clone(),
+            data_directory: host.data_directory.clone(),
+            timezone: host.timezone,
+        },
     )
     .await
     .unwrap();
@@ -389,9 +442,12 @@ async fn http_module_tools_and_errors_are_not_replayed() {
     )
     .unwrap();
     let host = Host::new(
-        crate::db::test_pool().await,
-        directory,
-        temp.path().join("data"),
+        test_pool().await,
+        Config {
+            directory,
+            data_directory: temp.path().join("data"),
+            timezone: chrono_tz::UTC,
+        },
     )
     .await
     .unwrap();

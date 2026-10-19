@@ -16,7 +16,7 @@ use std::{
     time::{Duration, SystemTime, UNIX_EPOCH},
 };
 
-use crate::workspace_files;
+use crate::files;
 use anyhow::{bail, ensure, Context};
 use serde_json::{json, Value};
 
@@ -472,7 +472,7 @@ impl Workspace {
         else {
             return Ok(());
         };
-        let names = workspace_files::names(&directory)?;
+        let names = files::names(&directory)?;
         let repo = names.iter().any(|name| name == ".git");
         if repo {
             let mut meta = self.validate_repo(path, locks)?;
@@ -581,7 +581,7 @@ impl Workspace {
             else {
                 return Ok(());
             };
-            let children = workspace_files::names(&directory)?;
+            let children = files::names(&directory)?;
             private_directory(destination)?;
             for name in children {
                 if source == self.root && name == MANAGED {

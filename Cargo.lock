@@ -965,6 +965,8 @@ dependencies = [
  "envy",
  "eventsource-stream",
  "firefly-codex-transport",
+ "firefly-module-host",
+ "firefly-workspace",
  "futures-util",
  "glow-agent",
  "hmac 0.12.1",
@@ -979,7 +981,6 @@ dependencies = [
  "mime_guess",
  "regex",
  "reqwest",
- "rmcp",
  "rusqlite",
  "rust-embed",
  "schemars 0.8.22",
@@ -1003,7 +1004,6 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "uuid",
- "zip",
 ]
 
 [[package]]
@@ -1019,6 +1019,35 @@ dependencies = [
  "thiserror 1.0.69",
  "tokio",
  "tracing",
+]
+
+[[package]]
+name = "firefly-module-host"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "axum",
+ "base64 0.22.1",
+ "chrono",
+ "chrono-tz",
+ "croner",
+ "futures-util",
+ "glow-agent",
+ "jsonschema",
+ "libsqlite3-sys",
+ "reqwest",
+ "rmcp",
+ "serde",
+ "serde_json",
+ "sha2 0.10.8",
+ "sqlx",
+ "tempfile",
+ "tokio",
+ "tokio-util",
+ "toml",
+ "tracing",
+ "uuid",
 ]
 
 [[package]]
@@ -1056,6 +1085,19 @@ dependencies = [
  "sqlx",
  "tempfile",
  "tokio",
+]
+
+[[package]]
+name = "firefly-workspace"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "flate2",
+ "libc",
+ "serde_json",
+ "tempfile",
+ "uuid",
+ "zip",
 ]
 
 [[package]]
