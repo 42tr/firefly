@@ -964,6 +964,7 @@ dependencies = [
  "dotenvy",
  "envy",
  "firefly-codex-transport",
+ "firefly-db",
  "firefly-llm",
  "firefly-module-host",
  "firefly-workspace",
@@ -975,7 +976,6 @@ dependencies = [
  "jsonschema",
  "jsonwebtoken",
  "libc",
- "libsqlite3-sys",
  "lopdf",
  "mimalloc",
  "mime_guess",
@@ -1016,6 +1016,22 @@ dependencies = [
  "serde_json",
  "tempfile",
  "thiserror 1.0.69",
+ "tokio",
+ "tracing",
+]
+
+[[package]]
+name = "firefly-db"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "chrono",
+ "chrono-tz",
+ "libsqlite3-sys",
+ "regex",
+ "rusqlite",
+ "sqlx",
+ "tempfile",
  "tokio",
  "tracing",
 ]

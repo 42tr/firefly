@@ -61,6 +61,28 @@ mod tests {
     use super::*;
 
     #[test]
+    fn committed_wal_data_is_backed_up_as_a_standalone_database() {
+        let dir = tempfile::tempdir().unwrap();
+        let source = dir.path().join("source.sqlite3");
+        let target = dir.path().join("backup.sqlite3");
+        let db = Connection::open(&source).unwrap();
+        db.execute_batch("PRAGMA journal_mode=WAL; PRAGMA wal_autocheckpoint=0;
+            CREATE TABLE records(value TEXT); INSERT INTO records VALUES ('committed in WAL')").unwrap();
+        assert!(source.with_extension("sqlite3-wal").exists());
+
+        backup(&source, &target).unwrap();
+        let saved = Connection::open(&target).unwrap();
+        assert_eq!(saved.query_row("SELECT value FROM records", [], |row| row.get::<_, String>(0)).unwrap(), "committed in WAL");
+        assert_eq!(saved.query_row("PRAGMA journal_mode", [], |row| row.get::<_, String>(0)).unwrap(), "delete");
+        assert_eq!(saved.query_row("PRAGMA integrity_check", [], |row| row.get::<_, String>(0)).unwrap(), "ok");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            assert_eq!(std::fs::metadata(&target).unwrap().permissions().mode() & 0o777, 0o600);
+        }
+    }
+
+    #[test]
     fn foreign_key_failure_removes_incomplete_backup() {
         let dir = tempfile::tempdir().unwrap();
         let source = dir.path().join("source.sqlite3");

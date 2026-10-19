@@ -16,10 +16,12 @@ cargo build --locked
 
 Rust workspace 中，根 `firefly` crate 负责服务启动、HTTP API 和业务编排；`crates/workspace` 提供原生工作区准备与文件访问；`crates/module-host` 负责外部 MCP 模块的加载、连接和调度，由主程序传入目录、时区和数据库连接池。`crates/llm` 负责模型调用、流式解析、上下文压缩及预算计算，由主程序传入共享 HTTP 客户端和可选的模型限制缓存连接池。`crates/codex-transport` 提供 Codex CLI 传输，`crates/module-sdk` 供外部模块作者使用。数据库迁移统一保留在根目录的 `migrations_sqlite/`。
 
+`crates/db` 提供 SQLite 连接、时间戳转换、自定义函数、忙等重试和在线备份。主程序的 `src/db.rs` 持有全局连接池、应用迁移和业务表结构测试，将连接池参数、时区和迁移对象传入数据库库。
+
 可以单独运行新库的测试：
 
 ```sh
-cargo test --locked -p firefly-workspace -p firefly-module-host -p firefly-llm
+cargo test --locked -p firefly-workspace -p firefly-module-host -p firefly-llm -p firefly-db
 ```
 
 ## 验证修改

@@ -7,7 +7,7 @@
 直接使用 `cargo` 构建或测试。SQLx 0.9 与备份工具共享 `libsqlite3-sys 0.37.0` 内置的 SQLite 3.51.3，由 Cargo 编译并静态链接，不依赖系统 SQLite 或额外下载源码的脚本。依赖版本由 `Cargo.toml` 和 `Cargo.lock` 固定；运行时仍检查最低版本 3.51.3。构建需要 Rust 1.94 或更新版本和 C 编译器。
 
 ```sh
-cargo test --locked
+cargo test --workspace --locked
 cargo build --locked
 ```
 

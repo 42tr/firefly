@@ -8,6 +8,7 @@ use std::{
 };
 
 use chrono::Utc;
+use firefly_db::backup as db_backup;
 use firefly_llm as llm;
 use firefly_module_host as modules;
 use firefly_workspace::{files as workspace_files, prepare as workspace_prepare};
@@ -31,8 +32,6 @@ mod claude;
 mod codex;
 mod config;
 mod db;
-mod db_backup;
-mod db_functions;
 mod http_client;
 mod logx;
 mod mcp;
