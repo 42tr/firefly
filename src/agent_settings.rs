@@ -74,11 +74,7 @@ fn valid_id(id: &str) -> bool {
 impl Settings {
     fn defaults() -> Self {
         let cfg = config::try_get();
-        let mut tools = vec![
-            "command",
-            "fetch_activity_records",
-            "merge_pdf_attachments",
-        ];
+        let mut tools = vec!["command", "fetch_activity_records"];
         if cfg
             .as_ref()
             .is_some_and(|cfg| cfg.assistant_http_tool_enabled)

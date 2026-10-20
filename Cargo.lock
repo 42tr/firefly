@@ -968,6 +968,8 @@ dependencies = [
  "firefly-db",
  "firefly-llm",
  "firefly-module-host",
+ "firefly-process-control",
+ "firefly-safe-http",
  "firefly-workspace",
  "futures-util",
  "glow-agent",
@@ -976,7 +978,6 @@ dependencies = [
  "image",
  "jsonschema",
  "jsonwebtoken",
- "libc",
  "lopdf",
  "mimalloc",
  "mime_guess",
@@ -1011,7 +1012,7 @@ name = "firefly-claude-transport"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "libc",
+ "firefly-process-control",
  "serde_json",
  "tempfile",
  "tokio",
@@ -1024,6 +1025,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "chrono",
+ "firefly-process-control",
  "libc",
  "regex",
  "serde_json",
@@ -1124,6 +1126,26 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "uuid",
+]
+
+[[package]]
+name = "firefly-process-control"
+version = "0.1.0"
+dependencies = [
+ "libc",
+]
+
+[[package]]
+name = "firefly-safe-http"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "futures-util",
+ "reqwest",
+ "schemars 0.8.22",
+ "serde",
+ "serde_json",
+ "tokio",
 ]
 
 [[package]]

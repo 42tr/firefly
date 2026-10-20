@@ -36,9 +36,6 @@ mod http_client;
 mod logx;
 mod mcp;
 mod office;
-mod pdf;
-mod process_control;
-mod storage;
 mod utils;
 
 /// 检查运行环境（环境变量）

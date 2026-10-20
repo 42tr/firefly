@@ -1,6 +1,7 @@
 use super::{Manager, TaskRecord};
 use anyhow::Context;
 use async_trait::async_trait;
+use firefly_process_control::ProcessGroup;
 use g::{Tool, ToolBehavior, ToolError, ToolSpec};
 use serde_json::{json, Value};
 use std::{path::PathBuf, process::Stdio, time::Duration};
@@ -88,7 +89,7 @@ async fn run(manager: &Manager, task: &TaskRecord, token: CancellationToken) -> 
         .spawn()
         .context("启动命令失败")?;
     let pid = child.id().context("缺少命令进程 ID")?;
-    let group = crate::process_control::ProcessGroup::new(pid);
+    let group = ProcessGroup::new(pid);
     let mut stdout = child.stdout.take().unwrap();
     let mut stderr = child.stderr.take().unwrap();
     let mut out_buffer = [0_u8; 4096];
@@ -129,9 +130,7 @@ async fn run(manager: &Manager, task: &TaskRecord, token: CancellationToken) -> 
     };
     if status != "finished" {
         // Signal only this task's dedicated group, never the shared Codex service.
-        unsafe {
-            libc::killpg(pid as i32, libc::SIGTERM);
-        }
+        group.terminate();
         let grace = Duration::from_secs(super::setting("ASSISTANT_COMMAND_CANCEL_GRACE_SECS", 3) as u64);
         // Descendants may ignore TERM even when their shell has exited.
         tokio::time::sleep(grace).await;

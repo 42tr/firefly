@@ -14,12 +14,10 @@ use tokio::{
 };
 use tracing::warn;
 
-mod process_control;
-
 pub struct ClaudeTurn {
     child: Child,
     stdout: Lines<BufReader<ChildStdout>>,
-    process_group: process_control::ProcessGroup,
+    process_group: firefly_process_control::ProcessGroup,
     stopped: bool,
 }
 
@@ -38,7 +36,7 @@ impl ClaudeTurn {
             .spawn()
             .context("启动 Claude CLI 失败")?;
         let process_group =
-            process_control::ProcessGroup::new(child.id().context("Claude 缺少进程编号")?);
+            firefly_process_control::ProcessGroup::new(child.id().context("Claude 缺少进程编号")?);
         let stdout = child
             .stdout
             .take()

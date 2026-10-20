@@ -20,6 +20,8 @@ Rust workspace 中，根 `firefly` crate 负责服务启动、HTTP API 和业务
 
 `crates/claude-transport` 提供 Claude CLI 进程、事件传输和进程组中断，接收调用方构造的命令。主程序的 `src/claude.rs` 负责供应商和模型选择、CLI 参数、提示词及本轮临时 settings 文件的生命周期。
 
+`crates/process-control` 提供跨根程序、Claude 和 Codex transport 共用的 Unix 进程组终止保护；`crates/safe-http` 提供模型工具使用的 SSRF 防护、主机白名单、禁止重定向和有界响应读取。MCP 工具注册和应用配置仍由主程序负责。
+
 业务存储入口 `src/assistant_store.rs` 保留统一重导出，记录类型、会话操作、消息分页和附件访问分别位于 `src/assistant_store/{types,conversations,messages,attachments}.rs`，相关回归位于同目录的 `tests.rs`。消息与附件共用的事务写入辅助函数仅在存储模块内共享。
 
 生成入口 `src/api/assistant/generation.rs` 保留执行与消息转换接口，Firefly、Codex、Claude 的流程分别位于同目录下 `generation/{firefly,codex,claude}.rs`，共享事件持久化与消息转换位于 `generation/events.rs`。事件契约、Codex 重试和 handoff 工作流回归分文件保留。
@@ -33,7 +35,7 @@ Codex 入口 `src/codex.rs` 保留兼容重导出；平台和模型目录、工�
 可以单独运行新库的测试：
 
 ```sh
-cargo test --locked -p firefly-workspace -p firefly-module-host -p firefly-llm -p firefly-db -p firefly-claude-transport
+cargo test --locked -p firefly-workspace -p firefly-module-host -p firefly-llm -p firefly-db -p firefly-claude-transport -p firefly-process-control -p firefly-safe-http
 ```
 
 ## 验证修改

@@ -14,6 +14,8 @@ firefly-codex-transport = { path = "crates/codex-transport" }
 firefly-db = { path = "crates/db" }
 firefly-llm = { path = "crates/llm" }
 firefly-module-host = { path = "crates/module-host" }
+firefly-process-control = { path = "crates/process-control" }
+firefly-safe-http = { path = "crates/safe-http" }
 firefly-workspace = { path = "crates/workspace" }
 reqwest = { version = "0.13.4", features = [
     "json",
@@ -53,9 +55,8 @@ thiserror = "1"
 http = "1.3.1"
 
 # utils
-schemars = "0.8"
+schemars = { workspace = true }
 backon = "1"
-libc = "0.2"        # killpg for agent subprocess groups
 sqlx = { version = "0.9", default-features = false, features = ["runtime-tokio", "sqlite", "chrono", "uuid", "migrate", "macros", "json"] }
 uuid = { version = "1.0", features = ["v4", "serde"] }
 futures-util = { workspace = true }
@@ -97,6 +98,8 @@ members = [
     "crates/db",
     "crates/llm",
     "crates/module-host",
+    "crates/process-control",
+    "crates/safe-http",
     "crates/workspace",
     "examples/modules/rust-sdk-counter",
 ]
@@ -132,6 +135,7 @@ serde = { version = "1.0", features = ["derive"] }
 serde_json = "1.0"
 regex = "1.10"
 base64 = "0.22"
+schemars = "0.8"
 chrono = { version = "0.4", features = ["serde", "std"] }
 chrono-tz = "0.10.0"
 tokio = { version = "1", features = ["full"] }
@@ -140,7 +144,7 @@ tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 axum = { version = "0.8.3", features = ["multipart", "ws"] }
 thiserror = "1"
 rusqlite = { version = "0.39", default-features = false, features = ["backup"] }
-libc = "0.2"        # killpg for agent subprocess groups
+libc = "0.2"
 sqlx = { version = "0.9", default-features = false, features = ["runtime-tokio", "sqlite", "chrono", "uuid", "migrate", "macros", "json"] }
 uuid = { version = "1.0", features = ["v4", "serde"] }
 tempfile = "3"

@@ -19,7 +19,6 @@ use tokio::{
 };
 use tracing::{debug, error, info, trace, warn, Level};
 
-mod process_control;
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(60);
 const INTERRUPT_TIMEOUT: Duration = Duration::from_secs(15);
 const NOTIFICATION_CAPACITY: usize = 4096;
@@ -28,7 +27,7 @@ pub struct CodexAppServer {
     // Keeping the child in the manager keeps kill_on_drop effective for the
     // lifetime of the process-wide client.
     _child: AsyncMutex<Child>,
-    process_group: crate::process_control::ProcessGroup,
+    process_group: firefly_process_control::ProcessGroup,
     pending: Mutex<HashMap<u64, oneshot::Sender<anyhow::Result<Value>>>>,
     thread_configurations: Mutex<HashMap<String, Value>>,
     notifications: broadcast::Sender<Value>,
@@ -226,7 +225,8 @@ impl CodexAppServer {
     async fn spawn_command(mut command: Command, request_timeout: Duration) -> anyhow::Result<Arc<Self>> {
         let mut child = command.kill_on_drop(true).process_group(0).spawn()
             .context("启动 codex app-server 失败，请确认 Codex CLI 已安装")?;
-        let process_group = crate::process_control::ProcessGroup::new(child.id().context("Codex 缺少进程编号")?);
+        let process_group =
+            firefly_process_control::ProcessGroup::new(child.id().context("Codex 缺少进程编号")?);
 
         let stdin = child.stdin.take().ok_or_else(|| anyhow!("codex app-server 缺少 stdin"))?;
         let stdout = child.stdout.take().ok_or_else(|| anyhow!("codex app-server 缺少 stdout"))?;
