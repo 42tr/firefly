@@ -70,7 +70,7 @@ pub(in crate::api::assistant) async fn run_codex_turn(
         let Err(err) = result else {
             return Ok(());
         };
-        if !is_codex_capacity_error(&err.to_string()) {
+        if !is_codex_retryable_error(&err.to_string()) {
             // The queue records the final failure after all internal retries.
             return Err(err);
         }
@@ -83,7 +83,7 @@ pub(in crate::api::assistant) async fn run_codex_turn(
         if turn_started {
             turn_input = vec![json!({
                 "type": "text",
-                "text": "上次请求因模型容量不足而中断，请从上次进度继续完成之前的任务，不要重复已完成的工作。"
+                "text": "上次请求因模型限流或容量不足而中断，请从上次进度继续完成之前的任务，不要重复已完成的工作。"
             })];
         }
     }
@@ -194,12 +194,23 @@ pub(super) fn is_codex_capacity_error(message: &str) -> bool {
     message.to_ascii_lowercase().contains("selected model is at capacity")
 }
 
+/// Codex 内部重试耗尽后抛出的临时性错误（如 "exceeded retry limit, last
+/// status: 429 Too Many Requests"）。codex 只会对 429/5xx 等可重试状态做
+/// 内部重试，因此耗尽后在队列层再等一段时间重试整个 turn 仍有意义。
+pub(super) fn is_codex_retry_limit_error(message: &str) -> bool {
+    message.to_ascii_lowercase().contains("exceeded retry limit")
+}
+
+pub(super) fn is_codex_retryable_error(message: &str) -> bool {
+    is_codex_capacity_error(message) || is_codex_retry_limit_error(message)
+}
+
 pub(super) async fn consume_codex_turn(
     thread_id: &str, turn_id: &str, mut events: tokio::sync::broadcast::Receiver<Value>, conversation_id: i64,
     job: &Arc<assistant_job::GenerationJob>,
 ) -> anyhow::Result<()> {
     let cancellation = job.cancellation_token();
-    let mut capacity_error = None;
+    let mut retryable_error = None;
     // 已收到 item/started 但尚未收到 item/completed 的工具项（id → item/started 时的负载）。
     // 广播接收方滞后（Lagged）会丢弃事件，turn 结束时需要兜底补齐 tool_result，
     // 否则前端执行过程卡片会一直停留在“正在执行”且耗时持续增长。
@@ -246,7 +257,7 @@ pub(super) async fn consume_codex_turn(
                 warn!(thread_id, turn_id, "Codex turn finished without a received turn/completed event");
                 recover_codex_agent_messages(thread_id, turn_id, &persisted_messages, &mut persisted_images,
                     &mut pending_tools, conversation_id, job).await;
-                break 'turn codex_turn_outcome(&turn, None, capacity_error.as_deref());
+                break 'turn codex_turn_outcome(&turn, None, retryable_error.as_deref());
             }
         };
         if codex::notification_method(&message) == Some("server/closed") {
@@ -336,17 +347,17 @@ pub(super) async fn consume_codex_turn(
                     recover_codex_image_items(thread_id, items, &mut persisted_images, &mut pending_tools,
                         conversation_id, job).await;
                 }
-                break 'turn codex_turn_outcome(&params["turn"], params["error"]["message"].as_str(), capacity_error.as_deref());
+                break 'turn codex_turn_outcome(&params["turn"], params["error"]["message"].as_str(), retryable_error.as_deref());
             }
             "error" => {
                 let error = params["error"]["message"].as_str().unwrap_or("Codex 执行失败");
                 if params["willRetry"].as_bool() == Some(true) || is_codex_retrying_message(error) {
                     continue;
                 }
-                if is_codex_capacity_error(error) {
+                if is_codex_retryable_error(error) {
                     // Wait for the failed turn's terminal event before starting a
                     // new turn on the same thread.
-                    capacity_error = Some(error.to_string());
+                    retryable_error = Some(error.to_string());
                     continue;
                 }
                 break 'turn Err(anyhow!("{}", error));
@@ -363,7 +374,7 @@ pub(super) async fn consume_codex_turn(
 const CODEX_TURN_STATUS_INTERVAL: Duration = Duration::from_secs(120);
 const CODEX_FINISHED_TURN_GRACE: Duration = Duration::from_secs(10);
 
-pub(super) fn codex_turn_outcome(turn: &Value, event_error: Option<&str>, capacity_error: Option<&str>) -> anyhow::Result<()> {
+pub(super) fn codex_turn_outcome(turn: &Value, event_error: Option<&str>, retryable_error: Option<&str>) -> anyhow::Result<()> {
     match turn["status"].as_str().unwrap_or_default() {
         "completed" => Ok(()),
         "interrupted" => Err(anyhow!("Codex turn 已中断")),
@@ -371,7 +382,7 @@ pub(super) fn codex_turn_outcome(turn: &Value, event_error: Option<&str>, capaci
             let error = turn["error"]["message"]
                 .as_str()
                 .or(event_error)
-                .or(capacity_error)
+                .or(retryable_error)
                 .unwrap_or("Codex turn 未完成");
             Err(anyhow!("{}", error))
         }

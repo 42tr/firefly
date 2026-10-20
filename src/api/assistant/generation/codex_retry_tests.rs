@@ -3,11 +3,13 @@ use std::{sync::Arc, time::Duration};
 use serde_json::{json, Value};
 
 use super::codex::{
-    codex_turn_outcome, consume_codex_turn, is_codex_capacity_error, CODEX_CAPACITY_RETRY_DELAY,
+    codex_turn_outcome, consume_codex_turn, is_codex_capacity_error, is_codex_retry_limit_error,
+    is_codex_retryable_error, CODEX_CAPACITY_RETRY_DELAY,
 };
 use crate::assistant_job;
 
 const CAPACITY_ERROR: &str = "Selected model is at capacity. Please try a different model.";
+const RETRY_LIMIT_ERROR: &str = "exceeded retry limit, last status: 429 Too Many Requests";
 
 async fn consume(notifications: Vec<Value>) -> anyhow::Result<()> {
     let job = Arc::new(assistant_job::GenerationJob::new(uuid::Uuid::new_v4(), 1, "test".into()));
@@ -49,9 +51,28 @@ fn capacity_detection_is_specific_and_case_insensitive() {
     assert_eq!(CODEX_CAPACITY_RETRY_DELAY, Duration::from_secs(10));
     assert!(is_codex_capacity_error(CAPACITY_ERROR));
     assert!(is_codex_capacity_error("SELECTED MODEL IS AT CAPACITY"));
-    for message in ["quota exceeded", "invalid API key", "Codex 事件流已断开"] {
+    for message in ["quota exceeded", "invalid API key", "Codex 事件流已断开", RETRY_LIMIT_ERROR] {
         assert!(!is_codex_capacity_error(message));
     }
+}
+
+#[test]
+fn retry_limit_detection_covers_exhausted_429() {
+    assert!(is_codex_retry_limit_error(RETRY_LIMIT_ERROR));
+    assert!(is_codex_retry_limit_error("Exceeded Retry Limit, last status: 503"));
+    for message in [CAPACITY_ERROR, "quota exceeded", "Codex 事件流已断开"] {
+        assert!(!is_codex_retry_limit_error(message));
+    }
+    assert!(is_codex_retryable_error(CAPACITY_ERROR));
+    assert!(is_codex_retryable_error(RETRY_LIMIT_ERROR));
+    assert!(!is_codex_retryable_error("invalid API key"));
+}
+
+#[tokio::test]
+async fn retry_limit_error_waits_for_failed_turn_and_preserves_message() {
+    let err = consume(vec![error(RETRY_LIMIT_ERROR, false), completed("failed", None)]).await.unwrap_err();
+    assert_eq!(err.to_string(), RETRY_LIMIT_ERROR);
+    assert!(is_codex_retryable_error(&err.to_string()));
 }
 
 #[tokio::test]
