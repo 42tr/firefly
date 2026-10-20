@@ -23,6 +23,7 @@ jobs:
         with:
           node-version: '24'
           cache: npm
+          cache-dependency-path: frontend/package-lock.json
       - uses: dtolnay/rust-toolchain@e2a55d2ffb04f378e9626c28d38b36d230d1e12f
         with:
           toolchain: '1.97.1'
@@ -35,12 +36,15 @@ jobs:
           python3 - <<'PY'
           import json, os, tomllib
           version = tomllib.load(open('Cargo.toml', 'rb'))['package']['version']
-          assert json.load(open('package.json'))['version'] == version, 'npm and Cargo versions differ'
+          assert json.load(open('frontend/package.json'))['version'] == version, 'npm and Cargo versions differ'
           assert os.environ['RELEASE_TAG'] == 'v' + version, 'tag must match package version'
           PY
       - run: npm ci
+        working-directory: frontend
       - run: npm run check
+        working-directory: frontend
       - run: npm run test:module-sdk
+        working-directory: frontend
       - run: cargo clippy --workspace --locked --all-targets -- -D clippy::correctness
       - run: cargo test --workspace --locked -- --test-threads=4
       - run: cargo build --locked
@@ -49,6 +53,7 @@ jobs:
       - name: Python file service regression
         run: PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s src/api -p '*_test.py'
       - run: npm run build:example:module-sdk
+        working-directory: frontend
       - name: Verify license inventory renders
         run: |
           python3 scripts/generate_third_party_licenses.py
@@ -79,6 +84,7 @@ jobs:
         with:
           node-version: '24'
           cache: npm
+          cache-dependency-path: frontend/package-lock.json
       - uses: dtolnay/rust-toolchain@e2a55d2ffb04f378e9626c28d38b36d230d1e12f
         with:
           toolchain: '1.97.1'
@@ -96,7 +102,9 @@ jobs:
           echo "CARGO_TARGET_$(printf '%s' "$BUILD_TARGET" | tr 'a-z-' 'A-Z_')_LINKER=musl-gcc" >> "$GITHUB_ENV"
           echo "CC_$(printf '%s' "$BUILD_TARGET" | tr '-' '_')=musl-gcc" >> "$GITHUB_ENV"
       - run: npm ci
+        working-directory: frontend
       - run: npm run build
+        working-directory: frontend
       - name: Build binary
         env:
           BUILD_TARGET: ${{ matrix.target }}
@@ -114,6 +122,8 @@ jobs:
           cp "target/$BUILD_TARGET/release/firefly" package/firefly
           cp .env.example README.md CONTRIBUTING.md SECURITY.md LICENSE THIRD_PARTY_NOTICES.md THIRD_PARTY_LICENSES.md package/
           cp -R docs examples package/
+          mkdir -p package/frontend/examples/calendar
+          cp frontend/examples/calendar/calendar.html package/frontend/examples/calendar/
           tar -czf "artifacts/firefly-$BUILD_PLATFORM.tar.gz" -C package .
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
         with:

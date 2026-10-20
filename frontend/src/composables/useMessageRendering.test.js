@@ -1,3 +1,4 @@
+import { fileURLToPath } from 'node:url'
 import assert from 'node:assert/strict'
 import test, { after } from 'node:test'
 import { createRenderer, nextTick, ref } from 'vue'
@@ -6,7 +7,7 @@ import { createServer } from 'vite'
 
 // Count real Markdown parses while mounting reactive render effects without a DOM.
 // Sanitization/code-block DOM integration is unchanged by the cache.
-const server = await createServer({ configFile: 'frontend/vite.config.ts',
+const server = await createServer({ configFile: fileURLToPath(new URL('../../vite.config.ts', import.meta.url)),
   server: { middlewareMode: true, hmr: false }, optimizeDeps: { noDiscovery: true, include: [] }, appType: 'custom',
   ssr: { noExternal: ['dompurify'] },
   plugins: [{ name: 'test-sanitizer', enforce: 'pre',

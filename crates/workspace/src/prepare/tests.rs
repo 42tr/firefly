@@ -18,7 +18,7 @@ fn git(path: &Path, args: &[&str]) {
 
 fn fixture() -> (tempfile::TempDir, PathBuf, Workspace) {
     let temporary = tempfile::tempdir().unwrap();
-    let root = temporary.path().join("workspace");
+    let root = fs::canonicalize(temporary.path()).unwrap().join("workspace");
     let source = root.join("project");
     fs::create_dir_all(&source).unwrap();
     git(&source, &["init", "-q"]);

@@ -1,7 +1,7 @@
 """Exercise the packaged Rust / UI SDK example against an isolated Firefly host.
 
-Build first: npm run build && cargo build --locked && npm run build:example:module-sdk
-Run: python3 scripts/test_rust_sdk_module_ui.py
+Build first: npm --prefix frontend run build && cargo build --locked && npm --prefix frontend run build:example:module-sdk
+Run: python3 frontend/tests/e2e/test_rust_sdk_module_ui.py
 Uses temporary module data and the existing authenticated module-host harness.
 """
 import shutil
@@ -17,7 +17,7 @@ class RustSdkModuleUI(harness.ModuleHost):
         package = harness.ROOT / 'output/modules/rust-sdk-counter'
         for name in ['module.toml', 'config.schema.json', 'ui.html', 'firefly-sdk-counter-example']:
             if not (package / name).is_file():
-                raise RuntimeError('Build the example first: npm run build:example:module-sdk')
+                raise RuntimeError('Build the example first: npm --prefix frontend run build:example:module-sdk')
         super().setUpClass()
         shutil.copytree(package, cls.directory / 'modules/rust-sdk-counter')
 

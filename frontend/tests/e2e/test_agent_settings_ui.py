@@ -1,7 +1,7 @@
 """Agent configuration and dynamic handoffs against an isolated local instance.
 
-Build: npm run build && cargo build --locked
-Run: python3 scripts/test_agent_settings_ui.py
+Build: npm --prefix frontend run build && cargo build --locked
+Run: python3 frontend/tests/e2e/test_agent_settings_ui.py
 Uses a local fake Responses service; no model credentials or external network.
 """
 import json

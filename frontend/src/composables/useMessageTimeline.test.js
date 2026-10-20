@@ -1,10 +1,11 @@
+import { fileURLToPath } from 'node:url'
 import assert from 'node:assert/strict'
 import test, { after } from 'node:test'
 import { createRenderer, h, nextTick, ref, ssrContextKey } from 'vue'
 import { createServer } from 'vite'
 import { getProcessDurationMs } from './processDuration.js'
 
-const server = await createServer({ configFile: 'frontend/vite.config.ts', server: { middlewareMode: true, hmr: false }, optimizeDeps: { noDiscovery: true, include: [] }, appType: 'custom' })
+const server = await createServer({ configFile: fileURLToPath(new URL('../../vite.config.ts', import.meta.url)), server: { middlewareMode: true, hmr: false }, optimizeDeps: { noDiscovery: true, include: [] }, appType: 'custom' })
 after(() => server.close())
 const { useMessageTimeline } = await server.ssrLoadModule('/src/composables/useMessageTimeline.js')
 const { provideAssistantRealtime } = await server.ssrLoadModule('/src/composables/useAssistantRealtime.js')

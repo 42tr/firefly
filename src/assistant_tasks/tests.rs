@@ -361,6 +361,7 @@ async fn explicit_mutexes_serialize_across_conversations_and_release_after_execu
     let dir = tempfile::tempdir().unwrap();
     let child = dir.path().join("frontend");
     tokio::fs::create_dir(&child).await.unwrap();
+    let child = tokio::fs::canonicalize(child).await.unwrap();
     let first = command_task_with_resource(&backend, dir.path(), "sleep 300", 0, Some("repo:project")).await;
     let second = command_task_with_resource(&other, &child, "pwd", 1, Some("repo:project")).await;
     // Keys are opaque names: sharing a prefix or cwd does not cause exclusion.
@@ -774,6 +775,9 @@ async fn command_task(backend: &Backend, dir: &std::path::Path, command: &str, i
 
 async fn command_task_with_resource(backend: &Backend, dir: &std::path::Path, command: &str, index: i64, resource: Option<&str>) -> String {
     let id = Uuid::new_v4().to_string();
+    // Direct fixture inserts must match submission's canonical cwd, including
+    // macOS temporary directories reached through the /var symlink.
+    let dir = tokio::fs::canonicalize(dir).await.unwrap();
     let mut arguments = json!({"command":command,"cwd":dir});
     if let Some(key) = resource { arguments["resource_key"] = json!(key); }
     query("INSERT INTO assistant_tasks(id,user_id,conversation_id,generation_job_id,run_id,source_call_id,source_index,title,tool,arguments,background_allowed,parallel_safe,resource_key,execution_timeout_secs,created_at) VALUES (?1,'owner',?2,?3,?4,'cmd',?5,'test command','command',?6,1,1,?7,60,?8)")

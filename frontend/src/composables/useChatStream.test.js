@@ -1,8 +1,9 @@
+import { fileURLToPath } from 'node:url'
 import assert from 'node:assert/strict'
 import test from 'node:test'
 import { createRenderer, ref } from 'vue'
 import { createServer } from 'vite'
-const server = await createServer({ configFile: 'frontend/vite.config.ts', server: { middlewareMode: true, hmr: false }, optimizeDeps: { noDiscovery: true, include: [] }, appType: 'custom' })
+const server = await createServer({ configFile: fileURLToPath(new URL('../../vite.config.ts', import.meta.url)), server: { middlewareMode: true, hmr: false }, optimizeDeps: { noDiscovery: true, include: [] }, appType: 'custom' })
 test.after(() => server.close())
 const { getJobStartedAt, useChatStream } = await server.ssrLoadModule('/src/composables/useChatStream.js')
 const { newSubmissionId } = await server.ssrLoadModule('/src/composables/submissionIdentity.ts')

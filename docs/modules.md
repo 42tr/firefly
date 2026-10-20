@@ -11,6 +11,7 @@ Firefly 可以在运行时加载独立 MCP 模块，无需修改 Rust 或 Vue �
 ```sh
 mkdir -p modules
 cp -R examples/modules/calendar modules/calendar
+cp frontend/examples/calendar/calendar.html modules/calendar/calendar.html
 ```
 
 示例源码路径相对于本仓库；只下载 Firefly 二进制时，另行下载或复制模块包。示例需要 Python 3.9 或更新版本及系统时区数据。示例不包含任何个人日期，也不会自动开启定时检查。
@@ -19,11 +20,11 @@ cp -R examples/modules/calendar modules/calendar
 
 启用“重要日期示例”后，更多功能菜单会出现“我的重要日期”。在“Agent 配置”中刷新工具、勾选日期工具并保存后，所选 agent 就能调用。在模块管理页可检查工具、提交参数进行测试，以及查看自动任务结果。自动检查只记录当天匹配的日期，不发送邮件或推送通知。
 
-`examples/modules/echo/` 是不带页面的最小工具模板；`examples/modules/calendar/` 是带页面、配置 Schema、SQLite 和调度声明的完整模板。两者都可以整体复制到独立仓库，业务逻辑与 Firefly 源码没有依赖。示例使用少量 Python 标准库代码演示 MCP；复杂模块建议使用官方 MCP SDK。
+`examples/modules/echo/` 是不带页面的最小工具模板；日期示例的服务端、配置 Schema、SQLite 和调度声明在 `examples/modules/calendar/`，页面源码在 `frontend/examples/calendar/calendar.html`。按上面的命令组装后，完整模块包可以复制到独立仓库，业务逻辑与 Firefly 源码没有依赖。示例使用少量 Python 标准库代码演示 MCP；复杂模块建议使用官方 MCP SDK。
 
-[`examples/modules/rust-sdk-counter/`](../examples/modules/rust-sdk-counter/README.md) 是直接使用本仓库 Rust / UI SDK 的计数器示例，展示配置读取、SQLite 持久化、Axum 路由到 MCP 的适配，以及页面消息桥。根目录运行 `npm run build:example:module-sdk` 即可生成 `output/modules/rust-sdk-counter/` 完整模块包，再将产物复制到 `MODULES_DIR` 下并启用。此示例是 Cargo workspace 成员，stdio 回归会随 `cargo test --workspace --locked` 执行。
+[`examples/modules/rust-sdk-counter/`](../examples/modules/rust-sdk-counter/README.md) 是直接使用本仓库 Rust / UI SDK 的计数器示例，展示配置读取、SQLite 持久化、Axum 路由到 MCP 的适配，以及页面消息桥。根目录运行 `npm --prefix frontend run build:example:module-sdk` 即可生成 `output/modules/rust-sdk-counter/` 完整模块包，再将产物复制到 `MODULES_DIR` 下并启用。此示例是 Cargo workspace 成员，stdio 回归会随 `cargo test --workspace --locked` 执行。
 
-业务模块源码放在主仓库之外的独立目录或独立仓库，模块作者自行构建和分发完整模块包。Firefly 仓库只保留通用宿主、[Rust MCP 适配库与页面桥](../crates/module-sdk)和无个人数据的协议示例；构建与测试不要求存在任何业务模块。将取得的模块包放入运行目录的 `modules/<模块 ID>/`，重新扫描并启用即可。
+业务模块源码放在主仓库之外的独立目录或独立仓库，模块作者自行构建和分发完整模块包。Firefly 仓库只保留通用宿主、[Rust MCP 适配库](../crates/module-sdk)、[UI SDK 与页面桥](../frontend/module-sdk)和无个人数据的协议示例；构建与测试不要求存在任何业务模块。将取得的模块包放入运行目录的 `modules/<模块 ID>/`，重新扫描并启用即可。
 
 开发自己的功能时，从最小模板开始：修改清单中的 ID 和名称，实现工具名称、说明、参数 Schema 与业务处理。需要界面时再增加 MCP Apps 资源和 `pages` 声明，需要自动执行时增加 `jobs`。发布物是可独立运行的模块包及其依赖安装说明，安装者不需要修改 Firefly 的路由、菜单或工具注册代码。
 
@@ -165,20 +166,20 @@ stdio 模块收到以下宿主环境变量：
 ```sh
 cargo test --locked -p firefly-module-host
 node --test --test-concurrency=1 frontend/src/composables/moduleBridge.test.js frontend/src/composables/useModules.test.js
-npm run test:module-sdk
-npm run check
+npm --prefix frontend run test:module-sdk
+npm --prefix frontend run check
 ```
 
-Rust 回归会从临时目录安装协议示例、启动真实 Python MCP 进程，验证工具、页面资源、数据保留、停用撤销、HTTP 服务、任务去重和重启恢复。浏览器回归 `scripts/test_modules_ui.py` 使用日期示例验证完整安装与页面交互；`scripts/test_firefly_more_menu_ui.py` 验证模块菜单的触摸与键盘操作。两者都不依赖业务模块或模型凭据。
+Rust 回归会从临时目录安装协议示例、启动真实 Python MCP 进程，验证工具、页面资源、数据保留、停用撤销、HTTP 服务、任务去重和重启恢复。浏览器回归 `frontend/tests/e2e/test_modules_ui.py` 使用日期示例验证完整安装与页面交互；`frontend/tests/e2e/test_firefly_more_menu_ui.py` 验证模块菜单的触摸与键盘操作。两者都不依赖业务模块或模型凭据。
 
-Rust SDK 示例的 stdio 回归随 workspace 测试执行；构建示例模块包后，`scripts/test_rust_sdk_module_ui.py` 会验证实际宿主中的页面桥、配置变更、持久化及停用行为。命令见[示例说明](../examples/modules/rust-sdk-counter/README.md)。
+Rust SDK 示例的 stdio 回归随 workspace 测试执行；构建示例模块包后，`frontend/tests/e2e/test_rust_sdk_module_ui.py` 会验证实际宿主中的页面桥、配置变更、持久化及停用行为。命令见[示例说明](../examples/modules/rust-sdk-counter/README.md)。
 
 运行浏览器回归前，需要本地安装 Python Playwright 及其 Chromium，然后执行：
 
 ```sh
-npm run build
+npm --prefix frontend run build
 cargo build --locked
-python3 scripts/test_modules_ui.py
+python3 frontend/tests/e2e/test_modules_ui.py
 ```
 
 ## 模块与核心的维护边界

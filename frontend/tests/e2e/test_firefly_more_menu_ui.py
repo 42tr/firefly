@@ -1,7 +1,7 @@
 """Touch and keyboard regression for dynamically installed module menu entries.
 
-Build: npm run build && cargo build --locked
-Run: python3 scripts/test_firefly_more_menu_ui.py
+Build: npm --prefix frontend run build && cargo build --locked
+Run: python3 frontend/tests/e2e/test_firefly_more_menu_ui.py
 Uses an isolated host and the self-contained calendar protocol example.
 """
 import unittest

@@ -4,11 +4,12 @@ import { join } from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { build } from 'vite'
 
-const example = fileURLToPath(new URL('.', import.meta.url))
-const root = fileURLToPath(new URL('../../../', import.meta.url))
+const root = fileURLToPath(new URL('../../', import.meta.url))
+const example = join(root, 'examples/modules/rust-sdk-counter')
+const ui = fileURLToPath(new URL('../examples/rust-sdk-counter/', import.meta.url))
 const args = process.argv.slice(2)
 if (args.length > 1 || (args.length === 1 && args[0] !== '--release')) {
-  throw new Error('Usage: node examples/modules/rust-sdk-counter/build.mjs [--release]')
+  throw new Error('Usage: node frontend/scripts/build-module-sdk-example.mjs [--release]')
 }
 const profile = args[0] === '--release' ? 'release' : 'debug'
 const metadata = JSON.parse(execFileSync('cargo', ['metadata', '--locked', '--no-deps', '--format-version', '1'], {
@@ -20,13 +21,13 @@ try { await access(binary) } catch {
 }
 const bundle = await build({
   configFile: false,
-  root: example,
+  root: ui,
   publicDir: false,
-  resolve: { alias: { '@firefly-module-sdk': join(root, 'crates/module-sdk/ui') } },
+  resolve: { alias: { '@firefly-module-sdk': join(root, 'frontend/module-sdk') } },
   build: {
     write: false,
     target: 'es2022',
-    lib: { entry: join(example, 'ui/main.js'), formats: ['es'] },
+    lib: { entry: join(ui, 'main.js'), formats: ['es'] },
     rollupOptions: { output: { inlineDynamicImports: true } },
   },
 })
@@ -37,7 +38,7 @@ if (scripts.length !== 1 || scripts[0].imports.length || scripts[0].dynamicImpor
 }
 const css = output.filter(item => item.type === 'asset' && item.fileName.endsWith('.css'))
   .map(item => Buffer.from(item.source).toString('utf8')).join('\n')
-const template = await readFile(join(example, 'ui/index.html'), 'utf8')
+const template = await readFile(join(ui, 'index.html'), 'utf8')
 const html = template.replace('__MODULE_STYLE__', () => css)
   .replace('__MODULE_SCRIPT__', () => scripts[0].code.replace(/<\/script/gi, '<\\/script'))
 const destination = join(root, 'output/modules/rust-sdk-counter')

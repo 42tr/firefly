@@ -1,6 +1,6 @@
 """Mocked browser regression. Start Vite, then run with PARALLEL_TEST_URL.
 
-python3 scripts/test_parallel_workspace_ui.py
+python3 frontend/tests/e2e/test_parallel_workspace_ui.py
 PLAYWRIGHT_CHROMIUM_EXECUTABLE_PATH may point to an existing browser.
 """
 import json
@@ -85,7 +85,7 @@ class ParallelWorkspaceUI(unittest.TestCase):
     def open(self, conversation=False):
         base = os.getenv('PARALLEL_TEST_URL', 'http://127.0.0.1:5187/')
         self.page.goto(base + ('?conversation=1' if conversation else ''))
-        expect(self.page.get_by_role('button', name='新建工作', exact=True)).to_be_visible()
+        expect(self.page.get_by_role('button', name='新对话', exact=True)).to_be_visible()
 
     def test_lazy_creation_sends_parallel_mode_and_stream_updates_readiness(self):
         self.open()

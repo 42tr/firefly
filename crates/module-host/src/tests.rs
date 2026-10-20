@@ -19,11 +19,23 @@ async fn test_pool() -> SqlitePool {
 fn public_download_prefix_cannot_capture_core_or_root_paths() {
     let temp = tempfile::tempdir().unwrap();
     let path = temp.path().join("module.toml");
-    for prefix in ["/", "/api", "/auth", "/health", "/assets", "/one/two", "/downloads"] {
+    for prefix in [
+        "/",
+        "/api",
+        "/auth",
+        "/health",
+        "/assets",
+        "/one/two",
+        "/downloads",
+    ] {
         std::fs::write(&path, format!(
             "id='test'\n[mcp]\ntransport='stdio'\ncommand='./module'\n[public]\nprefix='{prefix}'\ntool='read_public'\n"
         )).unwrap();
-        assert_eq!(manifest::Manifest::load(&path).is_ok(), prefix == "/downloads", "{prefix}");
+        assert_eq!(
+            manifest::Manifest::load(&path).is_ok(),
+            prefix == "/downloads",
+            "{prefix}"
+        );
     }
 }
 
@@ -31,20 +43,19 @@ async fn calendar_host() -> (tempfile::TempDir, Arc<Host>) {
     let temp = tempfile::tempdir().unwrap();
     let installed = temp.path().join("modules/calendar");
     std::fs::create_dir_all(&installed).unwrap();
-    for file in [
-        "module.toml",
-        "config.schema.json",
-        "server.py",
-        "calendar.html",
-    ] {
+    let root = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../..");
+    for file in ["module.toml", "config.schema.json", "server.py"] {
         std::fs::copy(
-            PathBuf::from(env!("CARGO_MANIFEST_DIR"))
-                .join("../../examples/modules/calendar")
-                .join(file),
+            root.join("examples/modules/calendar").join(file),
             installed.join(file),
         )
         .unwrap();
     }
+    std::fs::copy(
+        root.join("frontend/examples/calendar/calendar.html"),
+        installed.join("calendar.html"),
+    )
+    .unwrap();
     let host = Host::new(
         test_pool().await,
         Config {
@@ -95,7 +106,10 @@ example.serve()
         .call("list_dates", json!({}), "app", CancellationToken::new())
         .await
         .unwrap();
-    assert_eq!(result["structuredContent"]["host_timezone"], "Europe/London");
+    assert_eq!(
+        result["structuredContent"]["host_timezone"],
+        "Europe/London"
+    );
     module.close().await;
 }
 

@@ -1,3 +1,4 @@
+import { fileURLToPath } from 'node:url'
 import assert from 'node:assert/strict'
 import test, { after } from 'node:test'
 import { createRenderer, nextTick, ssrContextKey } from 'vue'
@@ -15,7 +16,7 @@ const browserWindow = {
   history: { replaceState: (_, __, url) => { location.href = String(url) } },
   dispatchEvent() {},
 }
-const server = await createServer({ configFile: 'frontend/vite.config.ts',
+const server = await createServer({ configFile: fileURLToPath(new URL('../../vite.config.ts', import.meta.url)),
   server: { middlewareMode: true, hmr: false }, optimizeDeps: { noDiscovery: true, include: [] }, appType: 'custom',
   ssr: { noExternal: ['dompurify'] },
   plugins: [{ name: 'test-sanitizer', enforce: 'pre',

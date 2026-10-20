@@ -4,15 +4,15 @@
 
 ## 开发环境
 
-安装 Rustup、Node.js 24、npm、C/C++ 编译器与 CMake。`rust-toolchain.toml` 固定工具链；`Cargo.lock` 和 `package-lock.json` 随依赖变更提交。首次启动和必填凭据见 [README](README.md)。测试使用独立数据库、存储和工作区，不连接个人生产服务。
+安装 Rustup、Node.js 24、npm、C/C++ 编译器与 CMake。`rust-toolchain.toml` 固定工具链；`Cargo.lock` 和 `frontend/package-lock.json` 随依赖变更提交。首次启动和必填凭据见 [README](README.md)。测试使用独立数据库、存储和工作区，不连接个人生产服务。
 
 ```sh
-npm ci
-npm run build
+npm --prefix frontend ci
+npm --prefix frontend run build
 cargo build --locked
 ```
 
-前端源码与 Vite 配置在 `frontend/`，npm 命令在仓库根目录执行。`npm run dev` 提供开发页面，另起 Rust 后端使用真实接口。纯前端测试模拟接口，无需模型凭据。
+前端源码、npm 配置、Vite 配置、UI SDK、示例页面和浏览器测试统一在 `frontend/`。本文命令在仓库根目录执行，npm 通过 `--prefix frontend` 指定目录；进入 `frontend/` 后可直接运行 `npm ci`、`npm run check` 等命令。`npm --prefix frontend run dev` 提供开发页面，另起 Rust 后端使用真实接口。纯前端测试模拟接口，无需模型凭据。
 
 Rust workspace 中，根 `firefly` crate 负责服务启动、HTTP API 和业务编排；`crates/workspace` 提供原生工作区准备与文件访问；`crates/module-host` 负责外部 MCP 模块的加载、连接和调度，由主程序传入目录、时区和数据库连接池。`crates/llm` 负责模型调用、流式解析、上下文压缩及预算计算，由主程序传入共享 HTTP 客户端和可选的模型限制缓存连接池。`crates/codex-transport` 提供 Codex CLI 传输，`crates/module-sdk` 供外部模块作者使用。数据库迁移统一保留在根目录的 `migrations_sqlite/`。
 
@@ -43,9 +43,9 @@ cargo test --locked -p firefly-workspace -p firefly-module-host -p firefly-llm -
 按改动范围运行检查，完整基础检查如下：
 
 ```sh
-npm run check
-npm run test:module-sdk
-npm run audit:deps
+npm --prefix frontend run check
+npm --prefix frontend run test:module-sdk
+npm --prefix frontend run audit:deps
 cargo test --workspace --locked -- --test-threads=4
 cargo clippy --workspace --locked --all-targets -- -D clippy::correctness
 cargo build --locked
@@ -70,7 +70,7 @@ Python 3.11 或更新版本：
 ```sh
 python3 -m venv .venv
 . .venv/bin/activate
-python3 -m pip install -r requirements-dev.txt
+python3 -m pip install -r frontend/requirements-dev.txt
 python3 -m playwright install chromium
 # Linux 如缺少浏览器系统库，按 Playwright 提示安装对应依赖。
 ```
@@ -78,15 +78,15 @@ python3 -m playwright install chromium
 一个终端运行开发页面，另一个终端执行对应脚本，通过 `FIREFLY_TEST_URL` 指定地址：
 
 ```sh
-npm run dev -- --host 127.0.0.1 --port 5199
+npm --prefix frontend run dev -- --host 127.0.0.1 --port 5199
 ```
 
 ```sh
-FIREFLY_TEST_URL=http://127.0.0.1:5199 python3 scripts/test_local_login_ui.py
-FIREFLY_TEST_URL=http://127.0.0.1:5199 python3 scripts/test_conversation_archive_ui.py
-FIREFLY_TEST_URL=http://127.0.0.1:5199 python3 scripts/test_workflow_ui.py
-FIREFLY_TEST_URL=http://127.0.0.1:5199 python3 scripts/test_streaming_ui.py
-python3 scripts/test_modules_ui.py
+FIREFLY_TEST_URL=http://127.0.0.1:5199 python3 frontend/tests/e2e/test_local_login_ui.py
+FIREFLY_TEST_URL=http://127.0.0.1:5199 python3 frontend/tests/e2e/test_conversation_archive_ui.py
+FIREFLY_TEST_URL=http://127.0.0.1:5199 python3 frontend/tests/e2e/test_workflow_ui.py
+FIREFLY_TEST_URL=http://127.0.0.1:5199 python3 frontend/tests/e2e/test_streaming_ui.py
+python3 frontend/tests/e2e/test_modules_ui.py
 ```
 
 模块宿主测试启动临时后端，运行前先构建前端及 `cargo build --locked`，使用仓库内的协议示例。截图写入忽略的 `output/`。

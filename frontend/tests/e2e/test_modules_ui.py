@@ -1,7 +1,7 @@
 """End-to-end module installation against an isolated Firefly instance.
 
-Build first: npm run build && cargo build --locked
-Then: python3 scripts/test_modules_ui.py
+Build first: npm --prefix frontend run build && cargo build --locked
+Then: python3 frontend/tests/e2e/test_modules_ui.py
 FIREFLY_TEST_BINARY can select a prebuilt binary. No model credentials required.
 """
 import os
@@ -16,7 +16,7 @@ import urllib.request
 
 from playwright.sync_api import sync_playwright, expect
 
-ROOT = Path(__file__).resolve().parents[1]
+ROOT = Path(__file__).resolve().parents[3]
 
 
 class ModuleHost(unittest.TestCase):
@@ -26,6 +26,7 @@ class ModuleHost(unittest.TestCase):
         cls.addClassCleanup(cls.temporary.cleanup)
         cls.directory = Path(cls.temporary.name)
         shutil.copytree(ROOT / 'examples/modules/calendar', cls.directory / 'modules/calendar')
+        shutil.copy2(ROOT / 'frontend/examples/calendar/calendar.html', cls.directory / 'modules/calendar/calendar.html')
         with socket.socket() as listener:
             listener.bind(('127.0.0.1', 0))
             port = listener.getsockname()[1]

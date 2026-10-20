@@ -38,13 +38,13 @@ cd firefly
 cp .env.example .env
 chmod 600 .env
 # 按上一节替换 AUTH_PASSWORD 和 JWT_SECRET，再继续。
-npm ci
-npm run build
+npm --prefix frontend ci
+npm --prefix frontend run build
 cargo build --release --locked
 ./target/release/firefly
 ```
 
-前端依赖由根目录的 `package.json` 管理，产物在 `frontend/dist/`；Rust 编译前先构建前端。开发时运行 `npm run dev`，Vite 将 API、登录、WebSocket 和下载代理到本机 3003 端口，通过 `.env` 指定独立的数据库、存储和工作区。
+前端源码、依赖配置、UI SDK、示例页面和浏览器测试统一放在 `frontend/`，依赖安装到 `frontend/node_modules/`，产物在 `frontend/dist/`。以上命令从仓库根目录执行；也可以进入 `frontend/` 后直接运行 `npm ci`、`npm run build`。Rust 编译前先构建前端。开发时运行 `npm --prefix frontend run dev`，Vite 将 API、登录、WebSocket 和下载代理到本机 3003 端口，通过根目录 `.env` 指定独立的数据库、存储和工作区。
 
 ## 配置 Agent 与扩展
 
@@ -54,9 +54,9 @@ Codex 和 Claude Code 通过运行账户的 `codex`、`claude` CLI 执行，可�
 
 运行配置项说明见 [.env.example](.env.example)。
 
-将独立模块包放入 `MODULES_DIR`（默认 `modules/`），在扩展模块页重新扫描、配置并启用；工具权限和定时任务分别开启。本仓库提供 [Rust / UI SDK](https://github.com/42tr/firefly/tree/main/crates/module-sdk)与[协议示例](examples/modules)。安装、开发协议及任务说明见[模块文档](docs/modules.md)。
+将独立模块包放入 `MODULES_DIR`（默认 `modules/`），在扩展模块页重新扫描、配置并启用；工具权限和定时任务分别开启。本仓库提供 [Rust SDK](crates/module-sdk)、[UI SDK](frontend/module-sdk)与[协议示例](examples/modules)。安装、开发协议及任务说明见[模块文档](docs/modules.md)。
 
-要运行使用 SDK 的完整示例，在源码目录执行 `npm run build:example:module-sdk`，再安装生成的计数器模块包。构建、安装和代码对应关系见 [Rust / UI SDK 示例](examples/modules/rust-sdk-counter/README.md)。
+要运行使用 SDK 的完整示例，在源码目录执行 `npm --prefix frontend run build:example:module-sdk`，再安装生成的计数器模块包。构建、安装和代码对应关系见 [Rust / UI SDK 示例](examples/modules/rust-sdk-counter/README.md)。
 
 ## 数据、升级与备份
 
@@ -95,7 +95,7 @@ git tag -a v0.1.4 -m 'Firefly v0.1.4'
 git push origin v0.1.4
 ```
 
-tag 必须与 `Cargo.toml`、`package.json` 版本一致。重新发布使用新 tag，避免覆盖已有发布。使用仓库提供的 `GITHUB_TOKEN`，不需要服务器地址、密码或 SSH secrets。
+tag 必须与 `Cargo.toml`、`frontend/package.json` 版本一致。重新发布使用新 tag，避免覆盖已有发布。使用仓库提供的 `GITHUB_TOKEN`，不需要服务器地址、密码或 SSH secrets。
 
 ## 许可证
 

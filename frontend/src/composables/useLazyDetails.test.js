@@ -1,8 +1,9 @@
+import { fileURLToPath } from 'node:url'
 import assert from 'node:assert/strict'
 import test, { after } from 'node:test'
 import { createServer } from 'vite'
 import { effectScope, ref, nextTick } from 'vue'
-const server = await createServer({ configFile: 'frontend/vite.config.ts', server: { middlewareMode: true, hmr: false }, optimizeDeps: { noDiscovery: true, include: [] }, appType: 'custom' })
+const server = await createServer({ configFile: fileURLToPath(new URL('../../vite.config.ts', import.meta.url)), server: { middlewareMode: true, hmr: false }, optimizeDeps: { noDiscovery: true, include: [] }, appType: 'custom' })
 after(() => server.close())
 const { useLazyDetails } = await server.ssrLoadModule('/src/composables/useLazyDetails.js')
 const flush = async () => { await nextTick(); await new Promise(resolve => setImmediate(resolve)) }

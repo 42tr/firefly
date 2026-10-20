@@ -7,17 +7,17 @@
 在 Firefly 仓库根目录执行，需要仓库固定的 Rust 工具链与 Node.js 24：
 
 ```sh
-npm ci
-npm run build:example:module-sdk
+npm --prefix frontend ci
+npm --prefix frontend run build:example:module-sdk
 ```
 
-产物位于 `output/modules/rust-sdk-counter/`，包含可执行文件、`module.toml`、配置 Schema 和单文件 `ui.html`。页面构建直接导入 `crates/module-sdk/ui/bridge.js`、`utils/http.js` 和样式；使用根目录已有的 Vite，不新增前端依赖。
+产物位于 `output/modules/rust-sdk-counter/`，包含可执行文件、`module.toml`、配置 Schema 和单文件 `ui.html`。Rust 源码、清单和配置 Schema 位于本目录；[页面源码](../../../frontend/examples/rust-sdk-counter)和[构建脚本](../../../frontend/scripts/build-module-sdk-example.mjs)位于 `frontend/`。页面直接导入 `frontend/module-sdk/bridge.js`、`utils/http.js` 和样式，使用 `frontend/` 安装的 Vite。
 
 构建发布版可执行文件：
 
 ```sh
 cargo build --release --locked -p firefly-sdk-counter-example
-node examples/modules/rust-sdk-counter/build.mjs --release
+node frontend/scripts/build-module-sdk-example.mjs --release
 ```
 
 可执行文件需要在与运行 Firefly 相同的操作系统和架构上构建。模块安装后不需要 Rust、Node.js 或源码。
@@ -71,10 +71,10 @@ cargo clippy --locked -p firefly-sdk-counter-example --all-targets -- -D clippy:
 测试启动真实模块进程，验证 MCP 初始化、工具及资源、配置步长、只读调用边界，以及重启后数据保留。完整页面和宿主交互可在构建 Firefly 与模块包后运行：
 
 ```sh
-npm run build
+npm --prefix frontend run build
 cargo build --locked
-npm run build:example:module-sdk
-python3 scripts/test_rust_sdk_module_ui.py
+npm --prefix frontend run build:example:module-sdk
+python3 frontend/tests/e2e/test_rust_sdk_module_ui.py
 ```
 
 复制到独立仓库时，将 Cargo 的 workspace 继承改为明确字段和依赖版本，调整 `firefly-module-sdk` 的路径或 Git 依赖，并为页面构建配置 SDK 的实际位置。

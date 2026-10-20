@@ -123,4 +123,4 @@ Firefly 最终回复持久化并完成必要工具收尾后，提交回合状态
 
 重启保留已完成结果，排队的后台任务继续排队；运行中任务标记结果未知，不自动重跑。`unknown` 表示结果无法确定，不再永久占用互斥资源；再次执行前仍需核实实际状态。启动时将旧版自动生成的 cwd/仓库锁替换为参数中显式声明的互斥键，未声明则清空，任务历史和执行目录保留。此实现不保证本地进程跨服务重启存活。
 
-Firefly 通过 crates.io 依赖 `glow-agent = 0.1.0`，保留 `g` 依赖别名以兼容现有代码。版本在 `Cargo.toml` 中固定，`Cargo.lock` 记录注册表来源和校验和。升级运行时前，先确认 [Glow](https://github.com/42tr/g) 已发布配套版本，再更新依赖和锁文件，运行 Rust 检查。执行树浏览器测试：启动 Vite 端口 5193 后执行 `python3 scripts/test_workflow_ui.py`。
+Firefly 通过 crates.io 依赖 `glow-agent = 0.1.0`，保留 `g` 依赖别名以兼容现有代码。版本在 `Cargo.toml` 中固定，`Cargo.lock` 记录注册表来源和校验和。升级运行时前，先确认 [Glow](https://github.com/42tr/g) 已发布配套版本，再更新依赖和锁文件，运行 Rust 检查。执行树浏览器测试：启动 Vite 端口 5193 后执行 `python3 frontend/tests/e2e/test_workflow_ui.py`。

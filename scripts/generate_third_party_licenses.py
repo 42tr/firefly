@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Collect shipped license/notice texts for locked Rust and npm dependencies.
 
-Run after npm ci / cargo fetch. The release workflow regenerates the inventory
+Run after npm --prefix frontend ci / cargo fetch. The release workflow regenerates the inventory
 before packaging (the output file is gitignored, never committed); --check
 compares a fresh render against the local output file. Includes development and
 platform-specific dependencies for a conservative, platform-independent
@@ -16,6 +16,7 @@ import subprocess
 import sys
 
 ROOT = Path(__file__).resolve().parents[1]
+FRONTEND = ROOT / 'frontend'
 OUTPUT = ROOT / 'THIRD_PARTY_LICENSES.md'
 LICENSE_NAME = re.compile(r'^(licen[cs]e|copying|notice|copyright)(?:[._-].*)?$', re.I)
 
@@ -54,11 +55,11 @@ def render():
                           if 'The author disclaims copyright' in body)
             packages.append(('Asset', 'SQLite', version, 'Public Domain',
                              'https://www.sqlite.org/copyright.html', [('SQLite source notice', notice)]))
-    lock = json.loads((ROOT / 'package-lock.json').read_text())
+    lock = json.loads((FRONTEND / 'package-lock.json').read_text())
     for location, p in lock['packages'].items():
         if not location:
             continue
-        directory = ROOT / location
+        directory = FRONTEND / location
         info = (json.loads((directory / 'package.json').read_text()) if directory.is_dir()
                 else {'name': location.rsplit('node_modules/', 1)[1], 'version': p['version']})
         name, version = info['name'], info['version']
