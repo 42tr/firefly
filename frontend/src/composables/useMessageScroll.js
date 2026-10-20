@@ -5,6 +5,7 @@ export function useMessageScroll() {
   const isPinnedToBottom = ref(true)
   let frame = null
   let previousFrameTime = 0
+  let previousClientHeight = null
   let writtenTop = null
   let observedTop = 0
   let touchY = null
@@ -37,13 +38,17 @@ export function useMessageScroll() {
     if (!panel || !isPinnedToBottom.value) return
     const target = Math.max(0, panel.scrollHeight - panel.clientHeight)
     const distance = target - panel.scrollTop
+    const layoutResized = previousClientHeight !== null && panel.clientHeight !== previousClientHeight
     const elapsed = previousFrameTime ? Math.min(64, time - previousFrameTime) : 16
     previousFrameTime = time
     const reducedMotion = globalThis.matchMedia?.('(prefers-reduced-motion: reduce)').matches
-    // One short catch-up animation follows the latest target; new deltas never
-    // start overlapping native smooth-scroll animations. Bound the trailing gap.
-    const top = reducedMotion || distance <= 1 ? target
+    // A composer/viewport resize must settle in one frame. Animating that
+    // change makes every wrapped input line visibly move the conversation.
+    // Keep the short interpolation for streamed content, where it prevents
+    // the viewport from jumping on every delta.
+    const top = reducedMotion || layoutResized || distance <= 1 ? target
       : target - Math.min(distance, 120) * Math.exp(-elapsed / 45)
+    previousClientHeight = panel.clientHeight
     writeTop(panel, top)
     if (Math.abs(target - panel.scrollTop) > 1) scheduleFollow()
     else previousFrameTime = 0
@@ -154,6 +159,7 @@ export function useMessageScroll() {
     observer = null
     cancelFollow()
     writtenTop = null
+    previousClientHeight = null
     for (const element of reservedReplies) element.style.minHeight = ''
     reservedReplies.clear()
     if (!panel) return
@@ -180,7 +186,10 @@ export function useMessageScroll() {
       releaseReplySpace()
       setPinned(true)
       const panel = chatPanel.value
-      if (panel) writeTop(panel, Math.max(0, panel.scrollHeight - panel.clientHeight))
+      if (panel) {
+        previousClientHeight = panel.clientHeight
+        writeTop(panel, Math.max(0, panel.scrollHeight - panel.clientHeight))
+      }
     } else scheduleFollow()
   }
   onBeforeUnmount(() => {

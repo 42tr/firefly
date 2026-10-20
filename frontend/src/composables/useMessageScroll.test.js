@@ -41,7 +41,7 @@ async function mount(t) {
     scroll(value) { top = value; listeners.get('scroll')() }, unmount }
 }
 
-test('deltas and resizes share one animation that follows the latest bottom', async t => {
+test('streamed content growth shares one animation that follows the latest bottom', async t => {
   const view = await mount(t)
   for (let i = 0; i < 20; i++) { await view.model.scrollToBottom(); view.resize() }
   assert.equal(view.frames.size, 1)
@@ -56,6 +56,17 @@ test('deltas and resizes share one animation that follows the latest bottom', as
   assert.equal(view.frames.size, 1)
   for (let time = 32; time < 500 && view.frames.size; time += 16) view.frame(time)
   assert.ok(150 - view.panel.scrollTop <= 1)
+  assert.equal(view.frames.size, 0)
+})
+
+test('a chat viewport resize settles at the bottom without animating the conversation', async t => {
+  const view = await mount(t)
+  await view.model.scrollToBottom({ force: true })
+  view.panel.clientHeight = 80
+  view.resize()
+  assert.equal(view.frames.size, 1)
+  view.frame(16)
+  assert.equal(view.panel.scrollTop, 120)
   assert.equal(view.frames.size, 0)
 })
 
