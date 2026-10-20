@@ -81,6 +81,15 @@ test('upward user input cancels follow immediately, including within the bottom 
   assert.equal(view.frames.size, 1)
 })
 
+test('scroll-range shrink at the bottom does not look like upward reading', async t => {
+  const view = await mount(t)
+  await view.model.scrollToBottom({ force: true })
+  view.panel.scrollHeight = 150
+  view.scroll(50)
+  assert.equal(view.panel.scrollTop, 50)
+  assert.equal(view.model.isPinnedToBottom.value, true)
+})
+
 test('forced positioning is immediate; reduced motion skips interpolation and unmount removes work', async t => {
   const view = await mount(t)
   await view.model.scrollToBottom({ force: true })

@@ -109,13 +109,24 @@ export function useMessageScroll() {
     const panel = chatPanel.value
     if (!panel) return
     const top = panel.scrollTop
+    const distanceToBottom = panel.scrollHeight - top - panel.clientHeight
     if ((writtenTop !== null && Math.abs(top - writtenTop) <= 1)
       || (isPinnedToBottom.value && frame !== null)) {
       observedTop = top
       return
     }
+    // Replacing a conversation, finishing a process block, or loading an
+    // image can shrink the scroll range. Browsers clamp scrollTop in response
+    // and emit a scroll event even though the reader is still at the bottom.
+    // Keep follow mode in that case; the upward direction alone is not proof
+    // of deliberate user scrolling.
+    if (isPinnedToBottom.value && distanceToBottom >= -1 && distanceToBottom < 120) {
+      observedTop = top
+      scheduleFollow()
+      return
+    }
     if (top < observedTop - 1) releaseFollow()
-    else if (top > observedTop && panel.scrollHeight - top - panel.clientHeight < 120) {
+    else if (top > observedTop && distanceToBottom < 120) {
       setPinned(true)
       scheduleFollow()
     }
