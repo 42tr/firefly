@@ -113,6 +113,14 @@ pub fn session_id(event: &Value) -> Option<&str> {
         .flatten()
 }
 
+/// Claude Code's native session title update emitted in stream-json mode.
+pub fn session_title(event: &Value) -> Option<&str> {
+    (event["type"].as_str() == Some("system")
+        && event["subtype"].as_str() == Some("session_title_changed"))
+        .then(|| event["title"].as_str())
+        .flatten()
+}
+
 pub fn text_delta(event: &Value) -> Option<&str> {
     (event["type"].as_str() == Some("stream_event")
         && event["event"]["type"].as_str() == Some("content_block_delta")

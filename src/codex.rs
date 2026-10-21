@@ -11,7 +11,7 @@ pub use models::{
 };
 pub use protocol::{
     interrupt_turn, list_turn_items, notification_matches, notification_method, notification_params,
-    read_turn, resume_thread, start_thread, start_turn,
+    read_thread_name, read_turn, resume_thread, start_thread, start_turn,
 };
 #[allow(unused_imports)]
 pub use settings::{resolve_conversation_settings, ConversationSettings};

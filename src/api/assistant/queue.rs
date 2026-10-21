@@ -311,7 +311,12 @@ async fn run_queued_generation(
     let user_message_id = user_record.id;
     let user_message = message_from_record(user_record, attachments)?;
 
-    spawn_conversation_title(&conversation_record, user_message_id, &user_message, job.clone());
+    // Claude emits a native session title event. Codex app-server exposes a
+    // name field for explicit renames, but does not auto-promote its internal
+    // preview into that user-facing name, so keep the fallback there.
+    if conversation_record.agent != "claude" {
+        spawn_conversation_title(&conversation_record, user_message_id, &user_message, job.clone());
+    }
 
     crate::assistant_workspace::ensure_ready(&conversation_record, &job).await?;
     if job.cancellation_token().is_cancelled() {

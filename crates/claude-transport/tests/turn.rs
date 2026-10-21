@@ -1,6 +1,6 @@
 use std::time::Duration;
 
-use firefly_claude_transport::{session_id, text_delta, ClaudeTurn};
+use firefly_claude_transport::{session_id, session_title, text_delta, ClaudeTurn};
 use serde_json::{json, Value};
 use tokio::{process::Command, time::timeout};
 
@@ -135,6 +135,13 @@ fn extracts_init_session_id() {
         session_id(&json!({"type":"result", "session_id":"session-1"})),
         None
     );
+}
+
+#[test]
+fn extracts_native_session_title_updates() {
+    let event = json!({ "type": "system", "subtype": "session_title_changed", "title": "原生标题" });
+    assert_eq!(session_title(&event), Some("原生标题"));
+    assert_eq!(session_title(&json!({ "type": "system", "subtype": "init", "title": "忽略" })), None);
 }
 
 #[test]

@@ -428,7 +428,7 @@ impl CodexAppServer {
     }
 
     /// Loaded Codex threads ignore resume overrides. Reload only the idle thread whose settings changed.
-    pub async fn resume_configured_thread(&self, thread_id: &str, params: Value, configuration: Value) -> anyhow::Result<()> {
+    pub async fn resume_configured_thread(&self, thread_id: &str, params: Value, configuration: Value) -> anyhow::Result<Value> {
         let changed = self.thread_configurations.lock().unwrap().get(thread_id)
             .is_some_and(|previous| previous != &configuration);
         if changed { self.unload_idle_thread(thread_id).await?; }
@@ -443,7 +443,7 @@ impl CodexAppServer {
         }
         if !matches(&result) { return Err(anyhow!("Codex 未应用所选平台或模型，未启动新一轮任务")); }
         self.remember_thread_configuration(thread_id, configuration);
-        Ok(())
+        Ok(result)
     }
 
     async fn unload_idle_thread(&self, thread_id: &str) -> anyhow::Result<()> {

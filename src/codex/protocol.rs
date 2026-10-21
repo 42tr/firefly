@@ -13,7 +13,7 @@ pub(crate) fn thread_configuration(provider: Option<&str>, model: Option<&str>) 
     json!({"provider":provider, "model":effective_model(model)})
 }
 
-pub async fn start_thread(cwd: &Path, provider: Option<&str>, model: Option<&str>) -> anyhow::Result<String> {
+pub async fn start_thread(cwd: &Path, provider: Option<&str>, model: Option<&str>) -> anyhow::Result<(String, Option<String>)> {
     let client = app_server().await?;
     let mut params = json!({
         "cwd": cwd,
@@ -29,13 +29,14 @@ pub async fn start_thread(cwd: &Path, provider: Option<&str>, model: Option<&str
     }
     let result = client.request("thread/start", params).await?;
     let thread_id = result["thread"]["id"].as_str().ok_or_else(|| anyhow!("Codex 未返回 thread id"))?;
+    let thread_name = result["thread"]["name"].as_str().map(ToOwned::to_owned);
     client.remember_thread_configuration(thread_id, thread_configuration(provider, model));
-    Ok(thread_id.to_owned())
+    Ok((thread_id.to_owned(), thread_name))
 }
 
 pub async fn resume_thread(
     thread_id: &str, cwd: &Path, provider: Option<&str>, model: Option<&str>,
-) -> anyhow::Result<()> {
+) -> anyhow::Result<Option<String>> {
     let client = app_server().await?;
     let mut params = json!({
         "threadId": thread_id,
@@ -50,8 +51,16 @@ pub async fn resume_thread(
     if let Some(model) = effective_model(model) {
         params["model"] = json!(model);
     }
-    client.resume_configured_thread(thread_id, params, thread_configuration(provider, model)).await?;
-    Ok(())
+    let result = client.resume_configured_thread(thread_id, params, thread_configuration(provider, model)).await?;
+    Ok(result["thread"]["name"].as_str().map(ToOwned::to_owned))
+}
+
+pub async fn read_thread_name(thread_id: &str) -> anyhow::Result<Option<String>> {
+    let client = app_server().await?;
+    let result = client
+        .request("thread/read", json!({ "threadId": thread_id, "includeTurns": false }))
+        .await?;
+    Ok(result["thread"]["name"].as_str().map(ToOwned::to_owned))
 }
 
 pub async fn start_turn(

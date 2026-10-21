@@ -27,15 +27,18 @@ pub(in crate::api::assistant) async fn run_codex_turn(
         &cwd, record.codex_provider.as_deref(), record.codex_model.as_deref(), record.codex_reasoning_level.as_deref(),
     ).await?;
 
-    let thread_id = if let Some(thread_id) = record.codex_thread_id.as_deref() {
-        codex::resume_thread(thread_id, &cwd, Some(&settings.provider), Some(&settings.model)).await?;
-        thread_id.to_string()
+    let (thread_id, native_title) = if let Some(thread_id) = record.codex_thread_id.as_deref() {
+        let title = codex::resume_thread(thread_id, &cwd, Some(&settings.provider), Some(&settings.model)).await?;
+        (thread_id.to_string(), title)
     } else {
-        let thread_id =
+        let (thread_id, title) =
             codex::start_thread(&cwd, Some(&settings.provider), Some(&settings.model)).await?;
         assistant_store::set_codex_thread_id(conversation_id, user_id, &thread_id).await?;
-        thread_id
+        (thread_id, title)
     };
+    if let Some(title) = native_title {
+        crate::api::assistant::persist_native_conversation_title(conversation_id, user_id, &title, &job).await?;
+    }
 
     let input = build_codex_input(user_message).await?;
 
@@ -56,6 +59,12 @@ pub(in crate::api::assistant) async fn run_codex_turn(
         {
             Ok((turn_id, events)) => {
                 let result = consume_codex_turn(&thread_id, &turn_id, events, conversation_id, &job).await;
+                if let Ok(Some(title)) = codex::read_thread_name(&thread_id).await {
+                    crate::api::assistant::persist_native_conversation_title(
+                        conversation_id, user_id, &title, &job,
+                    )
+                    .await?;
+                }
                 if let Err(error) = &result {
                     // Storage/protocol errors can end consumption before the
                     // server's turn ends. Stop it before releasing the queue or
@@ -279,6 +288,14 @@ pub(super) async fn consume_codex_turn(
             continue;
         }
         match method {
+            "thread/name/updated" => {
+                if let Some(title) = params["threadName"].as_str() {
+                    crate::api::assistant::persist_native_conversation_title(
+                        conversation_id, &job.user_id, title, job,
+                    )
+                    .await?;
+                }
+            }
             "item/agentMessage/delta" => {
                 if let Some(delta) = params["delta"].as_str().filter(|delta| !delta.is_empty()) {
                     job.emit("assistant_delta", json!({ "delta": delta }));

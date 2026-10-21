@@ -81,6 +81,15 @@ async fn run_claude_events(
                 seen_session = Some(session_id.to_string());
             }
         }
+        if let Some(title) = claude::session_title(&event) {
+            if let Err(err) = crate::api::assistant::persist_native_conversation_title(
+                conversation_id, user_id, title, job,
+            )
+            .await
+            {
+                return (seen_session, Err(err));
+            }
+        }
         if let Some(delta) = claude::text_delta(&event).filter(|delta| !delta.is_empty()) {
             job.emit("assistant_delta", json!({ "delta": delta }));
             continue;

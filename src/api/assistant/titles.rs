@@ -36,6 +36,31 @@ pub(super) fn spawn_conversation_title(
     });
 }
 
+/// Persist a title supplied by a native agent session/thread and mirror it to
+/// the stream. The conditional update preserves a title the user changed
+/// while the CLI was still running.
+pub(super) async fn persist_native_conversation_title(
+    conversation_id: i64, user_id: &str, raw_title: &str, job: &assistant_job::GenerationJob,
+) -> anyhow::Result<bool> {
+    let Some(title) = clean_native_title(raw_title) else {
+        return Ok(false);
+    };
+    let Some(record) = assistant_store::get_conversation_for_read(conversation_id, user_id).await? else {
+        return Ok(false);
+    };
+    if !should_generate_title(record.title.as_deref()) {
+        return Ok(false);
+    }
+    let updated = assistant_store::set_generated_conversation_title(
+        conversation_id, user_id, record.title.as_deref(), &title,
+    )
+    .await?;
+    if updated {
+        job.emit("conversation_title", json!({ "conversation_id": conversation_id, "title": title }));
+    }
+    Ok(updated)
+}
+
 async fn maybe_generate_title(
     record: &assistant_store::ConversationRecord, input: &str, config: Result<Arc<AssistantConfig>, AppError>,
 ) -> anyhow::Result<Option<String>> {
@@ -101,6 +126,17 @@ fn clean_generated_title(raw: &str) -> Option<String> {
     } else {
         Some(cleaned)
     }
+}
+
+fn clean_native_title(raw: &str) -> Option<String> {
+    let mut cleaned = raw
+        .chars()
+        .map(|character| if character.is_control() || character == '\n' || character == '\r' { ' ' } else { character })
+        .collect::<String>();
+    cleaned = cleaned.split_whitespace().collect::<Vec<_>>().join(" ");
+    utils::truncate_to_char_boundary(&mut cleaned, 255);
+    let cleaned = cleaned.trim().to_string();
+    (!cleaned.is_empty()).then_some(cleaned)
 }
 
 struct TitleRequestFailure {
@@ -198,6 +234,8 @@ mod tests {
         assert_eq!(clean_generated_title("“修复登录页面加载问题”"), Some("修复登录页面加载问题".into()));
         assert_eq!(clean_generated_title(&"中".repeat(20)), Some("中".repeat(16)));
         assert_eq!(clean_generated_title("\n\t"), None);
+        assert_eq!(clean_native_title("  原生\n标题  "), Some("原生 标题".into()));
+        assert_eq!(clean_native_title("\n\t"), None);
     }
 
     #[tokio::test]
@@ -264,6 +302,28 @@ mod tests {
             .await
             .unwrap();
         assert!(maybe_generate_title(&record, "自动标题", config(model)).await.unwrap().is_none());
+    }
+
+    #[tokio::test]
+    async fn db_tests_native_title_is_persisted_once_and_never_overwrites_manual_rename() {
+        crate::db::set_test_pool(crate::db::test_pool().await);
+        let record = conversation("codex", Some("新的工作")).await;
+        let job = assistant_job::GenerationJob::new(uuid::Uuid::new_v4(), record.id, "owner".into());
+        assert!(persist_native_conversation_title(record.id, "owner", "原生\n标题", &job).await.unwrap());
+        assert_eq!(
+            assistant_store::get_conversation_for_read(record.id, "owner").await.unwrap().unwrap().title.as_deref(),
+            Some("原生 标题")
+        );
+        assert!(!persist_native_conversation_title(record.id, "owner", "第二个标题", &job).await.unwrap());
+
+        let manual = conversation("claude", Some("新的工作")).await;
+        assistant_store::rename_conversation(manual.id, "owner", "手动标题").await.unwrap();
+        let manual_job = assistant_job::GenerationJob::new(uuid::Uuid::new_v4(), manual.id, "owner".into());
+        assert!(!persist_native_conversation_title(manual.id, "owner", "原生标题", &manual_job).await.unwrap());
+        assert_eq!(
+            assistant_store::get_conversation_for_read(manual.id, "owner").await.unwrap().unwrap().title.as_deref(),
+            Some("手动标题")
+        );
     }
 
     #[tokio::test]

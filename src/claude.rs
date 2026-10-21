@@ -6,7 +6,7 @@ use tokio::process::Command;
 
 use crate::config;
 
-pub use firefly_claude_transport::{session_id, text_delta};
+pub use firefly_claude_transport::{session_id, session_title, text_delta};
 
 mod settings;
 pub use settings::{cli_defaults, effective_model, normalize_provider, normalize_reasoning_level, providers, REASONING_LEVELS};
