@@ -77,7 +77,7 @@ pub async fn create_queued_user_turn(
     let pool = db::pool();
     let mut tx = pool.begin_with("BEGIN IMMEDIATE").await?;
     let result =
-        insert_queued_user_turn(&mut tx, job_id, conversation_id, user_id, enable_tools, content, attachments).await?;
+        insert_queued_user_turn(&mut tx, job_id, conversation_id, user_id, enable_tools, content, attachments, None).await?;
     tx.commit().await?;
     crate::assistant_events::notify(Some(user_id), "conversations");
     Ok(result)
@@ -85,7 +85,7 @@ pub async fn create_queued_user_turn(
 
 pub(super) async fn insert_queued_user_turn(
     conn: &mut SqliteConnection, job_id: uuid::Uuid, conversation_id: i64, user_id: &str, enable_tools: bool,
-    content: String, attachments: &[NewAttachment],
+    content: String, attachments: &[NewAttachment], metadata: Option<Value>,
 ) -> anyhow::Result<(MessageRecord, Vec<AttachmentRecord>)> {
     query(
         r#"
@@ -109,7 +109,7 @@ pub(super) async fn insert_queued_user_turn(
         content,
         tool_call_id: None,
         tool_calls: None,
-        metadata: None,
+        metadata,
         is_error: false,
         generation_job_id: Some(job_id),
     };

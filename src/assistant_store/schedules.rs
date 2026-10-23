@@ -207,7 +207,7 @@ pub async fn dispatch(
         .bind(if settings.agent == "claude" { settings.reasoning_level.as_deref() } else { None })
         .fetch_one(&mut *tx).await?;
     let job = uuid::Uuid::new_v4();
-    super::generation::insert_queued_user_turn(&mut tx, job, conversation_id, user, enable_tools, record.prompt, &[]).await?;
+    super::generation::insert_queued_user_turn(&mut tx, job, conversation_id, user, enable_tools, record.prompt, &[], None).await?;
     query("UPDATE assistant_schedules SET next_run_at=?2,last_run_at=?3,last_conversation_id=?4,last_job_id=?5,last_notice=NULL WHERE id=?1")
         .bind(id).bind(next).bind(now.timestamp_micros()).bind(conversation_id).bind(job).execute(&mut *tx).await?;
     tx.commit().await?;

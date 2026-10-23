@@ -43,6 +43,7 @@ pub struct QueuedSubmission {
     pub replayed: bool,
 }
 
+#[allow(dead_code)]
 pub async fn submit_queued_user_turn(
     conversation_id: i64,
     user_id: &str,
@@ -51,6 +52,21 @@ pub async fn submit_queued_user_turn(
     enable_tools: bool,
     content: String,
     attachments: &[NewAttachment],
+) -> anyhow::Result<QueuedSubmission> {
+    submit_queued_user_turn_with_metadata(
+        conversation_id, user_id, request_id, payload_sha256, enable_tools, content, attachments, None,
+    ).await
+}
+
+pub async fn submit_queued_user_turn_with_metadata(
+    conversation_id: i64,
+    user_id: &str,
+    request_id: Option<uuid::Uuid>,
+    payload_sha256: &str,
+    enable_tools: bool,
+    content: String,
+    attachments: &[NewAttachment],
+    metadata: Option<serde_json::Value>,
 ) -> anyhow::Result<QueuedSubmission> {
     let mut tx = db::pool().begin_with("BEGIN IMMEDIATE").await?;
     // Recheck ownership inside the writer transaction, including retries.
@@ -120,13 +136,7 @@ pub async fn submit_queued_user_turn(
     }
     let job_id = uuid::Uuid::new_v4();
     let (message, attachments) = super::generation::insert_queued_user_turn(
-        &mut tx,
-        job_id,
-        conversation_id,
-        user_id,
-        enable_tools,
-        content,
-        attachments,
+        &mut tx, job_id, conversation_id, user_id, enable_tools, content, attachments, metadata,
     )
     .await?;
     if let Some(request_id) = request_id {

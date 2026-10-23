@@ -28,7 +28,14 @@ pub use types::{
 };
 
 mod submissions;
-pub use submissions::{enforce_submission_capacity, submit_queued_user_turn, SubmissionConflict};
+#[allow(unused_imports)]
+pub use submissions::{enforce_submission_capacity, submit_queued_user_turn, submit_queued_user_turn_with_metadata, SubmissionConflict};
+
+mod goals;
+pub use goals::{
+    apply_goal_check, create_goal, get_active_goal, get_goal, get_goal_by_id, list_stages, replace_goal_stages, set_goal_status,
+    GoalRecord, GoalStageRecord,
+};
 
 mod weekly;
 pub use weekly::fetch_weekly_agent_work;

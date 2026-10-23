@@ -235,6 +235,7 @@ export function useMessages() {
           generationJobId: record.generation_job_id || null,
           processingStatus: record.processing_status || null,
           processingError: record.processing_error || '',
+          goal: record.metadata?.goal || null,
         })
       }
   }

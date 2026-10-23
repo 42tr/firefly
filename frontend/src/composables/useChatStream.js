@@ -53,6 +53,7 @@ export function useChatStream({
   onModuleToolChanged = () => {},
   transformServerMessages = records => records,
   onMessagesRestored = () => {},
+  beforeSend = async () => null,
   followQueue = true,
 }) {
   const input = ref('')
@@ -861,7 +862,7 @@ export function useChatStream({
     }
   }
 
-  const submitMessage = async (userText, stagedAttachments, retryMessage = null) => {
+  const submitMessage = async (userText, stagedAttachments, retryMessage = null, submissionMeta = null) => {
 
     const conversationId = activeConversationId.value
     if (!conversationId) {
@@ -893,6 +894,8 @@ export function useChatStream({
     optimisticMessage.processingError = ''
     optimisticMessage.retryAttachments = stagedAttachments
     optimisticMessage.conversationId = conversationId
+    const goalId = typeof submissionMeta === 'number' ? submissionMeta : submissionMeta?.goalId
+    if (goalId) optimisticMessage.goal = { goal_id: goalId, origin: submissionMeta?.origin || 'goal_start' }
     // A retry represents the same submission even if its response was lost.
     optimisticMessage.requestId ||= newSubmissionId()
     if (!retryMessage) {
@@ -908,6 +911,7 @@ export function useChatStream({
       const form = new FormData()
       form.append('message', userText)
       form.append('enable_tools', 'true')
+      if (goalId) form.append('goal_id', String(goalId))
       stagedAttachments.forEach((item) => form.append('attachments[]', item.file, item.name))
 
       const resp = await apiFetch(`/api/assistant/conversations/${conversationId}/messages`, {
@@ -997,9 +1001,11 @@ export function useChatStream({
     }
 
     const stagedAttachments = chatAttachments.value.map((item) => ({ ...item }))
+    const submissionMeta = await beforeSend(userText)
+    if (submissionMeta === false) return
     input.value = ''
     clearAttachments({ revokePreview: false })
-    await submitMessage(userText, stagedAttachments)
+    await submitMessage(userText, stagedAttachments, null, typeof submissionMeta === 'object' ? submissionMeta : null)
   }
 
   const retryMessage = async (message) => {

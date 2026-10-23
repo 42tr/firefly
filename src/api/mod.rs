@@ -142,6 +142,7 @@ fn assistant_routes() -> Router {
             get(assistant::get_conversation_messages).post(assistant::enqueue_conversation_message),
         )
         .route("/api/assistant/conversations/{id}/active-generation", get(assistant::get_active_generation))
+        .route("/api/assistant/conversations/{id}/goal", get(assistant::get_goal).post(assistant::create_goal).patch(assistant::update_goal))
         .route("/api/assistant/conversations/{id}/read", post(assistant::mark_conversation_read))
         .route("/api/assistant/conversations/{id}/codex-settings", patch(assistant::update_codex_settings))
         .route("/api/assistant/conversations/{id}/claude-settings", patch(assistant::update_claude_settings))

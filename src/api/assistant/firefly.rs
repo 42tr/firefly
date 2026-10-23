@@ -367,7 +367,7 @@ mod tests {
         let limit = config::try_get().map_or(32, |cfg| cfg.assistant_max_queued_jobs);
         let request = SendQuery { request_id: uuid::Uuid::new_v4(), reply_to_message_id: None };
         let payload = || ParsedChatPayload {
-            message: "capacity test".into(), conversation_id: None, enable_tools: None, attachments: vec![],
+            message: "capacity test".into(), conversation_id: None, goal_id: None, enable_tools: None, attachments: vec![],
         };
         let first = enqueue("capacity-owner", &request, payload(), "", false).await.unwrap();
         for _ in 1..limit {
@@ -451,6 +451,7 @@ mod tests {
         let payload = || ParsedChatPayload {
             message: "branch C".into(),
             conversation_id: None,
+            goal_id: None,
             enable_tools: None,
             attachments: vec![],
         };

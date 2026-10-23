@@ -1,4 +1,5 @@
 use super::*;
+use super::goal_judge;
 use futures_util::FutureExt;
 use tracing::Instrument;
 use sha2::{Digest, Sha256};
@@ -161,9 +162,11 @@ async fn enqueue_turn(
             message: body.message,
             enable_tools: body.enable_tools,
             conversation_id: body.conversation_id,
+            goal_id: body.goal_id,
             attachments: Vec::new(),
         }
     };
+    let goal_id = parsed.goal_id;
     let mut attachment_guard = AttachmentCleanup::new(parsed.attachments);
     let conversation_id =
         conversation_id_override.or(parsed.conversation_id).ok_or(AppError::bad_request("Missing conversation_id"))?;
@@ -171,6 +174,15 @@ async fn enqueue_turn(
         .await
         .map_err(AppError::internal_server_error)?
         .ok_or(AppError::not_found("Conversation not found"))?;
+    if let Some(goal_id) = goal_id {
+        let goal = assistant_store::get_goal_by_id(goal_id, conversation_id, user_id)
+            .await
+            .map_err(AppError::internal_server_error)?
+            .ok_or(AppError::conflict("Goal 不存在或不属于当前会话"))?;
+        if matches!(goal.status.as_str(), "completed" | "cancelled") {
+            return Err(AppError::conflict("Goal 已经结束，请重新开启新的 Goal"));
+        }
+    }
 
     let content = parsed.message.trim().to_string();
     if content.is_empty() && attachment_guard.entries().is_empty() {
@@ -185,7 +197,10 @@ async fn enqueue_turn(
         .cloned()
         .map(|entry| MessageAttachment::from(entry).as_new_attachment())
         .collect::<Vec<_>>();
-    let submission = assistant_store::submit_queued_user_turn(
+    let goal_metadata = goal_id.map(|goal_id| json!({
+        "goal": { "goal_id": goal_id, "origin": "goal_start" }
+    }));
+    let submission = assistant_store::submit_queued_user_turn_with_metadata(
         conversation_id,
         user_id,
         request_id,
@@ -193,6 +208,7 @@ async fn enqueue_turn(
         enable_tools,
         content,
         &new_attachments,
+        goal_metadata,
     )
     .await
     .map_err(|err| match err.downcast_ref::<assistant_store::SubmissionConflict>() {
@@ -258,7 +274,12 @@ async fn run_queue_worker(conversation_id: i64, user_id: String) {
             job.cancel().await;
         } else {
             match result {
-                Ok(()) => job.complete().await,
+                Ok(()) => {
+                    job.complete().await;
+                    if let Err(err) = maybe_continue_goal(&record, &job).await {
+                        warn!(job_id = %job.id, "goal completion check failed: {err:#}");
+                    }
+                }
                 Err(err) => {
                     // 完整错误链只进服务端日志；推给前端的仅保留外层消息并截断，
                     // 避免 SQL 细节、文件路径等内部信息通过 SSE 泄露。
@@ -270,6 +291,78 @@ async fn run_queue_worker(conversation_id: i64, user_id: String) {
         assistant_job::cleanup_job(job.id, job.execution_id);
         drop(permits);
     }
+}
+
+async fn maybe_continue_goal(
+    record: &assistant_store::GenerationJobRecord,
+    job: &Arc<assistant_job::GenerationJob>,
+) -> anyhow::Result<()> {
+    let Some(user_message) = assistant_store::fetch_generation_user_message(job.id, record.conversation_id, &record.user_id).await? else { return Ok(()) };
+    let Some(goal_id) = user_message.metadata.as_ref()
+        .and_then(|metadata| metadata.get("goal"))
+        .and_then(|goal| goal.get("goal_id"))
+        .and_then(serde_json::Value::as_i64) else { return Ok(()) };
+    let Some(goal) = assistant_store::get_goal_by_id(goal_id, record.conversation_id, &record.user_id).await? else { return Ok(()) };
+    if !matches!(goal.status.as_str(), "running" | "checking" | "continuing") || !goal.auto_continue { return Ok(()) }
+    if chrono::Utc::now().signed_duration_since(goal.created_at).num_seconds() >= goal.max_runtime_secs {
+        let _ = assistant_store::set_goal_status(record.conversation_id, goal_id, &record.user_id, "limit_reached").await?;
+        return Ok(())
+    }
+    let config = match AssistantConfig::shared().await {
+        Ok(config) => config,
+        Err(err) => {
+            let failure = serde_json::json!({"status":"failed","summary":"无法准备 Goal 检查模型"});
+            assistant_store::apply_goal_check(goal_id, record.conversation_id, &record.user_id, "failed", &failure, None).await?;
+            return Err(anyhow!("assistant config error: {err:?}"));
+        }
+    };
+    let _ = assistant_store::set_goal_status(record.conversation_id, goal_id, &record.user_id, "checking").await?;
+    let judge = match goal_judge::check(config.as_ref(), &goal, job.id, &record.user_id).await {
+        Ok(result) => result,
+        Err(err) => {
+            let failure = serde_json::json!({"status":"failed","summary":err.to_string()});
+            assistant_store::apply_goal_check(goal_id, record.conversation_id, &record.user_id, "failed", &failure, None).await?;
+            return Err(err);
+        }
+    };
+    let result = goal_judge::as_value(&judge);
+    if !judge.stages.is_empty() {
+        let active_index = judge.current_stage_id.as_ref()
+            .and_then(|id| judge.stages.iter().position(|item| item.id.as_ref() == Some(id)))
+            .or_else(|| judge.stages.iter().position(|item| item.status.as_deref() == Some("active")))
+            .or_else(|| judge.stages.iter().position(|item| item.status.as_deref() != Some("completed")))
+            .unwrap_or(0);
+        let stages = judge.stages.iter().enumerate().map(|(index, stage)| (
+            stage.id.clone().unwrap_or_default(), stage.title.clone(), stage.summary.clone(),
+            stage.status.clone().unwrap_or_else(|| if index < active_index { "completed".into() } else if index == active_index { "active".into() } else { "pending".into() }),
+        )).collect::<Vec<_>>();
+        assistant_store::replace_goal_stages(goal_id, record.conversation_id, &record.user_id, &stages, judge.current_stage_id.as_deref()).await?;
+    }
+    let mut final_status = match judge.status.as_str() {
+        "completed" => "completed",
+        "continue" => "continuing",
+        _ => "needs_review",
+    };
+    let updated = assistant_store::apply_goal_check(
+        goal_id, record.conversation_id, &record.user_id, final_status, &result, judge.current_stage_id.as_deref(),
+    ).await?;
+    let Some(updated) = updated else { return Ok(()) };
+    if final_status == "continuing" && updated.turn_count >= updated.max_turns {
+        final_status = "limit_reached";
+        let _ = assistant_store::set_goal_status(record.conversation_id, goal_id, &record.user_id, final_status).await?;
+        return Ok(());
+    }
+    if final_status != "continuing" || !updated.auto_continue { return Ok(()) }
+    let continuation = judge.next_prompt.as_deref().unwrap_or("请继续完成原始目标，先检查仍未完成的工作，再开始下一阶段。").trim().to_string();
+    let fingerprint = format!("{:x}", Sha256::digest(serde_json::to_vec(&(goal_id, updated.turn_count, &continuation))?));
+    let metadata = serde_json::json!({"goal": {"goal_id": goal_id, "origin": "goal_continue", "turn_index": updated.turn_count + 1}});
+    let submission = assistant_store::submit_queued_user_turn_with_metadata(
+        record.conversation_id, &record.user_id, None, &fingerprint, record.enable_tools, continuation, &[], Some(metadata),
+    ).await?;
+    assistant_store::set_goal_status(record.conversation_id, goal_id, &record.user_id, "running").await?;
+    kick_conversation_queue(record.conversation_id, &record.user_id).await?;
+    tracing::info!(goal_id, job_id = %submission.message.generation_job_id.unwrap_or_default(), "queued Goal continuation");
+    Ok(())
 }
 
 async fn run_queued_generation(

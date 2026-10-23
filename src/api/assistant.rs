@@ -18,6 +18,9 @@ pub use queue::{
 mod attachments;
 pub use attachments::{download_attachment, preview_uploaded_attachment};
 use attachments::*;
+mod goals;
+pub use goals::{create as create_goal, get as get_goal, update as update_goal};
+mod goal_judge;
 mod generation;
 use generation::*;
 mod turn_context;
@@ -97,6 +100,7 @@ pub struct ChatRequest {
     pub message: String,
     pub enable_tools: Option<bool>,
     pub conversation_id: Option<i64>,
+    pub goal_id: Option<i64>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -457,6 +461,7 @@ struct ParsedChatPayload {
     message: String,
     enable_tools: Option<bool>,
     conversation_id: Option<i64>,
+    goal_id: Option<i64>,
     attachments: Vec<PendingAttachment>,
 }
 

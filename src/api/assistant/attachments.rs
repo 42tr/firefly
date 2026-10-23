@@ -84,6 +84,7 @@ pub(super) async fn parse_chat_multipart(multipart: &mut Multipart) -> Result<Pa
     let mut message = String::new();
     let mut enable_tools = None;
     let mut conversation_id = None;
+    let mut goal_id = None;
     // Removes already-saved files if a later field fails or the request is dropped mid-upload.
     let mut attachments = AttachmentCleanup::new(Vec::new());
     let storage_dir = attachment_storage_dir().await.map_err(AppError::internal_server_error)?;
@@ -105,6 +106,11 @@ pub(super) async fn parse_chat_multipart(multipart: &mut Multipart) -> Result<Pa
                 let raw = field.text().await.map_err(|err| AppError::bad_request(err.to_string()))?;
                 enable_tools = parse_bool_flag(&raw);
             }
+            "goal_id" => {
+                let raw = field.text().await.map_err(|err| AppError::bad_request(err.to_string()))?;
+                let parsed = raw.trim().parse::<i64>().map_err(|_| AppError::bad_request("goal_id 必须是数字"))?;
+                goal_id = Some(parsed);
+            }
             "attachments" | "attachments[]" => {
                 let pending = save_multipart_attachment(field, &storage_dir, size_limit)
                     .await
@@ -116,7 +122,7 @@ pub(super) async fn parse_chat_multipart(multipart: &mut Multipart) -> Result<Pa
     }
 
     attachments.disarm();
-    Ok(ParsedChatPayload { message, enable_tools, conversation_id, attachments: std::mem::take(&mut attachments.entries) })
+    Ok(ParsedChatPayload { message, enable_tools, conversation_id, goal_id, attachments: std::mem::take(&mut attachments.entries) })
 }
 
 pub(super) fn is_multipart_content_type(value: &str) -> bool {
