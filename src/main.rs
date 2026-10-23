@@ -25,6 +25,7 @@ mod api;
 mod assistant_cleanup;
 mod assistant_events;
 mod assistant_job;
+mod assistant_memory;
 mod assistant_store;
 mod assistant_tasks;
 mod assistant_workspace;
@@ -92,6 +93,7 @@ async fn run(args: Vec<String>) -> anyhow::Result<()> {
     ).await?;
     agent_settings::Settings::load(db::pool()).await?;
     assistant_tasks::start(db::pool().clone()).await?;
+    tokio::spawn(assistant_memory::run_indexer());
 
     // 恢复上次退出时被中断的生成任务，启动后自动继续处理，
     // 避免前端把中断的回复显示为“处理失败”。

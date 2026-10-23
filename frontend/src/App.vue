@@ -26,6 +26,7 @@ import ChatInputBar from './components/ChatInputBar.vue'
 import NewConversationDialog from './components/NewConversationDialog.vue'
 import ModelSettingsDialog from './components/ModelSettingsDialog.vue'
 import ScheduleDialog from './components/ScheduleDialog.vue'
+import MemoryDialog from './components/MemoryDialog.vue'
 import ImagePreview from './components/ImagePreview.vue'
 import WorkspaceFiles from './components/WorkspaceFiles.vue'
 import GoalProgressDrawer from './components/GoalProgressDrawer.vue'
@@ -70,6 +71,7 @@ const isCreatingConversation = ref(false)
 const newConversationPreset = ref(null)
 const pendingConversation = ref(null)
 const showScheduleDialog = ref(false)
+const showMemoryDialog = ref(false)
 const showModelSettings = ref(false)
 const closeSidebar = () => { sidebarOpen.value = false }
 const handleSidebarKeydown = (event) => {
@@ -840,7 +842,7 @@ onMounted(() => {
             <div class="toolbar-actions">
               <button v-if="!pendingConversation && goal" class="button ghost icon goal-toolbar-button" type="button" title="查看目标进度" aria-label="查看目标进度" :aria-expanded="goalDrawerOpen" @click="toggleGoalDrawer"><UiIcon name="target" /></button>
               <button v-if="!pendingConversation && ['codex', 'claude'].includes(activeConversation?.agent)" class="button ghost icon" data-icon-motion="sliders" type="button" title="模型设置" aria-label="模型设置" :disabled="isArchivedConversation || isSwitchingConversation" @click="showModelSettings = true"><UiIcon name="sliders" /></button>
-              <FireflyMoreMenu @module-open="modulePageOpen = $event" :schedules-open="showScheduleDialog" :files-open="showWorkspaceFiles" :show-files="!pendingConversation && ['codex', 'claude'].includes(activeConversation?.agent)" :files-disabled="activeConversation?.workspace_mode === 'parallel' && activeConversation?.workspace_state !== 'ready'" @open-schedules="showScheduleDialog = true" @open-files="showWorkspaceFiles = true">
+              <FireflyMoreMenu @module-open="modulePageOpen = $event" :memory-open="showMemoryDialog" :schedules-open="showScheduleDialog" :files-open="showWorkspaceFiles" :show-files="!pendingConversation && ['codex', 'claude'].includes(activeConversation?.agent)" :files-disabled="activeConversation?.workspace_mode === 'parallel' && activeConversation?.workspace_state !== 'ready'" @open-memory="showMemoryDialog = true" @open-schedules="showScheduleDialog = true" @open-files="showWorkspaceFiles = true">
               </FireflyMoreMenu>
             </div>
           </div>
@@ -1001,6 +1003,7 @@ onMounted(() => {
         </div>
       </div>
       <ModelSettingsDialog :open="showModelSettings" :conversation="activeConversation" @close="showModelSettings = false" @saved="handleModelSettingsSaved" />
+      <MemoryDialog :open="showMemoryDialog" @close="showMemoryDialog = false" />
       <ScheduleDialog :open="showScheduleDialog" @close="showScheduleDialog = false" @open-conversation="openScheduledConversation" />
       <ImagePreview ref="imagePreview" />
       <WorkspaceFiles :open="showWorkspaceFiles" :conversation="activeConversation" @close="showWorkspaceFiles = false" />

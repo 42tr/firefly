@@ -5,6 +5,7 @@ mod attachments;
 mod conversations;
 mod messages;
 mod types;
+mod memories;
 
 pub use attachments::{
     fetch_attachments_for_messages, get_attachment_by_file_for_user, get_attachment_for_user,
@@ -26,6 +27,13 @@ pub use types::{
     AttachmentRecord, ConversationRecord, MessagePage, MessageRecord, NewAttachment, NewConversation,
     StoredMessage, StoredToolCall,
 };
+pub use memories::{
+    create_memory, delete_memory, list_enabled_memories, list_memories, update_memory, MemoryRecord,
+    list_all_memories, list_memory_embeddings, save_memory_embedding, MemoryEmbeddingRecord,
+    MAX_MEMORY_CONTENT_LEN, MAX_MEMORY_COUNT, MAX_MEMORY_TITLE_LEN,
+};
+#[cfg(test)]
+pub use memories::create_reviewed_memory;
 
 mod submissions;
 #[allow(unused_imports)]

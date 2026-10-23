@@ -67,6 +67,19 @@ pub struct Config {
     /// Optional input cap/fallback; omitted means query the model's context window.
     #[serde(default)]
     pub assistant_context_tokens: Option<usize>,
+    /// Dedicated OpenAI-compatible embedding service; empty uses keyword retrieval only.
+    #[serde(default)]
+    pub embedding_base_url: String,
+    #[serde_inline_default(String::new())]
+    pub embedding_api_key: String,
+    #[serde_inline_default("bge-m3".into())]
+    pub embedding_model: String,
+    #[serde_inline_default(10)]
+    pub embedding_timeout_secs: u64,
+    #[serde_inline_default(0.55)]
+    pub memory_similarity_threshold: f64,
+    #[serde_inline_default(5)]
+    pub memory_top_k: usize,
     #[serde_inline_default(4)]
     pub assistant_max_concurrent_jobs: usize,
     #[serde_inline_default(32)]
@@ -114,6 +127,7 @@ pub fn load() -> anyhow::Result<()> {
     validate_auth_config(&config)?;
     validate_timezone(&config)?;
     validate_upload_config(&config)?;
+    crate::assistant_memory::validate_config(&config)?;
     CONFIG
         .set(Arc::new(config))
         .map_err(|_| anyhow::anyhow!("config already loaded"))?;

@@ -1,4 +1,6 @@
 pub mod schedules;
+mod memories;
+pub use memories::{create_memory, delete_memory, list_memories, update_memory};
 mod conversations;
 use conversations::*;
 pub use conversations::{

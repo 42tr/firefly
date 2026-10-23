@@ -126,6 +126,8 @@ fn assistant_routes() -> Router {
         .route("/api/assistant/schedules", get(assistant::schedules::list).post(assistant::schedules::create))
         .route("/api/assistant/schedules/preview", post(assistant::schedules::preview))
         .route("/api/assistant/schedules/{id}", axum::routing::put(assistant::schedules::update).patch(assistant::schedules::toggle).delete(assistant::schedules::delete))
+        .route("/api/assistant/memories", get(assistant::list_memories).post(assistant::create_memory))
+        .route("/api/assistant/memories/{id}", patch(assistant::update_memory).delete(assistant::delete_memory))
         .route("/api/assistant/chat", post(assistant::chat_stream))
         .route("/api/assistant/attachments/{id}", get(assistant::download_attachment))
         .route("/api/assistant/attachments/by-file/{file_id}", get(assistant::preview_uploaded_attachment))

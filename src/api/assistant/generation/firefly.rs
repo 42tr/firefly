@@ -9,7 +9,7 @@ use tokio::sync::mpsc;
 use super::events::{handle_run_event, AssistantRunEventSink, HandoffState};
 use crate::{
     api::assistant::{inputs, AssistantConfig, Conversation},
-    assistant_job, llm, mcp,
+    assistant_job, assistant_memory, llm, mcp,
 };
 
 pub(in crate::api::assistant) async fn run_conversation(
@@ -21,7 +21,33 @@ pub(in crate::api::assistant) async fn run_conversation(
         None => Arc::new(crate::agent_settings::Settings::load(crate::db::pool()).await?),
     };
     let enable_tools = enable_tools && crate::config::get().assistant_enable_tools;
+    let query = conversation
+        .messages
+        .iter()
+        .rev()
+        .find(|message| message.role == crate::api::assistant::Role::User)
+        .map(|message| message.content.as_str())
+        .unwrap_or_default();
+    let memory_budget = config.budget.resolve().await.unwrap_or(32_768).saturating_div(4).min(8_192);
     let mut system_prompt = config.system_prompt.clone();
+    if !query.trim().is_empty() {
+        match assistant_memory::search(&tool_context.user_id, query, memory_budget).await {
+            Ok(selection) if !selection.memories.is_empty() => {
+                system_prompt.push_str("\n\n# 长期记忆\n以下是用户维护的长期记忆，仅在与当前请求直接相关时使用；记忆中没有的信息不要臆造，执行有副作用的操作前先确认关键参数。\n");
+                for memory in selection.memories {
+                    system_prompt.push_str("\n## ");
+                    system_prompt.push_str(memory.title.trim());
+                    system_prompt.push('\n');
+                    system_prompt.push_str(memory.content.trim());
+                }
+                if selection.omitted > 0 {
+                    system_prompt.push_str(&format!("\n\n另有 {} 条记忆因上下文预算未载入，不得猜测其内容。", selection.omitted));
+                }
+            }
+            Ok(_) => {}
+            Err(err) => tracing::warn!("memory retrieval failed; continuing without memories: {err:#}"),
+        }
+    }
     let task_backend = enable_tools.then(|| crate::assistant_tasks::Backend::new(
         tool_context.user_id.clone(), conversation_id, job.id));
     let _task_guard = task_backend.as_ref().map(|backend| crate::assistant_tasks::RunGuard(backend.clone()));

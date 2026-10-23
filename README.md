@@ -1,6 +1,6 @@
 # Firefly 流萤
 
-面向个人部署的 AI 工作应用，使用 Rust、Axum、SQLite 和 Vue 3。提供流萤对话、Codex 与 Claude 工作区、附件和可配置 Agent，支持安装独立 MCP 扩展模块。
+面向个人部署的 AI 工作应用，使用 Rust、Axum、SQLite 和 Vue 3。提供流萤对话、Codex 与 Claude 工作区、附件、长期记忆和可配置 Agent，支持安装独立 MCP 扩展模块。
 
 这是单用户应用。登录者可以使用获授权的 Agent 工具及服务账户的 CLI 和文件权限，适合可信使用者自行部署。生产运行只需要一个包含前端的二进制，不依赖其他应用的目录或数据库。界面使用系统字体，没有外部字体请求或字体文件。
 
@@ -50,6 +50,8 @@ cargo build --release --locked
 
 左下角设置菜单统一提供“Agent 配置”“扩展模块”和“退出登录”。在 Agent 配置中填写支持 Responses API 的模型服务、模型与密钥，分配工具后保存。`OPENAI_*` 仅用于首次初始化，以后以页面保存的配置为准。无需模型密钥即可启动和进入配置页面。
 
+长期记忆可在更多功能菜单中维护。默认使用关键词检索；配置 `EMBEDDING_BASE_URL`、`EMBEDDING_MODEL` 和可选的 `EMBEDDING_API_KEY` 后启用语义检索。embedding 服务使用独立凭据，不会继承 `OPENAI_API_KEY`。
+
 Codex 和 Claude Code 通过运行账户的 `codex`、`claude` CLI 执行，可按需安装并配置登录或 API 凭据。CLI 登录属于该账户，不随 Firefly 二进制分发。Claude 的多平台、模型和推理级别配置见[对话文档](docs/assistant.md)。
 
 运行配置项说明见 [.env.example](.env.example)。
@@ -64,7 +66,7 @@ Codex 和 Claude Code 通过运行账户的 `codex`、`claude` CLI 执行，可�
 
 ```text
 .env                              # 本站配置与私有凭据
-firefly.sqlite3                   # 对话、配置与任务
+firefly.sqlite3                   # 对话、记忆、配置与任务
 storage/assistant_uploads/         # 附件
 storage/modules/                  # 模块数据
 workspace/                        # Agent 工作目录
