@@ -119,13 +119,20 @@ export function useGoalMode({ activeConversationId, onConversationPatched = () =
     }
     if (!goal.value || ['completed', 'cancelled'].includes(goal.value.status)) {
       const created = await create(prompt)
-      return created?.id || false
+      const goalId = created?.id || false
+      if (goalId) enabledForNextMessage.value = false
+      return goalId
     }
     if (['paused', 'needs_review', 'failed', 'limit_reached'].includes(goal.value.status)) {
       const resumed = await update('resume')
       if (!resumed) return false
     }
-    return goal.value?.id || false
+    const goalId = goal.value?.id || false
+    // Goal mode is a per-message choice. The active Goal itself remains
+    // available for automatic continuations, but the next manual message
+    // must opt in again from the composer.
+    enabledForNextMessage.value = false
+    return goalId
   }
 
   const toggleDrawer = () => { isDrawerOpen.value = !isDrawerOpen.value }

@@ -7,8 +7,6 @@ const props = defineProps({
   agentLabel: String,
   workspace: String,
   workspaceLabel: String,
-  goalStatus: { type: String, default: 'idle' },
-  goalStageLabel: { type: String, default: '' },
 })
 const details = ref(null)
 const expanded = ref(false)
@@ -38,7 +36,6 @@ onBeforeUnmount(() => {
       <div class="toolbar-metadata" role="group" tabindex="0" aria-label="模型与工作目录">
         <span class="toolbar-agent" :class="agent" :title="agentLabel">{{ agentLabel }}</span>
         <code v-if="workspace" class="toolbar-workspace" :title="workspaceLabel">{{ workspace }}</code>
-        <span v-if="goalStatus !== 'idle'" class="toolbar-goal" :class="`goal-${goalStatus}`" :title="goalStageLabel || 'Goal 模式'"><span class="toolbar-goal-dot" aria-hidden="true"></span>{{ goalStageLabel || 'Goal 模式' }}</span>
       </div>
     </div>
     <details ref="details" class="toolbar-mobile-context" @toggle="expanded = $event.target.open" @keydown.esc.prevent.stop="close(true)" @focusout="event => { if (!details?.contains(event.relatedTarget)) close() }">
@@ -52,7 +49,6 @@ onBeforeUnmount(() => {
           <div><dt>对话</dt><dd>{{ title }}</dd></div>
           <div><dt>模型</dt><dd>{{ agentLabel }}</dd></div>
           <div v-if="workspaceLabel"><dt>工作目录</dt><dd><code>{{ workspaceLabel }}</code></dd></div>
-          <div v-if="goalStatus !== 'idle'"><dt>Goal 状态</dt><dd>{{ goalStageLabel || goalStatus }}</dd></div>
         </dl>
       </div>
     </details>
@@ -71,11 +67,6 @@ onBeforeUnmount(() => {
 .toolbar-agent.codex::before { background: #5b8cff; box-shadow: 0 0 8px rgba(91, 140, 255, .8); }
 .toolbar-agent.claude::before { background: #e07b53; box-shadow: 0 0 8px rgba(224, 123, 83, .8); }
 .toolbar-workspace { display: block; min-width: 0; max-width: min(42vw, 420px); padding: 2px 9px; border-radius: 999px; background: var(--bg-subtle); border: 1px solid var(--border-glass); overflow: hidden; color: var(--muted); font-size: 12px; line-height: 16px; text-overflow: ellipsis; white-space: nowrap; }
-.toolbar-goal { display: inline-flex; align-items: center; gap: 5px; min-width: 0; max-width: 220px; padding: 2px 9px; border: 1px solid #f1c26c; border-radius: 999px; background: #fff7e7; color: #99630a; font-size: 12px; line-height: 16px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.toolbar-goal-dot { width: 6px; height: 6px; flex: 0 0 auto; border-radius: 50%; background: var(--glow); box-shadow: 0 0 0 3px var(--glow-soft); }
-.toolbar-goal.goal-paused { border-color: var(--border-soft); background: var(--bg-subtle); color: var(--muted); }
-.toolbar-goal.goal-completed { border-color: #b7e1c7; background: #effbf3; color: var(--success-text); }
-.toolbar-goal.goal-completed .toolbar-goal-dot { background: var(--success-text); box-shadow: none; }
 .toolbar-mobile-context { display: none; }
 @media (max-width: 768px) {
   .toolbar-context { overflow: visible; }

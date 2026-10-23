@@ -34,12 +34,11 @@ const props = defineProps({
     type: String,
     default: '',
   },
-  goalMode: { type: Boolean, default: false },
   goalStatus: { type: String, default: 'idle' },
   goalEnabled: { type: Boolean, default: false },
 })
 
-const emit = defineEmits(['send', 'stop', 'remove-attachment', 'attachment-change', 'attachment-paste', 'toggle-goal', 'open-goal'])
+const emit = defineEmits(['send', 'stop', 'remove-attachment', 'attachment-change', 'attachment-paste', 'toggle-goal'])
 
 const model = defineModel({ type: String, default: '' })
 
@@ -208,22 +207,6 @@ watch([model, inputEl, isMobile], async () => {
         </div>
       </div>
       <div v-if="attachmentError" class="attachment-error">{{ attachmentError }}</div>
-      <div class="input-mode-row">
-        <button
-          class="goal-mode-toggle"
-          :class="{ enabled: goalEnabled, paused: goalStatus === 'paused' && !goalEnabled }"
-          type="button"
-          :aria-pressed="goalEnabled"
-          :title="goalEnabled ? '关闭 Goal 模式，本条消息按 Goal 继续发送' : goalStatus === 'paused' ? '继续之前的 Goal' : '开启 Goal 模式，从本条消息开始自动检查'"
-          :disabled="disabled"
-          @click="emit('toggle-goal')"
-        >
-          <UiIcon name="target" />
-          <span>{{ goalEnabled ? 'Goal 模式' : goalStatus === 'paused' ? '继续 Goal' : 'Goal 模式' }}</span>
-          <span v-if="goalEnabled" class="goal-mode-dot" aria-hidden="true"></span>
-        </button>
-        <button v-if="goalMode" class="goal-progress-link" type="button" @click="emit('open-goal')">查看目标</button>
-      </div>
       <div v-if="directoryOpen" class="directory-completion" @mousedown.prevent>
         <div class="directory-completion-heading">workspace 目录 <span>↑↓ 选择 · Tab 进入子目录 · Enter 确认 · Esc 关闭</span></div>
         <p v-if="directoriesLoading" role="status">正在读取目录…</p>
@@ -276,6 +259,19 @@ watch([model, inputEl, isMobile], async () => {
           @paste="emit('attachment-paste', $event)"
           :placeholder="placeholder"
         ></textarea>
+        <button
+          class="goal-mode-toggle compact"
+          :class="{ enabled: goalEnabled, paused: goalStatus === 'paused' && !goalEnabled }"
+          type="button"
+          :aria-pressed="goalEnabled"
+          :title="goalEnabled ? '关闭 Goal：本条消息按普通对话发送' : goalStatus === 'paused' ? '继续之前的 Goal，并将本条消息作为目标消息发送' : '仅本条消息启用 Goal 模式'"
+          :disabled="disabled"
+          @click="emit('toggle-goal')"
+        >
+          <UiIcon name="target" />
+          <span>Goal</span>
+          <span v-if="goalEnabled" class="goal-mode-dot" aria-hidden="true"></span>
+        </button>
         <button
           v-if="isStreaming"
           class="stop-button"
@@ -525,14 +521,12 @@ watch([model, inputEl, isMobile], async () => {
   margin-bottom: 8px;
 }
 
-.input-mode-row { display: flex; align-items: center; gap: 8px; min-height: 30px; margin: 0 0 5px 4px; }
-.goal-mode-toggle, .goal-progress-link { display: inline-flex; align-items: center; gap: 6px; min-height: 28px; padding: 4px 10px; border: 1px solid var(--border-soft); border-radius: 999px; background: var(--bg-panel); color: var(--muted); font: inherit; font-size: 12px; cursor: pointer; transition: background .18s ease, border-color .18s ease, color .18s ease, box-shadow .18s ease; }
+.goal-mode-toggle { display: inline-flex; align-items: center; gap: 6px; min-height: 32px; padding: 0 9px; border: 1px solid var(--border-soft); border-radius: 999px; background: var(--bg-panel); color: var(--muted); font: inherit; font-size: 12px; cursor: pointer; transition: background .18s ease, border-color .18s ease, color .18s ease, box-shadow .18s ease; }
 .goal-mode-toggle .ui-icon { width: 14px; height: 14px; }
-.goal-mode-toggle:hover:not(:disabled), .goal-progress-link:hover { border-color: #f1c26c; color: #8a5a0b; background: #fffaf0; }
+.goal-mode-toggle:hover:not(:disabled) { border-color: #f1c26c; color: #8a5a0b; background: #fffaf0; }
 .goal-mode-toggle.enabled { border-color: #f1c26c; background: #fff5dd; color: #99630a; box-shadow: 0 0 0 2px rgba(246,169,59,.1); font-weight: 650; }
 .goal-mode-toggle.paused { border-color: #cfd9e1; color: var(--accent); }
 .goal-mode-dot { width: 6px; height: 6px; border-radius: 50%; background: var(--glow); box-shadow: 0 0 0 3px var(--glow-soft); }
-.goal-progress-link { border-color: transparent; background: transparent; }
 
 .input-box {
   position: relative;

@@ -29,7 +29,6 @@ import ScheduleDialog from './components/ScheduleDialog.vue'
 import MemoryDialog from './components/MemoryDialog.vue'
 import ImagePreview from './components/ImagePreview.vue'
 import WorkspaceFiles from './components/WorkspaceFiles.vue'
-import GoalProgressDrawer from './components/GoalProgressDrawer.vue'
 import GoalCheckEvent from './components/GoalCheckEvent.vue'
 import InputQueue from './components/InputQueue.vue'
 import UiIcon from './components/UiIcon.vue'
@@ -197,37 +196,22 @@ const activeAgentName = computed(() => ({ firefly: 'Firefly', codex: 'Codex', cl
 const activeConversationTitle = computed(() => formatConversationTitle(activeConversation.value))
 const {
   goal,
-  stages: goalStages,
   status: goalStatus,
-  currentStage: goalCurrentStage,
-  progressLabel: goalProgressLabel,
-  isDrawerOpen: goalDrawerOpen,
-  isLoading: goalLoading,
-  isMutating: goalMutating,
   error: goalError,
   enabledForNextMessage: goalEnabled,
   prepareSubmission: prepareGoalSubmission,
   setEnabled: setGoalEnabled,
-  update: updateGoal,
-  toggleDrawer: toggleGoalDrawer,
-  closeDrawer: closeGoalDrawer,
   load: loadGoal,
 } = useGoalMode({ activeConversationId })
-const goalStageLabel = computed(() => {
-  if (!goal.value) return ''
-  if (goalStatus.value === 'paused') return 'Goal 已暂停'
-  if (goalStatus.value === 'completed') return 'Goal 已完成'
-  if (goalCurrentStage.value?.title) return `Goal · ${goalCurrentStage.value.title}`
-  return `Goal · ${goalProgressLabel.value || '执行中'}`
-})
 const goalCheckResult = computed(() => goal.value?.last_check_result || null)
 const toggleGoalMode = async () => {
   if (goalEnabled.value) await setGoalEnabled(false)
   else goalEnabled.value = true
 }
 const prepareGoalMessage = async prompt => {
+  const requested = goalEnabled.value
   const result = await prepareGoalSubmission(prompt)
-  if (result === false && goalEnabled.value) {
+  if (result === false && requested) {
     conversationError.value = goalError.value || '无法开启 Goal 模式，请重试'
     return false
   }
@@ -838,9 +822,8 @@ onMounted(() => {
               ><UiIcon name="compose" /></button>
             </div>
             <div v-if="pendingConversation" class="toolbar-context new-conversation-title">新对话</div>
-            <ConversationContext v-else :title="activeConversationTitle" :agent="activeConversation?.agent" :agent-label="activeModelLabel || activeAgentName" :workspace="activeWorkspaceDisplay" :workspace-label="activeWorkspaceLabel" :goal-status="goalStatus" :goal-stage-label="goalStageLabel" />
+            <ConversationContext v-else :title="activeConversationTitle" :agent="activeConversation?.agent" :agent-label="activeModelLabel || activeAgentName" :workspace="activeWorkspaceDisplay" :workspace-label="activeWorkspaceLabel" />
             <div class="toolbar-actions">
-              <button v-if="!pendingConversation && goal" class="button ghost icon goal-toolbar-button" type="button" title="查看目标进度" aria-label="查看目标进度" :aria-expanded="goalDrawerOpen" @click="toggleGoalDrawer"><UiIcon name="target" /></button>
               <button v-if="!pendingConversation && ['codex', 'claude'].includes(activeConversation?.agent)" class="button ghost icon" data-icon-motion="sliders" type="button" title="模型设置" aria-label="模型设置" :disabled="isArchivedConversation || isSwitchingConversation" @click="showModelSettings = true"><UiIcon name="sliders" /></button>
               <FireflyMoreMenu @module-open="modulePageOpen = $event" :memory-open="showMemoryDialog" :schedules-open="showScheduleDialog" :files-open="showWorkspaceFiles" :show-files="!pendingConversation && ['codex', 'claude'].includes(activeConversation?.agent)" :files-disabled="activeConversation?.workspace_mode === 'parallel' && activeConversation?.workspace_state !== 'ready'" @open-memory="showMemoryDialog = true" @open-schedules="showScheduleDialog = true" @open-files="showWorkspaceFiles = true">
               </FireflyMoreMenu>
@@ -895,10 +878,10 @@ onMounted(() => {
                 v-else
                 v-stable-reply="item.latestReply ? item.msg : null"
                 class="message"
-                :class="[item.msg.role, item.msg.chartOption ? 'chart' : '', item.msg.kind || '', { 'latest-reply': item.latestReply, 'goal-continuation': item.msg.goal?.origin === 'goal_continue' }]"
+                :class="[item.msg.role, item.msg.chartOption ? 'chart' : '', item.msg.kind || '', { 'latest-reply': item.latestReply, 'goal-message': Boolean(item.msg.goal), 'goal-continuation': item.msg.goal?.origin === 'goal_continue' }]"
               >
               <div class="message-content">
-                <div v-if="item.msg.goal?.origin === 'goal_continue'" class="goal-message-label"><UiIcon name="target" />Goal 自动续接</div>
+                <div v-if="item.msg.goal" class="goal-message-label"><UiIcon name="target" />{{ item.msg.goal.origin === 'goal_continue' ? 'Goal 自动续接' : 'Goal 目标消息' }}</div>
                 <div v-if="item.msg.title" class="message-title">{{ item.msg.title }}</div>
                 <div v-if="item.msg.chartOption" :id="item.msg.chartId" class="chart-card"></div>
                 <ToolOutput v-else-if="item.msg.imageOutput" :value="item.msg.imageOutput" :resolve-image-url="resolveImageUrl" />
@@ -984,13 +967,11 @@ onMounted(() => {
             :disabled="inputDisabled"
             :send-disabled="pendingSettingsBusy"
             :disabled-message="pendingSettingsBusy ? '正在准备工作目录或模型…' : isMissingConversation ? '该对话已删除' : isSwitchingConversation ? '正在加载对话…' : messageLoadError ? '请先重试加载对话' : '请先选择一个对话'"
-            :goal-mode="Boolean(goal)"
             :goal-status="goalStatus"
             :goal-enabled="goalEnabled"
             @send="sendMessage"
             @stop="stopGeneration"
             @toggle-goal="toggleGoalMode"
-            @open-goal="toggleGoalDrawer"
             @remove-attachment="removeAttachment"
             @attachment-change="handleAttachmentChange"
             @attachment-paste="handlePaste"
@@ -1007,19 +988,6 @@ onMounted(() => {
       <ScheduleDialog :open="showScheduleDialog" @close="showScheduleDialog = false" @open-conversation="openScheduledConversation" />
       <ImagePreview ref="imagePreview" />
       <WorkspaceFiles :open="showWorkspaceFiles" :conversation="activeConversation" @close="showWorkspaceFiles = false" />
-      <GoalProgressDrawer
-        :open="goalDrawerOpen"
-        :goal="goal"
-        :stages="goalStages"
-        :loading="goalLoading"
-        :mutating="goalMutating"
-        :error="goalError"
-        @close="closeGoalDrawer"
-        @pause="updateGoal('pause')"
-        @resume="updateGoal('resume')"
-        @retry="updateGoal('resume')"
-        @stop="updateGoal('stop')"
-      />
     </div>
   </div>
 </template>

@@ -93,8 +93,8 @@ GitHub Actions **仅在推送 `v*` tag 时**验证、构建并发布 Release。�
 
 ```sh
 # 先按 CONTRIBUTING.md 完成本地检查、提交代码并推送 main。
-git tag -a v0.1.5 -m 'Firefly v0.1.5'
-git push origin v0.1.5
+git tag -a v0.1.7 -m 'Firefly v0.1.7'
+git push origin v0.1.7
 ```
 
 tag 必须与 `Cargo.toml`、`frontend/package.json` 版本一致。重新发布使用新 tag，避免覆盖已有发布。使用仓库提供的 `GITHUB_TOKEN`，不需要服务器地址、密码或 SSH secrets。

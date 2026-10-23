@@ -78,9 +78,6 @@
   justify-self: end;
 }
 
-.goal-toolbar-button { color: #99630a; }
-.goal-toolbar-button:hover:not(:disabled) { color: #7d4e06; background: #fff7e7; border-color: #f1c26c; }
-
 .mobile-sidebar-toggle {
   display: none;
 }
@@ -234,10 +231,10 @@
   white-space: pre-wrap;
 }
 
-.message.goal-continuation { max-width: 78%; }
+.message.goal-message { max-width: 82%; }
 .goal-message-label { display: flex; align-items: center; gap: 6px; margin: 0 0 6px; color: #99630a; font-size: 11px; font-weight: 700; letter-spacing: .02em; }
 .goal-message-label .ui-icon { width: 14px; height: 14px; }
-.message.goal-continuation .message-content { border: 1px solid #f1c26c; background: #fff8e9; }
+.message.goal-message .message-content { border: 1px solid #f1c26c; background: #fff8e9; }
 
 .message-title {
   font-size: 12px;
