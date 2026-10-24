@@ -1,5 +1,5 @@
 use super::*;
-use sqlx::query_scalar;
+use sqlx::{query, query_scalar};
 
 #[tokio::test]
 async fn user_memory_mutations_preserve_source_and_ownership() {
@@ -24,6 +24,67 @@ async fn user_memory_mutations_preserve_source_and_ownership() {
     assert!(delete_memory(agent.id, "owner").await.unwrap());
     assert!(delete_memory(manual.id, "owner").await.unwrap());
     assert!(list_memories("owner").await.unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn completed_firefly_turn_is_queued_for_independent_memory_review() {
+    let pool = db::test_pool().await;
+    db::set_test_pool(pool.clone());
+    let conversation: i64 = query_scalar(
+        "INSERT INTO assistant_conversations(user_id,system_prompt,agent) VALUES ('owner','', 'firefly') RETURNING id",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    let job_id = uuid::Uuid::new_v4();
+    query_scalar::<_, i64>(
+        "INSERT INTO assistant_generation_jobs(id,conversation_id,user_id,status) VALUES (?1,?2,'owner','running') RETURNING rowid",
+    )
+    .bind(job_id)
+    .bind(conversation)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    query(
+        "INSERT INTO assistant_messages(conversation_id,generation_job_id,role,content) VALUES (?1,?2,'user','请记住我的后台地址')",
+    )
+    .bind(conversation)
+    .bind(job_id)
+    .execute(&pool)
+    .await
+    .unwrap();
+    let final_message: i64 = query_scalar(
+        "INSERT INTO assistant_messages(conversation_id,generation_job_id,role,content) VALUES (?1,?2,'assistant','已记录') RETURNING id",
+    )
+    .bind(conversation)
+    .bind(job_id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+
+    crate::assistant_store::update_generation_status(job_id, "completed", None)
+        .await
+        .unwrap();
+    let queued = claim_next_memory_review().await.unwrap().unwrap();
+    assert_eq!(queued.generation_job_id, job_id);
+    assert_eq!(queued.final_message_id, final_message);
+    let messages = fetch_memory_review_messages(job_id, conversation, "owner")
+        .await
+        .unwrap();
+    assert_eq!(messages.iter().filter(|message| message.role == "user").count(), 1);
+    assert_eq!(messages.iter().filter(|message| message.role == "assistant").count(), 1);
+    fail_memory_review(job_id, "test retry").await.unwrap();
+    assert_eq!(claim_next_memory_review().await.unwrap().unwrap().attempts, 2);
+    apply_reviewed_memories_for_turn("owner", &[], &[], Some((job_id, final_message)))
+        .await
+        .unwrap()
+        .unwrap();
+    let status: String = query_scalar("SELECT status FROM assistant_memory_jobs WHERE generation_job_id=?1")
+        .bind(job_id)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(status, "completed");
 }
 
 #[tokio::test]

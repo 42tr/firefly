@@ -427,6 +427,9 @@ pub async fn update_generation_status(
                 completed_at=CASE WHEN ?2 IN ('completed','failed') THEN CAST(unixepoch('subsec') * 1000000 AS INTEGER) ELSE NULL END
             WHERE id=?1 RETURNING user_id")
             .bind(id).bind(status).bind(error_message).fetch_optional(&mut *tx).await?;
+        if status == "completed" {
+            enqueue_memory_review_tx(&mut tx, id).await?;
+        }
         tx.commit().await?;
         Ok(owner)
     }).await?;
@@ -640,6 +643,31 @@ async fn set_generation_status_tx(
     .bind(error_message)
     .execute(&mut **tx)
     .await?;
+    if status == "completed" {
+        enqueue_memory_review_tx(tx, job_id).await?;
+    }
+    Ok(())
+}
+
+async fn enqueue_memory_review_tx(
+    tx: &mut sqlx::Transaction<'_, Sqlite>, job_id: uuid::Uuid,
+) -> anyhow::Result<()> {
+    // Queue Firefly's independent memory review in the same writer
+    // transaction as the terminal job status. A completed turn can
+    // therefore never be acknowledged without a durable review row.
+    query("INSERT OR IGNORE INTO assistant_memory_jobs
+        (generation_job_id, conversation_id, user_id, final_message_id)
+        SELECT j.id, j.conversation_id, j.user_id, MAX(m.id)
+        FROM assistant_generation_jobs j
+        JOIN assistant_conversations c ON c.id=j.conversation_id AND c.agent='firefly'
+        JOIN assistant_messages m ON m.conversation_id=j.conversation_id
+            AND m.generation_job_id=j.id AND m.role='assistant' AND m.is_error=FALSE
+            AND COALESCE(json_array_length(m.tool_calls), 0)=0
+        WHERE j.id=?1 AND j.status='completed'
+        GROUP BY j.id, j.conversation_id, j.user_id")
+        .bind(job_id)
+        .execute(&mut **tx)
+        .await?;
     Ok(())
 }
 

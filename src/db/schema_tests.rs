@@ -21,6 +21,7 @@ async fn fresh_database_contains_only_active_tables() {
         "assistant_goals",
         "assistant_memories",
         "assistant_memory_embeddings",
+        "assistant_memory_jobs",
         "assistant_memory_revisions",
         "assistant_message_attachments",
         "assistant_messages",

@@ -93,7 +93,11 @@ async fn run(args: Vec<String>) -> anyhow::Result<()> {
     ).await?;
     agent_settings::Settings::load(db::pool()).await?;
     assistant_tasks::start(db::pool().clone()).await?;
+    if let Err(err) = assistant_store::requeue_interrupted_memory_reviews().await {
+        error!("Failed to requeue interrupted memory reviews: {err:#}");
+    }
     tokio::spawn(assistant_memory::run_indexer());
+    tokio::spawn(assistant_memory::run_review_worker());
 
     // 恢复上次退出时被中断的生成任务，启动后自动继续处理，
     // 避免前端把中断的回复显示为“处理失败”。

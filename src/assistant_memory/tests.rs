@@ -94,6 +94,17 @@ fn validates_configuration_and_vectors() {
 }
 
 #[test]
+fn parses_structured_memory_review_and_tolerates_code_fences() {
+    let review = parse_memory_review(
+        "```json\n{\"changes\":[{\"id\":null,\"title\":\"偏好\",\"content\":\"喜欢深色主题\",\"evidence\":\"用户说明\"}]}\n```",
+    )
+    .unwrap();
+    assert_eq!(review.changes.len(), 1);
+    assert_eq!(review.changes[0].title, "偏好");
+    assert!(parse_memory_review("没有 JSON").is_err());
+}
+
+#[test]
 fn chunks_preserve_unicode_and_large_hits_fit_the_context_budget() {
     let content = "部署步骤".repeat(1000);
     let chunks = split_content(&content);

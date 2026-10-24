@@ -21,6 +21,15 @@ pub struct MemoryRecord {
     pub updated_at: DateTime<Utc>,
 }
 
+#[derive(Debug, Clone, FromRow)]
+pub struct MemoryReviewJob {
+    pub generation_job_id: uuid::Uuid,
+    pub conversation_id: i64,
+    pub user_id: String,
+    pub final_message_id: i64,
+    pub attempts: i64,
+}
+
 // Memory SQL also interpolates only fixed columns, with all values bound separately.
 const MEMORY_COLUMNS: &str = "id, user_id, title, content, enabled, source, created_at, updated_at";
 pub const MAX_MEMORY_TITLE_LEN: usize = 100;
@@ -75,10 +84,10 @@ pub async fn apply_reviewed_memories_for_turn(
     }
     let mut tx = db::pool().begin_with("BEGIN IMMEDIATE").await?;
     if let Some((job_id, final_message_id)) = anchor {
-        let exists: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM assistant_postprocess_jobs p
+        let exists: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM assistant_memory_jobs p
             JOIN assistant_generation_jobs j ON j.id=p.generation_job_id
             WHERE p.generation_job_id=?1 AND p.final_message_id=?2 AND p.user_id=?3
-                AND p.kind='memory' AND p.status='running' AND j.status='completed')")
+                AND p.status='running' AND j.status='completed')")
             .bind(job_id).bind(final_message_id).bind(user_id).fetch_one(&mut *tx).await?;
         anyhow::ensure!(exists,"记忆后处理所属回合已删除或结束");
     }
@@ -170,13 +179,77 @@ pub async fn apply_reviewed_memories_for_turn(
         saved.push(record);
     }
     if let Some((job_id, final_message_id)) = anchor {
-        sqlx::query("UPDATE assistant_postprocess_jobs SET status='completed',payload='{}',
+        sqlx::query("UPDATE assistant_memory_jobs SET status='completed',error_message=NULL,
             completed_at=CAST(unixepoch('subsec') * 1000000 AS INTEGER)
-            WHERE generation_job_id=?1 AND kind='memory' AND final_message_id=?2 AND status='running'")
+            WHERE generation_job_id=?1 AND final_message_id=?2 AND status='running'")
             .bind(job_id).bind(final_message_id).execute(&mut *tx).await?;
     }
     tx.commit().await?;
     Ok(Some(saved))
+}
+
+pub async fn claim_next_memory_review() -> anyhow::Result<Option<MemoryReviewJob>> {
+    let mut tx = db::pool().begin_with("BEGIN IMMEDIATE").await?;
+    let job = query_as::<_, MemoryReviewJob>(
+        "UPDATE assistant_memory_jobs
+         SET status='running', attempts=attempts+1,
+             started_at=CAST(unixepoch('subsec') * 1000000 AS INTEGER),
+             updated_at=CAST(unixepoch('subsec') * 1000000 AS INTEGER)
+         WHERE generation_job_id=(
+             SELECT generation_job_id FROM assistant_memory_jobs
+             WHERE status='queued' AND attempts < 5
+             ORDER BY created_at, generation_job_id LIMIT 1
+         ) AND status='queued'
+         RETURNING generation_job_id, conversation_id, user_id, final_message_id, attempts",
+    )
+    .fetch_optional(&mut *tx)
+    .await?;
+    tx.commit().await?;
+    Ok(job)
+}
+
+pub async fn requeue_interrupted_memory_reviews() -> anyhow::Result<u64> {
+    let result = query("UPDATE assistant_memory_jobs SET status='queued',
+        error_message='interrupted_by_restart',
+        updated_at=CAST(unixepoch('subsec') * 1000000 AS INTEGER)
+        WHERE status='running'")
+        .execute(db::pool())
+        .await?;
+    Ok(result.rows_affected())
+}
+
+pub async fn fail_memory_review(job_id: uuid::Uuid, error: &str) -> anyhow::Result<()> {
+    query("UPDATE assistant_memory_jobs SET
+        status=CASE WHEN attempts >= 5 THEN 'failed' ELSE 'queued' END,
+        error_message=?2, updated_at=CAST(unixepoch('subsec') * 1000000 AS INTEGER)
+        WHERE generation_job_id=?1 AND status='running'")
+        .bind(job_id)
+        .bind(error)
+        .execute(db::pool())
+        .await?;
+    Ok(())
+}
+
+pub async fn fetch_memory_review_messages(
+    job_id: uuid::Uuid, conversation_id: i64, user_id: &str,
+) -> anyhow::Result<Vec<super::MessageRecord>> {
+    let rows = query_as::<_, super::MessageRecord>(
+        "SELECT m.id, m.conversation_id, m.role, m.content, m.tool_call_id, m.tool_calls,
+                m.metadata, m.is_error, m.created_at, m.generation_job_id,
+                j.status AS processing_status, j.error_message AS processing_error,
+                j.started_at AS processing_started_at, j.completed_at AS processing_completed_at
+         FROM assistant_messages m
+         JOIN assistant_conversations c ON c.id=m.conversation_id
+         LEFT JOIN assistant_generation_jobs j ON j.id=m.generation_job_id
+         WHERE m.conversation_id=?1 AND c.user_id=?2 AND m.generation_job_id=?3
+         ORDER BY m.id",
+    )
+    .bind(conversation_id)
+    .bind(user_id)
+    .bind(job_id)
+    .fetch_all(db::pool())
+    .await?;
+    Ok(rows)
 }
 
 #[cfg(test)]

@@ -23,7 +23,7 @@ cargo build --locked
 
 ## 新库结构
 
-`migrations_sqlite/0001_firefly_baseline.sql` 是建库基线，直接创建对话、消息、生成任务、附件、分支、工作区提交、工具任务与事件、工具详情、定时任务、模型缓存、模块配置与执行记录、Agent 配置共 15 张业务表。后续迁移按顺序增量执行；`0002_claude_platform_and_effort.sql` 为已有会话添加 Claude 平台和推理级别字段，`0004_memory.sql` 添加长期记忆、修订历史和 embedding 索引表。待办、旧周报及其他业务功能由独立模块管理。
+`migrations_sqlite/0001_firefly_baseline.sql` 是建库基线，直接创建对话、消息、生成任务、附件、分支、工作区提交、工具任务与事件、工具详情、定时任务、模型缓存、模块配置与执行记录、Agent 配置共 15 张业务表。后续迁移按顺序增量执行；`0002_claude_platform_and_effort.sql` 为已有会话添加 Claude 平台和推理级别字段，`0004_memory.sql` 添加长期记忆、修订历史和 embedding 索引表，`0005_memory_review_jobs.sql` 添加独立的异步记忆审查队列。待办、旧周报及其他业务功能由独立模块管理。
 
 `db::MIGRATOR` 在初始化时执行该 SQL，`_sqlx_migrations` 记录版本和校验和。当前基线不兼容旧开发版本数据库，不提供旧库升级或历史数据回填。使用旧库的实例须先备份，再通过 `--init-db` 在新路径建库，停服后同时切换新二进制和 `DATABASE_URL`。旧库保留作备份；模型及模块配置需要重新设置或单独导入。不要删除旧库迁移记录来强行启动。
 
