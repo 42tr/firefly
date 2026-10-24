@@ -95,6 +95,23 @@ test('native generated images are visible reply cards even when tools follow the
   assert.equal(app.messages.value.find(message => message.id === 'cleanup').status, 'completed')
 })
 
+test('live replies inherit the Goal marker from their user turn', async t => {
+  const app = setup({ followQueue: false })
+  t.after(app.abortStream)
+  app.messages.value = [{
+    role: 'user', content: '完成目标', generationJobId: 'job-1',
+    goal: { goal_id: 7, origin: 'goal_start' }, processingStatus: 'running',
+  }]
+  t.mock.method(globalThis, 'fetch', async () => sse([
+    ['assistant_delta', { seq: 1, delta: '已开始执行' }],
+    ['assistant_done', { seq: 2 }],
+  ]))
+  await app.resumeJob('job-1', 1)
+  const reply = app.messages.value.find(message => message.role === 'assistant')
+  assert.equal(reply.goal.origin, 'goal_reply')
+  assert.equal(reply.goal.goal_id, 7)
+})
+
 test('stream completion does not invent successful results for unfinished tools', async t => {
   const app = setup({ followQueue: false, normalizeAttachments: files => files || [] })
   t.after(app.abortStream)

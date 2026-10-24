@@ -58,10 +58,11 @@ export function useMessages() {
 
 
   const appendToolFromRecord = (list, record, attachments = []) => {
+    const goal = record.metadata?.goal || null
     const parsed = safeParseJson(record.content || '')
     const imageOutput = generatedImageOutput({ name: record.metadata?.tool_name, result: parsed, is_error: record.is_error })
     if (imageOutput) {
-      list.push({ role: 'assistant', kind: 'image-result', content: '', imageOutput, attachments: [] })
+      list.push({ role: 'assistant', kind: 'image-result', content: '', imageOutput, attachments: [], goal })
       return
     }
     const payload = parsed ? { result: parsed } : null
@@ -76,6 +77,7 @@ export function useMessages() {
         chartId,
         chartOption: chartPayload.option,
         attachments,
+        goal,
       })
       renderChart(chartId, chartPayload.option)
       return
@@ -83,7 +85,7 @@ export function useMessages() {
     return false
   }
 
-  const appendRecordFromServer = (list, pendingTools, record) => {
+  const appendRecordFromServer = (list, pendingTools, record, goalsByJob) => {
       if (record.role === 'process') {
         list.push({
           role: 'tool', kind: 'process-summary', id: record.id,
@@ -94,12 +96,16 @@ export function useMessages() {
         return
       }
       const attachments = normalizeAttachments(record.attachments || [])
+      const inheritedGoal = goalsByJob.get(record.generation_job_id)
+      const goal = record.metadata?.goal || (record.role === 'assistant' && inheritedGoal
+        ? { ...inheritedGoal, origin: 'goal_reply' }
+        : record.role === 'tool' && inheritedGoal ? { ...inheritedGoal, origin: 'goal_reply' } : null)
       // 过程详情被后端剥离（已完成任务），展开过程块时才按需拉取
       const detailOmitted = record.detail_omitted === true
       if (record.role === 'assistant') {
         const hasToolCalls = Array.isArray(record.tool_calls) && record.tool_calls.length > 0
         if (record.content?.trim()) {
-          appendAssistantFromText(list, record.content, attachments, record.metadata)
+          appendAssistantFromText(list, record.content, attachments, goal ? { ...record.metadata, goal } : record.metadata)
         }
         if (hasToolCalls) {
           record.tool_calls.forEach((call) => {
@@ -191,7 +197,7 @@ export function useMessages() {
         }
         const specialized = appendToolFromRecord(
           list,
-          { ...record, metadata: { ...record.metadata, tool_name: toolName } },
+          { ...record, metadata: { ...record.metadata, tool_name: toolName, ...(goal ? { goal } : {}) } },
           attachments,
         )
         if (specialized !== false) {
@@ -245,10 +251,13 @@ export function useMessages() {
   const transformServerMessages = (records = [], { preserveRunning = false } = {}) => {
     const list = []
     const pendingTools = new Map()
+    const goalsByJob = new Map(records
+      .filter(record => record.role === 'user' && record.generation_job_id && record.metadata?.goal)
+      .map(record => [record.generation_job_id, record.metadata.goal]))
     records.forEach((record) => {
       let startIndex = list.length
       // Replacing a pending tool with a result card shifts the new card left.
-      startIndex -= appendRecordFromServer(list, pendingTools, record) || 0
+      startIndex -= appendRecordFromServer(list, pendingTools, record, goalsByJob) || 0
       // 同一条记录展开出的所有气泡统一标记来源 job 与时间；
       // 恢复生成（resumeJob 会从 seq 0 重放该 job 的全部事件）前按 jobId 去重，避免内容重复
       const jobId = record.generation_job_id || null

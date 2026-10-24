@@ -144,11 +144,25 @@ export function useChatStream({
 
   const findToolRun = (items, id) => items?.find((item) => item.id === id)
 
+  const goalForCurrentJob = () => {
+    if (!currentJobId) return null
+    const source = messages.value.find(message =>
+      message.role === 'user' && message.generationJobId === currentJobId && message.goal)
+      || (localSubmissions.get(activeConversationId.value) || []).find(message =>
+        message.role === 'user' && message.goal
+          && (!message.generationJobId || message.generationJobId === currentJobId))
+    return source?.goal || null
+  }
+
   // 流式期间新 push 的气泡打上当前 jobId，resumeJob 重放时按 jobId 去重才有据可依，
   // 不再依赖「resume 前必经历史重载」这一隐式约定
   const pushMessage = (msg) => {
     if (msg.role !== 'user' && currentJobId && msg.jobId === undefined) {
       msg.jobId = currentJobId
+    }
+    if (msg.role === 'assistant' && msg.goal === undefined) {
+      const goal = goalForCurrentJob()
+      if (goal) msg.goal = { ...goal, origin: 'goal_reply' }
     }
     if (!msg.time) msg.time = currentEventTime || replayStartedAt || new Date().toISOString()
     if (msg.jobId === currentJobId) {

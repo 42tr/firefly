@@ -93,3 +93,22 @@ test('history restores three generated images outside folded process details', t
   assert.equal(messages.value.some(message => message.name === 'image_generation'), false)
   assert.equal(timeline.groupedMessages.value.at(-1).msg.content, 'choose 1, 2 or 3')
 })
+
+test('history marks assistant replies that belong to a Goal turn', () => {
+  const { createApp } = createRenderer({ createComment: () => ({}), insert() {}, remove() {}, parentNode() {}, nextSibling() {} })
+  let messages
+  const app = createApp({ setup() {
+    const model = useMessages()
+    messages = model.messages
+    messages.value = model.transformServerMessages([
+      { id: 1, role: 'user', content: '完成目标', generation_job_id: 'goal-job', metadata: { goal: { goal_id: 7, origin: 'goal_start' } } },
+      { id: 2, role: 'assistant', content: '已开始执行', generation_job_id: 'goal-job' },
+      { id: 3, role: 'user', content: '普通问题', generation_job_id: 'plain-job' },
+      { id: 4, role: 'assistant', content: '普通回复', generation_job_id: 'plain-job' },
+    ])
+    return () => null
+  } })
+  app.mount({})
+  app.unmount()
+  assert.deepEqual(messages.value.map(message => message.goal?.origin || null), ['goal_start', 'goal_reply', null, null])
+})

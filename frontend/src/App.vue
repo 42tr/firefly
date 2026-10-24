@@ -886,10 +886,10 @@ onMounted(() => {
                 v-else
                 v-stable-reply="item.latestReply ? item.msg : null"
                 class="message"
-                :class="[item.msg.role, item.msg.chartOption ? 'chart' : '', item.msg.kind || '', { 'latest-reply': item.latestReply, 'goal-message': Boolean(item.msg.goal), 'goal-continuation': item.msg.goal?.origin === 'goal_continue', 'goal-final-summary': item.msg.goal?.origin === 'goal_summary' }]"
+                :class="[item.msg.role, item.msg.chartOption ? 'chart' : '', item.msg.kind || '', { 'latest-reply': item.latestReply, 'goal-message': Boolean(item.msg.goal), 'goal-reply': item.msg.goal?.origin === 'goal_reply', 'goal-continuation': item.msg.goal?.origin === 'goal_continue', 'goal-final-summary': item.msg.goal?.origin === 'goal_summary' }]"
               >
               <div class="message-content">
-                <div v-if="item.msg.goal" class="goal-message-label"><UiIcon name="target" />{{ item.msg.goal.origin === 'goal_summary' ? 'Goal 最终结果' : item.msg.goal.origin === 'goal_continue' ? 'Goal 自动续接' : 'Goal 目标消息' }}</div>
+                <div v-if="item.msg.goal" class="goal-message-label"><UiIcon name="target" />{{ item.msg.goal.origin === 'goal_summary' ? 'Goal 最终结果' : item.msg.goal.origin === 'goal_continue' ? 'Goal 自动续接' : item.msg.goal.origin === 'goal_reply' ? 'Goal 执行回复' : 'Goal 目标消息' }}</div>
                 <div v-if="item.msg.title" class="message-title">{{ item.msg.title }}</div>
                 <div v-if="item.msg.chartOption" :id="item.msg.chartId" class="chart-card"></div>
                 <ToolOutput v-else-if="item.msg.imageOutput" :value="item.msg.imageOutput" :resolve-image-url="resolveImageUrl" />

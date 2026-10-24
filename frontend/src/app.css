@@ -235,6 +235,10 @@
 .goal-message-label { display: flex; align-items: center; gap: 6px; margin: 0 0 6px; color: #99630a; font-size: 11px; font-weight: 700; letter-spacing: .02em; }
 .goal-message-label .ui-icon { width: 14px; height: 14px; }
 .message.goal-message .message-content { border: 1px solid #f1c26c; background: #fff8e9; }
+.message.goal-reply .message-content { border-color: #cdb9e8; background: #fbf8ff; }
+.message.goal-reply .goal-message-label { color: #7650a6; }
+.message.goal-final-summary .message-content { border-color: #b7e1c7; background: #f1fbf4; }
+.message.goal-final-summary .goal-message-label { color: var(--success-text); }
 
 .message-title {
   font-size: 12px;
