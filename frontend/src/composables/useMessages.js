@@ -32,9 +32,10 @@ export function useMessages() {
     }))
   }
 
-  const appendAssistantFromText = (list, text, attachments = []) => {
+  const appendAssistantFromText = (list, text, attachments = [], metadata = null) => {
+    const goal = metadata?.goal || null
     if (!text) {
-      list.push({ role: 'assistant', content: '', attachments })
+      list.push({ role: 'assistant', content: '', attachments, goal })
       return
     }
     const chartPayload = extractEchartsFromText(text)
@@ -48,9 +49,10 @@ export function useMessages() {
         chartId,
         chartOption: chartPayload.option,
         attachments,
+        goal,
       })
     } else {
-      list.push({ role: 'assistant', content: text, attachments })
+      list.push({ role: 'assistant', content: text, attachments, goal })
     }
   }
 
@@ -97,7 +99,7 @@ export function useMessages() {
       if (record.role === 'assistant') {
         const hasToolCalls = Array.isArray(record.tool_calls) && record.tool_calls.length > 0
         if (record.content?.trim()) {
-          appendAssistantFromText(list, record.content, attachments)
+          appendAssistantFromText(list, record.content, attachments, record.metadata)
         }
         if (hasToolCalls) {
           record.tool_calls.forEach((call) => {

@@ -99,6 +99,36 @@ pub async fn list_stages(goal_id: i64, user_id: &str) -> anyhow::Result<Vec<Goal
     .await?)
 }
 
+pub async fn fetch_goal_execution_results(
+    conversation_id: i64, user_id: &str, goal_id: i64,
+) -> anyhow::Result<Vec<String>> {
+    Ok(query_scalar::<_, String>(
+        "WITH goal_jobs AS (
+             SELECT DISTINCT j.id, j.created_at
+             FROM assistant_generation_jobs j
+             JOIN assistant_messages u ON u.generation_job_id=j.id AND u.role='user'
+             WHERE j.conversation_id=?1 AND j.user_id=?2
+               AND json_extract(u.metadata,'$.goal.goal_id')=?3
+         ), final_messages AS (
+             SELECT g.created_at, m.id, m.content,
+                    ROW_NUMBER() OVER (PARTITION BY m.generation_job_id ORDER BY m.id DESC) AS rn
+             FROM goal_jobs g
+             JOIN assistant_messages m ON m.generation_job_id=g.id AND m.role='assistant'
+             WHERE trim(m.content)<>''
+               AND COALESCE(json_extract(m.metadata,'$.goal.origin'),'')<>'goal_summary'
+         )
+         SELECT content
+         FROM final_messages
+         WHERE rn=1
+         ORDER BY created_at, id",
+    )
+    .bind(conversation_id)
+    .bind(user_id)
+    .bind(goal_id)
+    .fetch_all(db::pool())
+    .await?)
+}
+
 pub async fn create_goal(
     conversation_id: i64,
     user_id: &str,

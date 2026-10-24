@@ -27,6 +27,7 @@ export function useGoalMode({ activeConversationId, onConversationPatched = () =
     stages.value = Array.isArray(data?.stages) ? data.stages : []
     if (!goal.value) enabledForNextMessage.value = false
     else if (goal.value.status === 'paused') enabledForNextMessage.value = false
+    onConversationPatched(goal.value)
     return goal.value
   }
 

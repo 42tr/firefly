@@ -203,7 +203,14 @@ const {
   prepareSubmission: prepareGoalSubmission,
   setEnabled: setGoalEnabled,
   load: loadGoal,
-} = useGoalMode({ activeConversationId })
+} = useGoalMode({
+  activeConversationId,
+  onConversationPatched: next => {
+    if (next?.status !== 'completed' || !next.last_check_result?.final_result || !activeConversationId.value) return
+    if (messages.value.some(message => message.goal?.origin === 'goal_summary')) return
+    void selectConversation(activeConversationId.value, { force: true })
+  },
+})
 const goalCheckResult = computed(() => goal.value?.last_check_result || null)
 const toggleGoalMode = async () => {
   if (goalEnabled.value) await setGoalEnabled(false)
@@ -879,10 +886,10 @@ onMounted(() => {
                 v-else
                 v-stable-reply="item.latestReply ? item.msg : null"
                 class="message"
-                :class="[item.msg.role, item.msg.chartOption ? 'chart' : '', item.msg.kind || '', { 'latest-reply': item.latestReply, 'goal-message': Boolean(item.msg.goal), 'goal-continuation': item.msg.goal?.origin === 'goal_continue' }]"
+                :class="[item.msg.role, item.msg.chartOption ? 'chart' : '', item.msg.kind || '', { 'latest-reply': item.latestReply, 'goal-message': Boolean(item.msg.goal), 'goal-continuation': item.msg.goal?.origin === 'goal_continue', 'goal-final-summary': item.msg.goal?.origin === 'goal_summary' }]"
               >
               <div class="message-content">
-                <div v-if="item.msg.goal" class="goal-message-label"><UiIcon name="target" />{{ item.msg.goal.origin === 'goal_continue' ? 'Goal 自动续接' : 'Goal 目标消息' }}</div>
+                <div v-if="item.msg.goal" class="goal-message-label"><UiIcon name="target" />{{ item.msg.goal.origin === 'goal_summary' ? 'Goal 最终结果' : item.msg.goal.origin === 'goal_continue' ? 'Goal 自动续接' : 'Goal 目标消息' }}</div>
                 <div v-if="item.msg.title" class="message-title">{{ item.msg.title }}</div>
                 <div v-if="item.msg.chartOption" :id="item.msg.chartId" class="chart-card"></div>
                 <ToolOutput v-else-if="item.msg.imageOutput" :value="item.msg.imageOutput" :resolve-image-url="resolveImageUrl" />

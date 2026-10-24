@@ -48,7 +48,7 @@ pub use submissions::{enforce_submission_capacity, submit_queued_user_turn, subm
 
 mod goals;
 pub use goals::{
-    apply_goal_check, create_goal, get_active_goal, get_goal, get_goal_by_id, list_stages, replace_goal_stages, set_goal_status,
+    apply_goal_check, create_goal, fetch_goal_execution_results, get_active_goal, get_goal, get_goal_by_id, list_stages, replace_goal_stages, set_goal_status,
     GoalRecord, GoalStageRecord,
 };
 

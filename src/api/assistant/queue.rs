@@ -358,6 +358,22 @@ async fn maybe_continue_goal(
         "continue" => "continuing",
         _ => "needs_review",
     };
+    if final_status == "completed" {
+        let Some(final_result) = judge.final_result.as_deref().map(str::trim).filter(|text| !text.is_empty()) else {
+            let failure = serde_json::json!({"status":"failed","summary":"Goal 检查未返回最终结果"});
+            assistant_store::apply_goal_check(goal_id, record.conversation_id, &record.user_id, "failed", &failure, None).await?;
+            return Err(anyhow!("Goal 检查未返回最终结果"));
+        };
+        let metadata = serde_json::json!({"goal": {"goal_id": goal_id, "origin": "goal_summary", "kind": "final_result"}});
+        if let Err(err) = assistant_store::append_message(record.conversation_id, assistant_store::StoredMessage {
+            role: "assistant".into(), content: final_result.into(), tool_call_id: None, tool_calls: None,
+            metadata: Some(metadata), is_error: false, generation_job_id: Some(job.id),
+        }).await {
+            let failure = serde_json::json!({"status":"failed","summary":"Goal 最终结果保存失败"});
+            assistant_store::apply_goal_check(goal_id, record.conversation_id, &record.user_id, "failed", &failure, None).await?;
+            return Err(err);
+        }
+    }
     let updated = assistant_store::apply_goal_check(
         goal_id, record.conversation_id, &record.user_id, final_status, &result, judge.current_stage_id.as_deref(),
     ).await?;

@@ -83,6 +83,33 @@ async fn persisted_context_summary_replaces_history_after_its_boundary() {
     assert_eq!(fetch_generation_context_summary(conversation, "owner").await.unwrap().unwrap().1, "replacement");
 }
 
+#[tokio::test]
+async fn goal_execution_results_keep_old_turns_after_context_summary() {
+    let pool = crate::db::test_pool().await;
+    crate::db::set_test_pool(pool.clone());
+    let conversation: i64 = query_scalar("INSERT INTO assistant_conversations(user_id,system_prompt) VALUES ('owner','') RETURNING id")
+        .fetch_one(&pool).await.unwrap();
+    let first = uuid::Uuid::from_u128(1);
+    let second = uuid::Uuid::from_u128(2);
+    for (job, at) in [(first, 1_i64), (second, 2_i64)] {
+        query("INSERT INTO assistant_generation_jobs(id,conversation_id,user_id,status,created_at) VALUES (?1,?2,'owner','completed',?3)")
+            .bind(job).bind(conversation).bind(at).execute(&pool).await.unwrap();
+    }
+    let first_user: i64 = query_scalar(
+        "INSERT INTO assistant_messages(conversation_id,generation_job_id,role,content,metadata) VALUES (?1,?2,'user','first',?3) RETURNING id",
+    ).bind(conversation).bind(first).bind(r#"{"goal":{"goal_id":7}}"#).fetch_one(&pool).await.unwrap();
+    query("INSERT INTO assistant_messages(conversation_id,generation_job_id,role,content) VALUES (?1,?2,'assistant','old result')")
+        .bind(conversation).bind(first).execute(&pool).await.unwrap();
+    query("INSERT INTO assistant_messages(conversation_id,generation_job_id,role,content) VALUES (?1,?2,'assistant','old final')")
+        .bind(conversation).bind(first).execute(&pool).await.unwrap();
+    query("INSERT INTO assistant_messages(conversation_id,generation_job_id,role,content,metadata) VALUES (?1,?2,'user','second',?3)")
+        .bind(conversation).bind(second).bind(r#"{"goal":{"goal_id":7}}"#).execute(&pool).await.unwrap();
+    query("INSERT INTO assistant_messages(conversation_id,generation_job_id,role,content) VALUES (?1,?2,'assistant','new final')")
+        .bind(conversation).bind(second).execute(&pool).await.unwrap();
+    save_generation_context_summary(conversation, "owner", first_user, "old result summarized").await.unwrap();
+    assert_eq!(fetch_goal_execution_results(conversation, "owner", 7).await.unwrap(), vec!["old final", "new final"]);
+}
+
 #[test]
 fn message_page_question_lookup_skips_job_history() {
     let connection = crate::db::test_connection();
