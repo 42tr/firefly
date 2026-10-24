@@ -71,9 +71,10 @@ onBeforeUnmount(() => {
       <UiIcon name="more-horizontal" />
     </button>
     <div v-show="open" id="firefly-more-menu" ref="menu" class="firefly-more-menu" role="menu" aria-label="更多功能" @click="select" @keydown="navigate">
-      <ModulePanel :active="props.active" :show-management="false" @closed="restoreFocus" @page-open="emit('module-open', $event)" />
+      <!-- 固定功能放在动态扩展页面前，避免模块较多时被菜单的可视高度推到下面。 -->
+      <button class="button ghost small" type="button" role="menuitem" aria-haspopup="dialog" :aria-expanded="memoryOpen" aria-controls="memory-dialog" @click="emit('open-memory')"><UiIcon name="chat" /><span>长期记忆</span></button>
       <button class="button ghost small" type="button" role="menuitem" aria-haspopup="dialog" :aria-expanded="schedulesOpen" aria-controls="schedule-dialog" @click="emit('open-schedules')"><UiIcon name="calendar" /><span>定时任务</span></button>
-      <button class="button ghost small" type="button" role="menuitem" aria-haspopup="dialog" :aria-expanded="memoryOpen" @click="emit('open-memory')"><UiIcon name="chat" /><span>记忆</span></button>
+      <ModulePanel :active="props.active" :show-management="false" @closed="restoreFocus" @page-open="emit('module-open', $event)" />
       <template v-if="showFiles">
         <div class="function-menu-divider" role="separator"></div>
         <button class="button ghost small" type="button" role="menuitem" :disabled="filesDisabled" @click="emit('open-files')"><UiIcon name="folder" /><span>文件</span></button>
