@@ -49,3 +49,18 @@ test('keyboard cannot bypass disabled save or send an empty task', t => {
   empty.key({ metaKey: true })
   assert.equal(empty.sends(), 0)
 })
+
+test('input resizing reserves the composer footprint while measuring', t => {
+  const input = setup(t)
+  const box = { offsetHeight: 96, style: { minHeight: '' } }
+  let measuredWithMinHeight
+  const target = { style: { height: '84px' }, closest: () => box }
+  Object.defineProperty(target, 'scrollHeight', { get: () => {
+    measuredWithMinHeight = box.style.minHeight
+    return 84
+  } })
+  input.state.handleInput({ target })
+  assert.equal(measuredWithMinHeight, '96px')
+  assert.equal(target.style.height, '84px')
+  assert.equal(box.style.minHeight, '')
+})

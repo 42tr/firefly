@@ -100,8 +100,16 @@ const handleKeydown = (event) => {
 }
 
 const handleInput = (e) => {
-  e.target.style.height = 'auto'
-  e.target.style.height = e.target.scrollHeight + 'px'
+  const input = e.target
+  const box = input.closest?.('.input-box')
+  const previousMinHeight = box?.style.minHeight
+  // Keep the composer footprint while measuring. Otherwise the temporary
+  // `auto` height clamps the chat panel's scrollTop before the new height is
+  // applied, which makes history jump on every wrapped-line keystroke.
+  if (box) box.style.minHeight = `${box.offsetHeight}px`
+  input.style.height = 'auto'
+  input.style.height = `${input.scrollHeight}px`
+  if (box) box.style.minHeight = previousMinHeight
 }
 
 const isTextAttachment = (attachment) => {
