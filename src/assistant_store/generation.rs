@@ -12,6 +12,12 @@ use super::{
 };
 use crate::db;
 
+// Bound one model context load when a conversation has not produced a rolling
+// summary yet. Summarized history is loaded only after its persisted boundary.
+// shortcut: 64 MiB fallback for unsummarized history, revisit if persistence is unavailable.
+const MAX_GENERATION_CONTEXT_BYTES: i64 = 64 * 1024 * 1024;
+const MAX_PERSISTED_CONTEXT_SUMMARY_BYTES: usize = 32 * 1024;
+
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct CodexGenerationSettings {
     pub provider: Option<String>,
@@ -288,6 +294,39 @@ struct GenerationContextRow {
 pub async fn fetch_generation_context_messages(
     conversation_id: i64, user_id: &str, current_job_id: uuid::Uuid,
 ) -> anyhow::Result<Vec<MessageRecord>> {
+    let summary = fetch_generation_context_summary(conversation_id, user_id).await?;
+    fetch_generation_context_messages_from(
+        conversation_id,
+        user_id,
+        current_job_id,
+        summary.as_ref().map(|(message_id, _)| *message_id),
+    )
+    .await
+}
+
+/// Load context after an optional persisted summary boundary. Passing `None`
+/// is reserved for historical branch snapshots that need the original rows.
+pub async fn fetch_generation_context_messages_from(
+    conversation_id: i64, user_id: &str, current_job_id: uuid::Uuid, after_message_id: Option<i64>,
+) -> anyhow::Result<Vec<MessageRecord>> {
+    let context_bytes: i64 = query_scalar(
+        "SELECT COALESCE(SUM(length(CAST(content AS BLOB)) + length(CAST(COALESCE(tool_calls, '') AS BLOB)) + length(CAST(COALESCE(metadata, '') AS BLOB))), 0)
+         FROM assistant_messages m JOIN assistant_conversations c ON c.id=m.conversation_id
+         LEFT JOIN assistant_generation_jobs j ON j.id=m.generation_job_id
+         WHERE m.conversation_id=?1 AND c.user_id=?2
+           AND (?4 IS NULL OR m.id > ?4)
+           AND (m.generation_job_id IS NULL OR j.status IN ('completed', 'failed') OR j.id=?3)",
+    )
+    .bind(conversation_id)
+    .bind(user_id)
+    .bind(current_job_id)
+    .bind(after_message_id)
+    .fetch_one(db::pool())
+    .await?;
+    anyhow::ensure!(
+        context_bytes <= MAX_GENERATION_CONTEXT_BYTES,
+        "会话历史过大（超过 64 MiB），请新建对话后继续"
+    );
     let mut rows = query_as::<_, GenerationContextRow>(
         r#"
         SELECT m.id, m.conversation_id, m.role, m.content, m.tool_call_id, m.tool_calls,
@@ -301,12 +340,14 @@ pub async fn fetch_generation_context_messages(
         LEFT JOIN assistant_generation_jobs j ON j.id = m.generation_job_id
         WHERE m.conversation_id = ?1
           AND c.user_id = ?2
+          AND (?4 IS NULL OR m.id > ?4)
           AND (m.generation_job_id IS NULL OR j.status IN ('completed', 'failed') OR j.id = ?3)
         "#,
     )
     .bind(conversation_id)
     .bind(user_id)
     .bind(current_job_id)
+    .bind(after_message_id)
     .fetch_all(db::pool())
     .await?;
     // The context is already materialized here. Sort its small keys in memory
@@ -318,6 +359,66 @@ pub async fn fetch_generation_context_messages(
         row.context_job_sequence, row.message.id,
     ));
     Ok(preserve_failed_tool_facts(rows.into_iter().map(|row| row.message).collect()))
+}
+
+pub async fn fetch_generation_context_summary(
+    conversation_id: i64, user_id: &str,
+) -> anyhow::Result<Option<(i64, String)>> {
+    Ok(query_as::<_, (i64, String)>(
+        "SELECT s.upto_message_id, s.content
+         FROM assistant_context_summaries s
+         JOIN assistant_conversations c ON c.id = s.conversation_id
+         JOIN assistant_messages m ON m.id = s.upto_message_id
+             AND m.conversation_id = s.conversation_id AND m.role = 'user'
+         WHERE s.conversation_id = ?1 AND s.user_id = ?2 AND c.user_id = ?2
+         LIMIT 1",
+    )
+    .bind(conversation_id)
+    .bind(user_id)
+    .fetch_optional(db::pool())
+    .await?)
+}
+
+pub async fn save_generation_context_summary(
+    conversation_id: i64, user_id: &str, upto_message_id: i64, content: &str,
+) -> anyhow::Result<()> {
+    let content = content.trim();
+    anyhow::ensure!(!content.is_empty(), "上下文摘要不能为空");
+    anyhow::ensure!(content.len() <= MAX_PERSISTED_CONTEXT_SUMMARY_BYTES, "上下文摘要过大");
+    let mut tx = db::pool().begin_with("BEGIN IMMEDIATE").await?;
+    let valid: bool = query_scalar(
+        "SELECT EXISTS(
+            SELECT 1 FROM assistant_messages m
+            JOIN assistant_conversations c ON c.id = m.conversation_id
+            WHERE m.id = ?1 AND m.conversation_id = ?2 AND m.role = 'user' AND c.user_id = ?3
+        )",
+    )
+    .bind(upto_message_id)
+    .bind(conversation_id)
+    .bind(user_id)
+    .fetch_one(&mut *tx)
+    .await?;
+    if !valid {
+        tx.rollback().await?;
+        return Ok(());
+    }
+    query(
+        "INSERT INTO assistant_context_summaries(conversation_id, user_id, upto_message_id, content)
+         VALUES (?1, ?2, ?3, ?4)
+         ON CONFLICT(conversation_id) DO UPDATE SET
+             user_id = excluded.user_id,
+             upto_message_id = excluded.upto_message_id,
+             content = excluded.content,
+             updated_at = CAST(unixepoch('subsec') * 1000000 AS INTEGER)",
+    )
+    .bind(conversation_id)
+    .bind(user_id)
+    .bind(upto_message_id)
+    .bind(content)
+    .execute(&mut *tx)
+    .await?;
+    tx.commit().await?;
+    Ok(())
 }
 
 /// Failed turns may have changed external state. Retain their calls/results,

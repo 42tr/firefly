@@ -139,10 +139,11 @@ const conversationSearch = ref('')
 let workspaceInitialized = false
 const filteredConversations = computed(() => {
   void draftRevision.value
+  const loadedIds = new Set(conversationIds.value)
   return conversations.value
     .filter(item => !item.is_archived || showingArchivedConversations.value)
     .filter((item) => ((item.message_count ?? 0) > 0 || item.id === activeConversationId.value || inputDrafts.has(item.id)))
-    .filter((item) => conversationIds.value.includes(item.id) || ((item.id === activeConversationId.value || inputDrafts.has(item.id))
+    .filter((item) => loadedIds.has(item.id) || ((item.id === activeConversationId.value || inputDrafts.has(item.id))
         && [formatConversationTitle(item), item.cwd || '', item.source_cwd || '', item.agent || ''].join(' ').toLocaleLowerCase().includes(conversationSearch.value.trim().toLocaleLowerCase())))
     .map((item) => ({
       ...item,

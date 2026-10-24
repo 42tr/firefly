@@ -9,7 +9,7 @@ use tokio::sync::mpsc;
 use super::events::{handle_run_event, AssistantRunEventSink, HandoffState};
 use crate::{
     api::assistant::{inputs, AssistantConfig, Conversation},
-    assistant_job, assistant_memory, llm, mcp,
+    assistant_job, assistant_memory, assistant_store, llm, mcp,
 };
 
 pub(in crate::api::assistant) async fn run_conversation(
@@ -119,6 +119,19 @@ pub(in crate::api::assistant) async fn run_conversation(
             _ = cancellation.cancelled() => return Ok(()),
             result = &mut run => {
                 result?;
+                if let Some(summary) = model.persisted_summary().await {
+                    let persisted = async {
+                        let Some(user_message) = assistant_store::fetch_generation_user_message(
+                            job.id, conversation_id, &tool_context.user_id
+                        ).await? else { return Ok(()) };
+                        assistant_store::save_generation_context_summary(
+                            conversation_id, &tool_context.user_id, user_message.id, &summary
+                        ).await
+                    }.await;
+                    if let Err(error) = persisted {
+                        tracing::warn!(conversation_id, "failed to persist rolling context summary: {error:#}");
+                    }
+                }
                 return Ok(());
             }
             event = event_rx.recv() => event,

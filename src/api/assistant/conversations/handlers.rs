@@ -123,28 +123,20 @@ pub async fn update_conversation(
         return Err(AppError::bad_request("No updates specified"));
     }
 
-    if let Some(archived) = payload.is_archived {
-        let found = assistant_store::set_conversation_archived(conversation_id, user_id, archived)
-            .await
-            .map_err(|err| {
-                if err.is::<assistant_store::ConversationArchivalBlocked>() { AppError::conflict(err) }
-                else { AppError::internal_server_error(err) }
-            })?;
-        if !found { return Err(AppError::not_found("Conversation not found")); }
-    }
-
-    if let Some(title) = payload.title.as_deref() {
-        assistant_store::rename_conversation(conversation_id, user_id, title)
-            .await
-            .map_err(AppError::internal_server_error)?;
-    }
-
-    if let Some(pinned) = payload.is_pinned {
-        let found = assistant_store::set_conversation_pinned(conversation_id, user_id, pinned)
-            .await
-            .map_err(AppError::internal_server_error)?;
-        if !found { return Err(AppError::not_found("Conversation not found")); }
-    }
+    let found = assistant_store::update_conversation_fields(
+        conversation_id,
+        user_id,
+        payload.title.as_deref(),
+        payload.is_pinned,
+        payload.is_archived,
+    )
+    .await
+    .map_err(|err| {
+        if err.is::<assistant_store::ConversationArchivalBlocked>() { AppError::conflict(err) }
+        else if err.to_string().contains("标题不能超过") { AppError::bad_request(err) }
+        else { AppError::internal_server_error(err) }
+    })?;
+    if !found { return Err(AppError::not_found("Conversation not found")); }
 
     Ok(Json(json!({ "ok": true })))
 }

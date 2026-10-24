@@ -79,6 +79,8 @@ modules/                          # 独立模块包
 
 `ASSISTANT_MAX_ATTACHMENT_MB` 配置单个上传附件的大小上限，默认 `100`，单位 MB（1 MB = 1024 × 1024 字节），必须为正整数，普通文件和视频使用相同限制。前端接受文件后由服务端校验大小，修改 `.env` 后重启服务生效。整次上传请求默认最多 256MB；配置较大附件上限时，请求上限自动提升至单附件上限加 1MB，为表单元数据预留空间。
 
+`ASSISTANT_MAX_STORAGE_MB` 配置附件目录的总容量上限，默认 `10240`（10GB）。服务端会在上传和保存生成图片时统计目录中的普通文件，达到上限后拒绝新增文件；定时清理任务会删除崩溃遗留的孤儿文件。
+
 ```sh
 ./firefly --backup-db ./firefly.sqlite3 /absolute/backups/firefly-backup.sqlite3
 ```

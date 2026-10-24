@@ -58,6 +58,7 @@ use axum::{
     Json,
 };
 use backon::{ExponentialBuilder, Retryable};
+use futures_util::StreamExt;
 use g::{
     Agent, Content as GContent, Message as GMessage, Model, Role as GRole, RunLimits,
 };
@@ -77,6 +78,9 @@ use crate::{
 };
 
 const MAX_GENERATED_IMAGE_BYTES: i64 = 15 * 1024 * 1024;
+pub(super) const MAX_CHAT_MESSAGE_BYTES: usize = 1024 * 1024;
+pub(super) const MAX_CHAT_MESSAGE_CHARS: usize = 100_000;
+const MAX_CHAT_JSON_BYTES: usize = MAX_CHAT_MESSAGE_BYTES + 64 * 1024;
 
 fn is_codex_retrying_message(message: &str) -> bool {
     let normalized = message.trim().to_ascii_lowercase();
@@ -450,11 +454,11 @@ impl Drop for AttachmentCleanup {
             return;
         }
         let entries = std::mem::take(&mut self.entries);
-        std::thread::spawn(move || {
-            for entry in entries {
-                let _ = std::fs::remove_file(&entry.storage_path);
-            }
-        });
+        // Cleanup is bounded by the request attachment count; doing it inline
+        // avoids creating one unbounded OS thread for every failed upload.
+        for entry in entries {
+            let _ = std::fs::remove_file(&entry.storage_path);
+        }
     }
 }
 

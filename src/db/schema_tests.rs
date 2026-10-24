@@ -13,6 +13,7 @@ async fn fresh_database_contains_only_active_tables() {
     assert_eq!(tables, [
         "_sqlx_migrations",
         "assistant_agent_settings",
+        "assistant_context_summaries",
         "assistant_conversations",
         "assistant_firefly_branches",
         "assistant_generation_jobs",
@@ -58,6 +59,8 @@ async fn fresh_database_supports_read_state_and_cascades_conversation_deletion()
     ).bind(conversation.0).bind(job).fetch_one(&pool).await.unwrap();
     sqlx::query("UPDATE assistant_conversations SET read_message_id=?1,is_pinned=TRUE WHERE id=?2")
         .bind(message).bind(conversation.0).execute(&pool).await.unwrap();
+    sqlx::query("INSERT INTO assistant_context_summaries(conversation_id,user_id,upto_message_id,content) VALUES (?1,'owner',?2,'summary')")
+        .bind(conversation.0).bind(message).execute(&pool).await.unwrap();
     // Reopening a current database must preserve read state.
     MIGRATOR.run(&pool).await.unwrap();
     let read: i64 = sqlx::query_scalar("SELECT read_message_id FROM assistant_conversations WHERE id=?1")
@@ -65,10 +68,11 @@ async fn fresh_database_supports_read_state_and_cascades_conversation_deletion()
     assert_eq!(read, message);
     sqlx::query("DELETE FROM assistant_conversations WHERE id=?1")
         .bind(conversation.0).execute(&pool).await.unwrap();
-    let remaining: (i64, i64) = sqlx::query_as(
-        "SELECT (SELECT count(*) FROM assistant_messages), (SELECT count(*) FROM assistant_generation_jobs)",
+    let remaining: (i64, i64, i64) = sqlx::query_as(
+        "SELECT (SELECT count(*) FROM assistant_messages), (SELECT count(*) FROM assistant_generation_jobs),
+                (SELECT count(*) FROM assistant_context_summaries)",
     ).fetch_one(&pool).await.unwrap();
-    assert_eq!(remaining, (0, 0));
+    assert_eq!(remaining, (0, 0, 0));
     assert!(sqlx::query("PRAGMA foreign_key_check").fetch_all(&pool).await.unwrap().is_empty());
 }
 

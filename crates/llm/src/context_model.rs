@@ -48,6 +48,18 @@ impl ContextModel {
         }
     }
 
+    /// Return the latest compacted summary so the host can persist it across turns.
+    pub async fn persisted_summary(&self) -> Option<String> {
+        let state = self.state.lock().await;
+        state.as_ref()?.messages.iter().find_map(|message| {
+            let text = message.text_content();
+            text.strip_prefix(SUMMARY_LABEL)
+                .map(str::trim)
+                .filter(|summary| !summary.is_empty())
+                .map(str::to_owned)
+        })
+    }
+
     /// Prepare a request and return any usage incurred by summarization.
     /// `force` requests compaction even when the input is within budget.
     pub async fn prepare(
@@ -412,6 +424,7 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(*sink.0.lock().unwrap(), "done");
+        assert_eq!(model.persisted_summary().await.as_deref(), Some("已检查目录，任务 task-1 正在运行，需要继续查询。"));
         let summary_count = {
             let requests = fixture.requests.lock().unwrap();
             let summary_count = requests.len() - 1;

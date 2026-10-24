@@ -99,10 +99,20 @@ fn workspace_file_response(body: Body, path: impl AsRef<std::path::Path>) -> Res
     let content_type =
         if mime.type_().as_str() == "text" { format!("{mime}; charset=utf-8") } else { mime.to_string() };
     let file_name = path.file_name().and_then(|name| name.to_str()).unwrap_or("file");
+    let active_content = matches!(
+        (mime.type_().as_str(), mime.subtype().as_str()),
+        ("text", "html" | "javascript" | "ecmascript") | ("image", "svg+xml")
+    );
     response
         .headers_mut()
         .insert(header::CONTENT_TYPE, office::header_value_or_default(&content_type, "application/octet-stream"));
-    response.headers_mut().insert(header::CONTENT_DISPOSITION, office::build_disposition_header("inline", file_name));
+    response.headers_mut().insert(
+        header::CONTENT_DISPOSITION,
+        office::build_disposition_header(if active_content { "attachment" } else { "inline" }, file_name),
+    );
+    // Workspace files may come from an untrusted repository. Keep any document
+    // opened directly from this endpoint in an opaque sandboxed origin.
+    response.headers_mut().insert(header::CONTENT_SECURITY_POLICY, "sandbox".parse().unwrap());
     response
 }
 
@@ -163,5 +173,12 @@ mod tests {
             assert_eq!(response.headers()[header::CONTENT_TYPE], mime);
             assert_eq!(axum::body::to_bytes(response.into_body(), 1024).await.unwrap().as_ref(), bytes);
         }
+    }
+
+    #[test]
+    fn active_workspace_documents_download_and_are_sandboxed() {
+        let response = workspace_file_response(Body::from("<script>alert(1)</script>"), "index.html");
+        assert!(response.headers()[header::CONTENT_DISPOSITION].to_str().unwrap().starts_with("attachment;"));
+        assert_eq!(response.headers()[header::CONTENT_SECURITY_POLICY], "sandbox");
     }
 }

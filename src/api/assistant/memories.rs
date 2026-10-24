@@ -46,7 +46,7 @@ pub struct UpdateMemoryRequest {
     pub enabled: Option<bool>,
 }
 
-use assistant_store::{MAX_MEMORY_TITLE_LEN, MAX_MEMORY_CONTENT_LEN, MAX_MEMORY_COUNT};
+use assistant_store::{MAX_MEMORY_TITLE_LEN, MAX_MEMORY_CONTENT_LEN};
 
 fn validate_memory_fields(title: &str, content: &str) -> Result<(String, String), AppError> {
     let title = title.trim().to_string();
@@ -75,13 +75,13 @@ pub async fn create_memory(
     auth_user: Session, Json(payload): Json<CreateMemoryRequest>,
 ) -> Result<Json<MemoryResponse>, AppError> {
     let (title, content) = validate_memory_fields(&payload.title, &payload.content)?;
-    let existing = assistant_store::list_memories(auth_user.storage_scope()).await.map_err(AppError::internal_server_error)?;
-    if existing.len() >= MAX_MEMORY_COUNT {
-        return Err(AppError::bad_request(format!("记忆数量已达上限（{} 条）", MAX_MEMORY_COUNT)));
-    }
     let record = assistant_store::create_memory(auth_user.storage_scope(), &title, &content, payload.enabled.unwrap_or(true))
         .await
-        .map_err(AppError::internal_server_error)?;
+        .map_err(|error| if error.is::<assistant_store::MemoryLimit>() {
+            AppError::bad_request(error)
+        } else {
+            AppError::internal_server_error(error)
+        })?;
     crate::assistant_memory::refresh(&record).await;
     Ok(Json(MemoryResponse::from(record)))
 }

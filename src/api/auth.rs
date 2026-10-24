@@ -26,6 +26,8 @@ use crate::{config, db};
 const SESSION_COOKIE: &str = "firefly_session";
 const LOGIN_BAN_DURATION: Duration = Duration::from_secs(60 * 60);
 const LOGIN_FAILURE_LIMIT: u8 = 3;
+const LOGIN_FAILURE_WINDOW: Duration = Duration::from_secs(60 * 60);
+const LOGIN_ATTEMPT_CAP: usize = 10_000;
 
 /// Serve the bundled local login form, including on the old /auth/ entry point.
 pub async fn page(headers: HeaderMap) -> Response {
@@ -42,7 +44,7 @@ pub struct LoginRequest {
 struct LoginAttempts(HashMap<IpAddr, LoginAttempt>);
 
 enum LoginAttempt {
-    Failures(u8),
+    Failures { count: u8, expires_at: Instant },
     BannedUntil(Instant),
 }
 
@@ -57,7 +59,10 @@ impl LoginAttempts {
     ) -> Result<(), AppError> {
         let ip = ip.to_canonical();
         self.0.retain(
-            |_, attempt| !matches!(attempt, LoginAttempt::BannedUntil(until) if *until <= now),
+            |_, attempt| match attempt {
+                LoginAttempt::BannedUntil(until) => *until > now,
+                LoginAttempt::Failures { expires_at, .. } => *expires_at > now,
+            },
         );
         if let Some(LoginAttempt::BannedUntil(until)) = self.0.get(&ip) {
             let remaining = until.duration_since(now);
@@ -70,16 +75,37 @@ impl LoginAttempts {
             return Ok(());
         }
         let failures = match self.0.get(&ip) {
-            Some(LoginAttempt::Failures(count)) => count + 1,
+            Some(LoginAttempt::Failures { count, .. }) => count.saturating_add(1),
             _ => 1,
         };
         if failures >= LOGIN_FAILURE_LIMIT {
+            self.reserve_slot(ip);
             self.0
                 .insert(ip, LoginAttempt::BannedUntil(now + LOGIN_BAN_DURATION));
             return Err(Self::banned_error(LOGIN_BAN_DURATION.as_secs()));
         }
-        self.0.insert(ip, LoginAttempt::Failures(failures));
+        self.reserve_slot(ip);
+        self.0.insert(ip, LoginAttempt::Failures {
+            count: failures,
+            expires_at: now + LOGIN_FAILURE_WINDOW,
+        });
         Err(AppError::unauthorized("访问密码错误"))
+    }
+
+    fn reserve_slot(&mut self, ip: IpAddr) {
+        if self.0.contains_key(&ip) || self.0.len() < LOGIN_ATTEMPT_CAP {
+            return;
+        }
+        let oldest = self
+            .0
+            .iter()
+            .min_by_key(|(_, attempt)| match attempt {
+                LoginAttempt::Failures { expires_at, .. } | LoginAttempt::BannedUntil(expires_at) => *expires_at,
+            })
+            .map(|(ip, _)| *ip);
+        if let Some(oldest) = oldest {
+            self.0.remove(&oldest);
+        }
     }
 
     fn banned_error(retry_after_secs: u64) -> AppError {
@@ -287,6 +313,16 @@ mod tests {
         attempts
             .authenticate("192.0.2.2".parse().unwrap(), now, || true)
             .unwrap();
+    }
+
+    #[test]
+    fn stale_failure_records_expire_without_waiting_for_a_successful_login() {
+        let now = Instant::now();
+        let ip = "192.0.2.9".parse().unwrap();
+        let mut attempts = LoginAttempts::default();
+        assert_eq!(attempts.authenticate(ip, now, || false).unwrap_err().status(), StatusCode::UNAUTHORIZED);
+        assert_eq!(attempts.authenticate(ip, now + LOGIN_FAILURE_WINDOW, || false).unwrap_err().status(), StatusCode::UNAUTHORIZED);
+        assert!(matches!(attempts.0.get(&ip), Some(LoginAttempt::Failures { count: 1, .. })));
     }
 }
 

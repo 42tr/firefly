@@ -2,7 +2,7 @@
 
 use chrono::{DateTime, Utc};
 use serde::Serialize;
-use sqlx::{query, query_as, FromRow};
+use sqlx::{query, query_as, query_scalar, FromRow};
 
 use crate::db;
 
@@ -39,6 +39,10 @@ pub const MAX_MEMORY_COUNT: usize = 100;
 /// Agent memories are atomic facts: count Unicode characters, including the title.
 pub const MAX_AGENT_MEMORY_CHARS: usize = 200;
 pub const MAX_MEMORY_REVIEW_CHANGES: usize = 8;
+
+#[derive(Debug, thiserror::Error)]
+#[error("记忆数量已达上限（{MAX_MEMORY_COUNT} 条）")]
+pub struct MemoryLimit;
 
 #[derive(Debug, Clone)]
 pub struct ReviewedMemoryChange {
@@ -301,6 +305,14 @@ pub async fn create_memory(
     content: &str,
     enabled: bool,
 ) -> anyhow::Result<MemoryRecord> {
+    let mut tx = db::pool().begin_with("BEGIN IMMEDIATE").await?;
+    let count: i64 = query_scalar("SELECT COUNT(*) FROM assistant_memories WHERE user_id=?1")
+        .bind(user_id)
+        .fetch_one(&mut *tx)
+        .await?;
+    if count >= MAX_MEMORY_COUNT as i64 {
+        return Err(MemoryLimit.into());
+    }
     let sql = format!(
         "INSERT INTO assistant_memories (user_id, title, content, enabled, source) VALUES (?1, ?2, ?3, ?4, ?5) RETURNING {}",
         MEMORY_COLUMNS
@@ -311,8 +323,9 @@ pub async fn create_memory(
         .bind(content)
         .bind(enabled)
         .bind("manual")
-        .fetch_one(db::pool())
+        .fetch_one(&mut *tx)
         .await?;
+    tx.commit().await?;
     Ok(rec)
 }
 

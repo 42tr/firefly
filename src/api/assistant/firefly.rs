@@ -37,7 +37,7 @@ pub(super) async fn snapshot_with_config(user_id: &str, target: i64, config: &As
         location.ok_or(AppError::bad_request("引用消息不可用，请选择已完成的流萤回复"))?;
     let mut context = inherited_context(conversation_id, user_id).await.map_err(AppError::internal_server_error)?;
     let history =
-        assistant_store::fetch_generation_context_messages(conversation_id, user_id, job_id.unwrap_or_default())
+        assistant_store::fetch_generation_context_messages_from(conversation_id, user_id, job_id.unwrap_or_default(), None)
             .await
             .map_err(AppError::internal_server_error)?;
     let end = history.iter().position(|m| m.id == target).ok_or(AppError::bad_request("引用消息不可用"))?;

@@ -144,6 +144,20 @@ pub async fn enqueue_conversation_message(
     Ok(Json(enqueued))
 }
 
+async fn parse_json_chat_request(request: axum::http::Request<Body>) -> Result<ChatRequest, AppError> {
+    let (_, body) = request.into_parts();
+    let mut stream = body.into_data_stream();
+    let mut bytes = Vec::new();
+    while let Some(chunk) = stream.next().await {
+        let chunk = chunk.map_err(|err| AppError::bad_request(err.to_string()))?;
+        if bytes.len().saturating_add(chunk.len()) > MAX_CHAT_JSON_BYTES {
+            return Err(AppError::new(StatusCode::PAYLOAD_TOO_LARGE, "消息请求过大，最多支持 100000 个字符"));
+        }
+        bytes.extend_from_slice(&chunk);
+    }
+    serde_json::from_slice(&bytes).map_err(|err| AppError::bad_request(err.to_string()))
+}
+
 async fn enqueue_turn(
     user_id: &str, conversation_id_override: Option<i64>, request: axum::http::Request<Body>,
 ) -> Result<EnqueueMessageResponse, AppError> {
@@ -155,9 +169,10 @@ async fn enqueue_turn(
             Multipart::from_request(request, &()).await.map_err(|err| AppError::bad_request(err.to_string()))?;
         parse_chat_multipart(&mut multipart).await?
     } else {
-        let Json(body) = Json::<ChatRequest>::from_request(request, &())
-            .await
-            .map_err(|err| AppError::bad_request(err.to_string()))?;
+        let body = parse_json_chat_request(request).await?;
+        if body.message.chars().count() > MAX_CHAT_MESSAGE_CHARS {
+            return Err(AppError::new(StatusCode::PAYLOAD_TOO_LARGE, "消息内容过大，最多支持 100000 个字符"));
+        }
         ParsedChatPayload {
             message: body.message,
             enable_tools: body.enable_tools,
@@ -584,8 +599,16 @@ async fn load_generation_conversation(
 ) -> anyhow::Result<Conversation> {
     let mut conversation = Conversation::new();
     conversation.messages = firefly::inherited_context(conversation_id, user_id).await?;
-    let mut history = assistant_store::fetch_generation_context_messages(conversation_id, user_id, current_job_id).await?;
-    if let Some(summary) = super::turn_context::restore(&mut history) {
+    let persisted_summary = assistant_store::fetch_generation_context_summary(conversation_id, user_id).await?;
+    let mut history = assistant_store::fetch_generation_context_messages_from(
+        conversation_id,
+        user_id,
+        current_job_id,
+        persisted_summary.as_ref().map(|(message_id, _)| *message_id),
+    ).await?;
+    if let Some((_, summary)) = persisted_summary {
+        conversation.messages = vec![Message::assistant(summary, None)];
+    } else if let Some(summary) = super::turn_context::restore(&mut history) {
         conversation.messages = vec![summary];
     }
     let message_ids = history.iter().map(|message| message.id).collect::<Vec<_>>();

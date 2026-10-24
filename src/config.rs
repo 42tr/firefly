@@ -47,6 +47,9 @@ pub struct Config {
     /// Maximum size of each uploaded attachment, including videos, in MiB.
     #[serde_inline_default(100)]
     pub assistant_max_attachment_mb: u32,
+    /// Maximum total size of files in the assistant attachment directory, in MiB.
+    #[serde_inline_default(10240)]
+    pub assistant_max_storage_mb: u64,
     #[serde_inline_default("workspace".into())]
     pub workspace_root: String,
     /// External module packages and standalone MCP TOML definitions.
@@ -106,6 +109,10 @@ impl Config {
         i64::from(self.assistant_max_attachment_mb) * 1024 * 1024
     }
 
+    pub fn assistant_max_storage_bytes(&self) -> u64 {
+        self.assistant_max_storage_mb.saturating_mul(1024 * 1024)
+    }
+
     pub fn assistant_max_chat_upload_bytes(&self) -> u64 {
         // Keep the existing request budget, with room for a larger configured file and multipart metadata.
         (256 * 1024 * 1024).max(self.assistant_max_attachment_bytes() as u64 + 1024 * 1024)
@@ -150,6 +157,9 @@ fn validate_timezone(config: &Config) -> anyhow::Result<()> {
 
 fn validate_upload_config(config: &Config) -> anyhow::Result<()> {
     anyhow::ensure!(config.assistant_max_attachment_mb > 0, "ASSISTANT_MAX_ATTACHMENT_MB must be a positive integer");
+    anyhow::ensure!(config.assistant_max_storage_mb > 0, "ASSISTANT_MAX_STORAGE_MB must be a positive integer");
+    config.assistant_max_storage_mb.checked_mul(1024 * 1024)
+        .context("ASSISTANT_MAX_STORAGE_MB is too large for this platform")?;
     usize::try_from(config.assistant_max_chat_upload_bytes())
         .context("ASSISTANT_MAX_ATTACHMENT_MB is too large for this platform")?;
     Ok(())
@@ -210,6 +220,8 @@ mod runtime_tests {
         ]).unwrap();
         assert_eq!(default.assistant_max_attachment_mb, 100);
         assert_eq!(default.assistant_max_attachment_bytes(), 100 * 1024 * 1024);
+        assert_eq!(default.assistant_max_storage_mb, 10240);
+        assert_eq!(default.assistant_max_storage_bytes(), 10240 * 1024 * 1024);
         assert_eq!(default.assistant_max_chat_upload_bytes(), 256 * 1024 * 1024);
         assert!(super::validate_upload_config(&default).is_ok());
 
@@ -229,6 +241,15 @@ mod runtime_tests {
                 ("JWT_SECRET".to_owned(), "test".to_owned()),
                 ("AUTH_PASSWORD".to_owned(), "test".to_owned()),
                 ("ASSISTANT_MAX_ATTACHMENT_MB".to_owned(), value.to_owned()),
+            ]);
+            assert!(config.is_err() || super::validate_upload_config(&config.unwrap()).is_err(), "{value}");
+        }
+
+        for value in ["0", "-1", "invalid", "18446744073709551615"] {
+            let config = envy::from_iter::<_, super::Config>([
+                ("JWT_SECRET".to_owned(), "test".to_owned()),
+                ("AUTH_PASSWORD".to_owned(), "test".to_owned()),
+                ("ASSISTANT_MAX_STORAGE_MB".to_owned(), value.to_owned()),
             ]);
             assert!(config.is_err() || super::validate_upload_config(&config.unwrap()).is_err(), "{value}");
         }

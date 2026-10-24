@@ -1,6 +1,7 @@
 use anyhow::Context;
 use chrono::{DateTime, Duration, Utc};
 use sqlx::SqlitePool;
+use std::{collections::HashSet, time::{Duration as StdDuration, SystemTime}};
 use tracing::{info, warn};
 
 use crate::{assistant_store, db};
@@ -11,33 +12,71 @@ pub async fn clean_inactive_conversations() -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Remove upload files left behind by a process crash before the DB commit.
+/// A grace period avoids touching a slow upload still being written.
+pub async fn clean_orphan_attachments() -> anyhow::Result<()> {
+    let directory = std::path::PathBuf::from(crate::config::get().assistant_upload_dir.clone());
+    let mut entries = match tokio::fs::read_dir(&directory).await {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => return Err(error.into()),
+    };
+    let referenced: HashSet<String> = sqlx::query_scalar::<_, String>("SELECT storage_path FROM assistant_message_attachments")
+        .fetch_all(crate::db::pool())
+        .await?
+        .into_iter()
+        .collect();
+    let cutoff = SystemTime::now().checked_sub(StdDuration::from_secs(24 * 60 * 60));
+    let mut deleted = 0;
+    while let Some(entry) = entries.next_entry().await? {
+        let file_type = entry.file_type().await?;
+        if !file_type.is_file() || referenced.contains(&entry.path().to_string_lossy().into_owned()) {
+            continue;
+        }
+        let modified = entry.metadata().await?.modified().ok();
+        if cutoff.is_some_and(|cutoff| modified.is_some_and(|modified| modified <= cutoff)) {
+            match tokio::fs::remove_file(entry.path()).await {
+                Ok(()) => deleted += 1,
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+                Err(error) => warn!(path = %entry.path().display(), "failed to remove orphan attachment: {error}"),
+            }
+        }
+    }
+    info!(deleted, "Orphan attachment cleanup completed");
+    Ok(())
+}
+
 async fn clean_with_pool(pool: &SqlitePool, now: DateTime<Utc>, retention_days: u32) -> anyhow::Result<usize> {
     if retention_days == 0 { return Ok(0); }
     let cutoff = now.checked_sub_signed(Duration::days(i64::from(retention_days)))
         .context("CONVERSATION_RETENTION_DAYS exceeds the supported date range")?;
-    let candidates: Vec<(i64, String)> = sqlx::query_as(
-        "SELECT c.id, c.user_id FROM assistant_conversations c
-         WHERE c.updated_at <= ?1
-           AND NOT EXISTS(SELECT 1 FROM assistant_generation_jobs j
-                          WHERE j.conversation_id = c.id AND j.status IN ('queued', 'running'))
-         ORDER BY c.updated_at, c.id",
-    )
-    .bind(cutoff.timestamp_micros())
-    .fetch_all(pool)
-    .await?;
-
     let mut deleted = 0;
-    for (id, user_id) in candidates {
-        let paths = db::retry_busy("delete inactive conversation", || {
-            assistant_store::delete_conversation_with_pool(pool, id, &user_id, Some(cutoff))
-        })
+    loop {
+        let candidates: Vec<(i64, String)> = sqlx::query_as(
+            "SELECT c.id, c.user_id FROM assistant_conversations c
+             WHERE c.updated_at <= ?1
+               AND NOT EXISTS(SELECT 1 FROM assistant_generation_jobs j
+                              WHERE j.conversation_id = c.id AND j.status IN ('queued', 'running'))
+             ORDER BY c.updated_at, c.id LIMIT 100",
+        )
+        .bind(cutoff.timestamp_micros())
+        .fetch_all(pool)
         .await?;
-        let Some(paths) = paths else { continue };
-        deleted += 1;
-        for path in paths {
-            if let Err(err) = tokio::fs::remove_file(&path).await {
-                if err.kind() != std::io::ErrorKind::NotFound {
-                    warn!("failed to remove expired conversation attachment {}: {}", path, err);
+        if candidates.is_empty() {
+            break;
+        }
+        for (id, user_id) in candidates {
+            let paths = db::retry_busy("delete inactive conversation", || {
+                assistant_store::delete_conversation_with_pool(pool, id, &user_id, Some(cutoff))
+            })
+            .await?;
+            let Some(paths) = paths else { continue };
+            deleted += 1;
+            for path in paths {
+                if let Err(err) = tokio::fs::remove_file(&path).await {
+                    if err.kind() != std::io::ErrorKind::NotFound {
+                        warn!("failed to remove expired conversation attachment {}: {}", path, err);
+                    }
                 }
             }
         }

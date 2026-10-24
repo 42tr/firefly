@@ -185,6 +185,7 @@ async fn register_conversation_cleanup_job(sched: &JobScheduler) -> anyhow::Resu
 async fn register_db_maintenance_job(sched: &JobScheduler) -> anyhow::Result<()> {
     add_tz_job(sched, "0 20 4 * * *", || async {
         run_guarded("SQLite optimize", db::optimize(), Duration::from_secs(120)).await;
+        run_guarded("orphan attachment cleanup", assistant_cleanup::clean_orphan_attachments(), Duration::from_secs(120)).await;
     })
     .await
 }

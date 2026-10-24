@@ -57,6 +57,32 @@ async fn generation_context_keeps_legacy_and_interleaved_job_order() {
     assert!(fetch_generation_context_messages(conversation, "other", current).await.unwrap().is_empty());
 }
 
+#[tokio::test]
+async fn persisted_context_summary_replaces_history_after_its_boundary() {
+    let pool = crate::db::test_pool().await;
+    crate::db::set_test_pool(pool.clone());
+    let conversation: i64 = query_scalar(
+        "INSERT INTO assistant_conversations(user_id,system_prompt) VALUES ('owner','') RETURNING id",
+    ).fetch_one(&pool).await.unwrap();
+    let job = uuid::Uuid::new_v4();
+    query("INSERT INTO assistant_generation_jobs(id,conversation_id,user_id,status) VALUES (?1,?2,'owner','running')")
+        .bind(job).bind(conversation).execute(&pool).await.unwrap();
+    let user_message: i64 = query_scalar(
+        "INSERT INTO assistant_messages(conversation_id,generation_job_id,role,content) VALUES (?1,?2,'user','current') RETURNING id",
+    ).bind(conversation).bind(job).fetch_one(&pool).await.unwrap();
+    let after: i64 = query_scalar(
+        "INSERT INTO assistant_messages(conversation_id,generation_job_id,role,content) VALUES (?1,?2,'assistant','new output') RETURNING id",
+    ).bind(conversation).bind(job).fetch_one(&pool).await.unwrap();
+    save_generation_context_summary(conversation, "owner", user_message, "previous work is complete").await.unwrap();
+    assert_eq!(fetch_generation_context_summary(conversation, "owner").await.unwrap(),
+        Some((user_message, "previous work is complete".into())));
+    let rows = fetch_generation_context_messages(conversation, "owner", job).await.unwrap();
+    assert_eq!(rows.iter().map(|row| (row.id, row.content.as_str())).collect::<Vec<_>>(), vec![(after, "new output")]);
+    assert!(fetch_generation_context_summary(conversation, "other").await.unwrap().is_none());
+    save_generation_context_summary(conversation, "owner", user_message, "replacement").await.unwrap();
+    assert_eq!(fetch_generation_context_summary(conversation, "owner").await.unwrap().unwrap().1, "replacement");
+}
+
 #[test]
 fn message_page_question_lookup_skips_job_history() {
     let connection = crate::db::test_connection();

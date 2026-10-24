@@ -14,12 +14,14 @@ pub use attachments::{
 pub(crate) use conversations::delete_conversation_with_pool;
 pub use conversations::{
     create_conversation, delete_conversation, get_conversation, get_conversation_for_read,
-    list_active_generation_conversation_ids, list_workspace_conversations, rename_conversation,
+    list_active_generation_conversation_ids, list_workspace_conversations,
     retry_workspace, set_claude_session_id, set_claude_settings, set_codex_settings,
-    set_codex_thread_id, set_conversation_archived, set_conversation_pinned,
+    set_codex_thread_id,
     set_generated_conversation_title, set_workspace_state, ConversationArchivalBlocked,
-    ConversationDeletionBlocked, ConversationSettingsError,
+    ConversationDeletionBlocked, ConversationSettingsError, update_conversation_fields,
 };
+#[cfg(test)]
+pub use conversations::{rename_conversation, set_conversation_archived, set_conversation_pinned};
 pub use messages::{
     append_message, fetch_job_process_messages, fetch_messages_page, is_first_user_message,
 };
@@ -31,11 +33,11 @@ pub use memories::{
     claim_next_memory_review, create_memory, delete_memory,
     fail_memory_review, fetch_memory_review_messages, list_enabled_memories, list_memories,
     requeue_interrupted_memory_reviews, apply_reviewed_memories_for_turn, update_memory,
-    MemoryRecord, MemoryReviewJob,
+    MemoryRecord, MemoryReviewJob, MemoryLimit,
     ReviewedMemoryChange,
     MAX_MEMORY_REVIEW_CHANGES,
     list_all_memories, list_memory_embeddings, save_memory_embedding, MemoryEmbeddingRecord,
-    MAX_MEMORY_CONTENT_LEN, MAX_MEMORY_COUNT, MAX_MEMORY_TITLE_LEN,
+    MAX_MEMORY_CONTENT_LEN, MAX_MEMORY_TITLE_LEN,
 };
 #[cfg(test)]
 pub use memories::create_reviewed_memory;
@@ -58,7 +60,8 @@ mod generation;
 pub use generation::CodexGenerationSettings;
 pub use generation::{
     claim_next_queued_generation, delete_queued_generation, fetch_generation_context_messages,
-    fetch_generation_user_message, find_active_generation, generation_requires_snapshot,
+    fetch_generation_context_messages_from, fetch_generation_context_summary, fetch_generation_user_message,
+    find_active_generation, generation_requires_snapshot, save_generation_context_summary,
     get_generation_job, list_queued_generation_conversations, request_generation_cancellation,
     requeue_interrupted_generations, update_generation_status, GenerationJobRecord,
 };

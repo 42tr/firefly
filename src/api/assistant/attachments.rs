@@ -1,5 +1,55 @@
 use super::*;
 use sha2::{Digest, Sha256};
+use std::sync::OnceLock;
+
+#[derive(Debug, thiserror::Error)]
+#[error("附件存储空间已达上限（最多 {limit_mb} MB）")]
+pub(super) struct StorageQuotaExceeded {
+    limit_mb: u64,
+}
+
+struct StorageReservation {
+    _guard: tokio::sync::MutexGuard<'static, ()>,
+    used: u64,
+    limit: u64,
+}
+
+impl StorageReservation {
+    fn ensure(&self, additional: u64) -> anyhow::Result<()> {
+        if self.used.saturating_add(additional) > self.limit {
+            return Err(StorageQuotaExceeded { limit_mb: self.limit / (1024 * 1024) }.into());
+        }
+        Ok(())
+    }
+}
+
+static STORAGE_QUOTA_LOCK: OnceLock<tokio::sync::Mutex<()>> = OnceLock::new();
+
+async fn storage_reservation(storage_dir: &std::path::Path) -> anyhow::Result<StorageReservation> {
+    let limit = config::try_get().map(|config| config.assistant_max_storage_bytes()).unwrap_or(u64::MAX);
+    storage_reservation_with_limit(storage_dir, limit).await
+}
+
+async fn storage_reservation_with_limit(storage_dir: &std::path::Path, limit: u64) -> anyhow::Result<StorageReservation> {
+    let guard = STORAGE_QUOTA_LOCK.get_or_init(|| tokio::sync::Mutex::new(())).lock().await;
+    let used = storage_usage(storage_dir).await?;
+    Ok(StorageReservation { _guard: guard, used, limit })
+}
+
+async fn storage_usage(storage_dir: &std::path::Path) -> anyhow::Result<u64> {
+    let mut entries = match fs::read_dir(storage_dir).await {
+        Ok(entries) => entries,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(0),
+        Err(error) => return Err(error.into()),
+    };
+    let mut total: u64 = 0;
+    while let Some(entry) = entries.next_entry().await? {
+        if entry.file_type().await?.is_file() {
+            total = total.saturating_add(entry.metadata().await?.len());
+        }
+    }
+    Ok(total)
+}
 
 pub async fn download_attachment(
     auth_user: Session, Path(attachment_id): Path<i64>, request: axum::extract::Request,
@@ -94,7 +144,7 @@ pub(super) async fn parse_chat_multipart(multipart: &mut Multipart) -> Result<Pa
         let name = field.name().unwrap_or_default().to_string();
         match name.as_str() {
             "message" => {
-                message = field.text().await.map_err(|err| AppError::bad_request(err.to_string()))?;
+                message = read_message_field(field).await?;
             }
             "conversation_id" => {
                 let raw = field.text().await.map_err(|err| AppError::bad_request(err.to_string()))?;
@@ -114,7 +164,13 @@ pub(super) async fn parse_chat_multipart(multipart: &mut Multipart) -> Result<Pa
             "attachments" | "attachments[]" => {
                 let pending = save_multipart_attachment(field, &storage_dir, size_limit)
                     .await
-                    .map_err(|err| AppError::bad_request(err.to_string()))?;
+                    .map_err(|err| {
+                        if err.downcast_ref::<StorageQuotaExceeded>().is_some() {
+                            AppError::new(StatusCode::INSUFFICIENT_STORAGE, err.to_string())
+                        } else {
+                            AppError::bad_request(err.to_string())
+                        }
+                    })?;
                 attachments.entries.push(pending);
             }
             _ => {}
@@ -123,6 +179,21 @@ pub(super) async fn parse_chat_multipart(multipart: &mut Multipart) -> Result<Pa
 
     attachments.disarm();
     Ok(ParsedChatPayload { message, enable_tools, conversation_id, goal_id, attachments: std::mem::take(&mut attachments.entries) })
+}
+
+async fn read_message_field(mut field: Field<'_>) -> Result<String, AppError> {
+    let mut bytes = Vec::new();
+    while let Some(chunk) = field.chunk().await.map_err(|err| AppError::bad_request(err.to_string()))? {
+        if bytes.len().saturating_add(chunk.len()) > super::MAX_CHAT_MESSAGE_BYTES {
+            return Err(AppError::new(StatusCode::PAYLOAD_TOO_LARGE, "消息内容过大，最多支持 100000 个字符"));
+        }
+        bytes.extend_from_slice(&chunk);
+    }
+    let message = String::from_utf8(bytes).map_err(|_| AppError::bad_request("消息必须是有效的 UTF-8 文本"))?;
+    if message.chars().count() > super::MAX_CHAT_MESSAGE_CHARS {
+        return Err(AppError::new(StatusCode::PAYLOAD_TOO_LARGE, "消息内容过大，最多支持 100000 个字符"));
+    }
+    Ok(message)
 }
 
 pub(super) fn is_multipart_content_type(value: &str) -> bool {
@@ -163,6 +234,7 @@ async fn save_multipart_attachment(
     let content_type = attachment_content_type(&file_name, field.content_type());
     let file_id = uuid::Uuid::new_v4().to_string();
     let path = storage_dir.join(&file_id);
+    let reservation = storage_reservation(storage_dir).await?;
     // Deletes the partial file on any error below or if the upload is aborted.
     let mut partial = PartialFile(Some(path.clone()));
     let mut file = fs::File::create(&path).await?;
@@ -178,6 +250,7 @@ async fn save_multipart_attachment(
                 size_limit / (1024 * 1024)
             ));
         }
+        reservation.ensure(written as u64)?;
         file.write_all(&chunk).await?;
         digest.update(&chunk);
     }
@@ -235,6 +308,8 @@ pub(super) async fn save_codex_image(
         _ => return Err(anyhow!("不支持的生成图片格式")),
     };
     fs::create_dir_all(storage_dir).await?;
+    let reservation = storage_reservation(storage_dir).await?;
+    reservation.ensure(bytes.len() as u64)?;
     let path = storage_dir.join(uuid::Uuid::new_v4().to_string());
     let mut partial = PartialFile(Some(path.clone()));
     fs::write(&path, &bytes).await?;
@@ -396,6 +471,15 @@ mod tests {
         assert!(save_multipart_attachment(field, &directory, 100 * 1024 * 1024).await.is_err());
         assert!(fs::read_dir(&directory).await.unwrap().next_entry().await.unwrap().is_none());
         fs::remove_dir(directory).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn storage_quota_counts_existing_files_and_rejects_overflow() {
+        let directory = tempfile::tempdir().unwrap();
+        fs::write(directory.path().join("existing"), b"1234").await.unwrap();
+        let reservation = storage_reservation_with_limit(directory.path(), 5).await.unwrap();
+        assert!(reservation.ensure(1).is_ok());
+        assert!(reservation.ensure(2).is_err());
     }
 
     #[tokio::test]

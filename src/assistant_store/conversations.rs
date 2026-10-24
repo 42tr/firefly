@@ -1,7 +1,7 @@
 //! Conversation state, workspace metadata, settings, and deletion guards.
 use chrono::{DateTime, Utc};
 use serde_json::Value;
-use sqlx::{query, query_as, query_scalar};
+use sqlx::{query, query_as, query_scalar, QueryBuilder, Sqlite};
 
 use super::{ConversationRecord, NewConversation};
 use crate::db;
@@ -306,6 +306,7 @@ pub async fn set_claude_settings(
     Ok(Some(record))
 }
 
+#[cfg(test)]
 pub async fn set_conversation_archived(conversation_id: i64, user_id: &str, archived: bool) -> anyhow::Result<bool> {
     // Serialize with submission/retry transactions so a new turn cannot race archival.
     let mut tx = db::pool().begin_with("BEGIN IMMEDIATE").await?;
@@ -328,6 +329,58 @@ pub async fn set_conversation_archived(conversation_id: i64, user_id: &str, arch
     Ok(true)
 }
 
+/// Apply conversation metadata changes atomically so archive/rename/pin cannot
+/// leave a half-updated record when one field is invalid.
+pub async fn update_conversation_fields(
+    conversation_id: i64, user_id: &str, title: Option<&str>, pinned: Option<bool>, archived: Option<bool>,
+) -> anyhow::Result<bool> {
+    anyhow::ensure!(title.is_none_or(|value| value.chars().count() <= 255), "会话标题不能超过 255 字");
+    let mut tx = db::pool().begin_with("BEGIN IMMEDIATE").await?;
+    let current: Option<bool> = query_scalar(
+        "SELECT is_archived FROM assistant_conversations WHERE id=?1 AND user_id=?2",
+    )
+    .bind(conversation_id)
+    .bind(user_id)
+    .fetch_optional(&mut *tx)
+    .await?;
+    let Some(current_archived) = current else { return Ok(false) };
+    if archived == Some(true) && !current_archived {
+        let busy: bool = query_scalar(CONVERSATION_BUSY_SQL)
+            .bind(conversation_id)
+            .fetch_one(&mut *tx)
+            .await?;
+        if busy || crate::assistant_job::global_registry().find_active_by_conversation(conversation_id).is_some() {
+            return Err(ConversationArchivalBlocked.into());
+        }
+    }
+
+    let mut builder = QueryBuilder::<Sqlite>::new("UPDATE assistant_conversations SET ");
+    let mut has_field = false;
+    if let Some(title) = title {
+        builder.push("title = ").push_bind(title);
+        has_field = true;
+    }
+    if let Some(pinned) = pinned {
+        if has_field { builder.push(", "); }
+        builder.push("is_pinned = ").push_bind(pinned);
+        has_field = true;
+    }
+    if let Some(archived) = archived {
+        if has_field { builder.push(", "); }
+        builder.push("is_archived = ").push_bind(archived);
+        has_field = true;
+    }
+    if has_field { builder.push(", "); }
+    builder.push("updated_at = CAST(unixepoch('subsec') * 1000000 AS INTEGER)");
+    builder.push(" WHERE id = ").push_bind(conversation_id)
+        .push(" AND user_id = ").push_bind(user_id);
+    builder.build().execute(&mut *tx).await?;
+    tx.commit().await?;
+    crate::assistant_events::notify(Some(user_id), "conversations");
+    Ok(true)
+}
+
+#[cfg(test)]
 pub async fn set_conversation_pinned(conversation_id: i64, user_id: &str, pinned: bool) -> anyhow::Result<bool> {
     let result = query(
         "UPDATE assistant_conversations
@@ -366,6 +419,7 @@ pub async fn set_generated_conversation_title(
     Ok(result.rows_affected() > 0)
 }
 
+#[cfg(test)]
 pub async fn rename_conversation(conversation_id: i64, user_id: &str, title: &str) -> anyhow::Result<()> {
     let pool = db::pool();
     query(
