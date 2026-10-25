@@ -60,11 +60,22 @@ pub async fn start(pool: SqlitePool) -> anyhow::Result<()> {
         .set(manager.clone())
         .map_err(|_| anyhow!("task manager already initialized"))?;
     tokio::spawn(async move {
+        // Coalesce wakeup bursts (tool writes, task completions) so dispatch
+        // runs at most once per interval; the periodic fallback still reruns.
+        const DISPATCH_MIN_INTERVAL: Duration = Duration::from_millis(250);
         loop {
+            let started = tokio::time::Instant::now();
             if let Err(e) = manager.dispatch().await {
                 tracing::error!("任务调度失败: {e:#}");
             }
-            tokio::select! { _ = manager.changed.notified() => {}, _ = tokio::time::sleep(Duration::from_millis(500)) => {} }
+            tokio::select! {
+                _ = manager.changed.notified() => {
+                    if let Some(remaining) = DISPATCH_MIN_INTERVAL.checked_sub(started.elapsed()) {
+                        tokio::time::sleep(remaining).await;
+                    }
+                },
+                _ = tokio::time::sleep(Duration::from_millis(500)) => {},
+            }
         }
     });
     Ok(())

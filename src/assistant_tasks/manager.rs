@@ -2,7 +2,7 @@
 use g::Tool;
 use serde_json::{json, Value};
 use sqlx::{query, query_as, query_scalar, SqlitePool};
-use std::{collections::HashMap, sync::Arc, time::Duration};
+use std::{collections::{HashMap, HashSet}, sync::Arc, time::Duration};
 use tokio::sync::{Mutex, Notify};
 use tokio_util::sync::CancellationToken;
 use uuid::Uuid;
@@ -46,7 +46,12 @@ impl Manager {
             .bind(now())
             .execute(&self.pool)
             .await?;
-        self.changed.notify_waiters();
+        // Output chunks never enter polling snapshots and do not affect
+        // scheduling; waking the dispatcher and every long poll per 4 KiB
+        // chunk of command output would be pure overhead.
+        if kind != "output" {
+            self.changed.notify_waiters();
+        }
         Ok(())
     }
 
@@ -121,13 +126,30 @@ impl Manager {
     pub async fn dispatch(self: &Arc<Self>) -> anyhow::Result<()> {
         let _lock = self.mutation.lock().await;
         // A deleted conversation must not leave an invisible command running.
-        for (id, running) in self.running.lock().await.iter() {
-            let exists: bool = query_scalar("SELECT EXISTS(SELECT 1 FROM assistant_tasks WHERE id=?1)")
-                .bind(id)
-                .fetch_one(&self.pool)
-                .await?;
-            if !exists {
-                running.token.cancel();
+        let running_ids: Vec<String> = self.running.lock().await.keys().cloned().collect();
+        if !running_ids.is_empty() {
+            // One batched existence check instead of a query per running task.
+            let mut builder = sqlx::QueryBuilder::new("SELECT id FROM assistant_tasks WHERE id IN (");
+            let mut separated = builder.separated(", ");
+            for id in &running_ids {
+                separated.push_bind(id);
+            }
+            builder.push(")");
+            let existing: Vec<String> =
+                builder.build_query_scalar().fetch_all(&self.pool).await?;
+            let existing: HashSet<&String> = existing.iter().collect();
+            let stale: Vec<String> = running_ids
+                .iter()
+                .filter(|id| !existing.contains(*id))
+                .cloned()
+                .collect();
+            if !stale.is_empty() {
+                let running = self.running.lock().await;
+                for id in &stale {
+                    if let Some(running) = running.get(id) {
+                        running.token.cancel();
+                    }
+                }
             }
         }
         let queued: Vec<TaskRecord> =
@@ -135,12 +157,24 @@ impl Manager {
                 .bind(self.max_queued.min(10000) as i64)
                 .fetch_all(&self.pool)
                 .await?;
+        // Resolve live jobs once for the whole queue instead of one EXISTS per
+        // non-detached task. Jobs use BLOB UUIDs; malformed historical ids are
+        // not live.
+        let live_jobs: HashSet<[u8; 16]> = if queued.iter().any(|task| !task.detached) {
+            query_scalar("SELECT j.id FROM assistant_generation_jobs j WHERE j.status IN ('queued','running') AND NOT EXISTS(SELECT 1 FROM assistant_messages m WHERE m.generation_job_id=j.id AND m.role='user' AND json_extract(m.metadata,'$.cancellation_requested')=1)")
+                .fetch_all(&self.pool)
+                .await?
+                .into_iter()
+                .filter_map(|bytes: Vec<u8>| <[u8; 16]>::try_from(bytes.as_slice()).ok())
+                .collect()
+        } else {
+            HashSet::new()
+        };
         for task in queued {
             if !task.detached {
-                // Jobs use BLOB UUIDs; normalize the parameter so the primary
-                // key stays searchable. Malformed historical ids are not live.
-                let live:bool = query_scalar("SELECT EXISTS(SELECT 1 FROM assistant_generation_jobs j WHERE j.id=?1 AND j.status IN ('queued','running') AND NOT EXISTS(SELECT 1 FROM assistant_messages m WHERE m.generation_job_id=j.id AND m.role='user' AND json_extract(m.metadata,'$.cancellation_requested')=1))")
-                    .bind(Uuid::parse_str(&task.generation_job_id).ok()).fetch_one(&self.pool).await?;
+                let live = Uuid::parse_str(&task.generation_job_id)
+                    .ok()
+                    .is_some_and(|id| live_jobs.contains(&id.into_bytes()));
                 if !live {
                     self.finish(&task.id, "cancelled", None, Some("所属回答已停止".into()))
                         .await?;

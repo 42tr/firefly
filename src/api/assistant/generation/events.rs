@@ -187,20 +187,14 @@ pub(super) async fn handle_run_event(
                 })
                 .collect::<Vec<_>>();
             for call in &tool_calls {
-                save_tool_detail(conversation_id, Some(job.id), ToolDetail {
-                    call_id: &call.id,
-                    parent_id: "",
-                    name: &call.name,
-                    input: Some(&call.arguments),
-                    output: None,
-                    status: "queued",
-                }).await?;
                 job.emit("tool_call", json!({ "id": call.id, "name": call.name, "arguments": call.arguments }));
             }
             if !content.is_empty() || !tool_calls.is_empty() {
                 let assistant =
                     Message::assistant(content, if tool_calls.is_empty() { None } else { Some(tool_calls) });
                 conversation.add_message(assistant.clone());
+                // persist_message records the "queued" detail row for each
+                // tool call; writing it here as well would double the upserts.
                 persist_message(conversation_id, &assistant, Some(json!({"usage": usage})), Some(job.id)).await?;
             }
         }
