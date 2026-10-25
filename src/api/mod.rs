@@ -49,7 +49,7 @@ macro_rules! frontend_bundles {
 
 pub fn app() -> Router {
     let allowed_origins = config::cors_allowed_origins().unwrap_or_else(|err| {
-        eprintln!("Failed to parse CORS_ALLOWED_ORIGINS: {}", err);
+        tracing::error!("Failed to parse CORS_ALLOWED_ORIGINS: {}", err);
         vec!["http://localhost:5173".parse::<HeaderValue>().unwrap()]
     });
 

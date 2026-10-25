@@ -165,7 +165,7 @@ pub(crate) fn provider_models_cache() -> &'static ProviderModelsCache {
 
 /// 读取仍然有效的缓存条目：成功结果用长 TTL，失败结果只用短 TTL，让上游恢复后能很快重试。
 pub(crate) fn cached_provider_models(cache_key: &str) -> Option<ProviderModelsEntry> {
-    let cache = provider_models_cache().lock().unwrap();
+    let cache = provider_models_cache().lock().unwrap_or_else(|poisoned| poisoned.into_inner());
     let entry = cache.get(cache_key)?;
     let ttl = if entry.error.is_some() { PROVIDER_MODELS_ERROR_TTL } else { PROVIDER_MODELS_CACHE_TTL };
     (entry.fetched_at.elapsed() < ttl).then(|| entry.clone())
@@ -297,7 +297,7 @@ pub async fn hydrate_provider_models(listing: &mut ModelProviderListing) {
                     (Vec::new(), Some(message))
                 }
             };
-            let mut cache = provider_models_cache().lock().unwrap();
+            let mut cache = provider_models_cache().lock().unwrap_or_else(|poisoned| poisoned.into_inner());
             // 拉取失败时保留上一次成功的列表，前端仍可下拉，同时展示失败提示。
             let previous = cache.get(&cache_key).map(|entry| entry.models.clone()).unwrap_or_default();
             let models = if models.is_empty() && error.is_some() { previous } else { models };

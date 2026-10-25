@@ -63,8 +63,29 @@ unsafe extern "C" fn scalar(ctx: *mut ffi::sqlite3_context, argc: i32, argv: *mu
     }
 }
 
+thread_local! {
+    // LIKE is called once per row, but each query repeats the same handful of
+    // patterns; compiling them once per thread keeps large scans cheap.
+    static LIKE_REGEX_CACHE: std::cell::RefCell<std::collections::HashMap<(String, bool), Option<regex::Regex>>> =
+        std::cell::RefCell::new(std::collections::HashMap::new());
+}
+
 fn like_matches(value: &str, pattern: &str, insensitive: bool) -> bool {
-    // SQL wildcards and backslash escaping, with Unicode case handling.
+    let regex = LIKE_REGEX_CACHE.with(|cache| {
+        let mut cache = cache.borrow_mut();
+        if cache.len() > 256 {
+            cache.clear();
+        }
+        cache
+            .entry((pattern.to_owned(), insensitive))
+            .or_insert_with(|| build_like_regex(pattern, insensitive))
+            .clone()
+    });
+    regex.is_some_and(|regex| regex.is_match(value))
+}
+
+/// Translate SQL wildcards with backslash escaping into an anchored Unicode regex.
+fn build_like_regex(pattern: &str, insensitive: bool) -> Option<regex::Regex> {
     let mut expression = String::from("\\A");
     let mut chars = pattern.chars();
     while let Some(ch) = chars.next() {
@@ -73,7 +94,7 @@ fn like_matches(value: &str, pattern: &str, insensitive: bool) -> bool {
             '_' => expression.push('.'),
             '\\' => match chars.next() {
                 Some(c) => expression.push_str(&regex::escape(&c.to_string())),
-                None => return false,
+                None => return None,
             },
             c => expression.push_str(&regex::escape(&c.to_string())),
         }
@@ -83,7 +104,7 @@ fn like_matches(value: &str, pattern: &str, insensitive: bool) -> bool {
         .case_insensitive(insensitive)
         .dot_matches_new_line(true)
         .build()
-        .is_ok_and(|regex| regex.is_match(value))
+        .ok()
 }
 
 /// Register scalar functions with a timezone owned by this SQLite connection.

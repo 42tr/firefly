@@ -24,7 +24,19 @@ pub async fn list_workspace(
 }
 
 pub async fn codex_providers(_auth_user: Session) -> Json<Value> {
-    let mut listing = codex::list_model_providers();
+    // Reading ~/.codex/config.toml is synchronous filesystem work.
+    let mut listing = match tokio::task::spawn_blocking(codex::list_model_providers).await {
+        Ok(listing) => listing,
+        Err(error) => {
+            tracing::warn!(error = %error, "读取 Codex 平台配置失败");
+            codex::ModelProviderListing {
+                default: None,
+                default_model: None,
+                default_reasoning_level: None,
+                providers: Vec::new(),
+            }
+        }
+    };
     let (_, official_models) =
         tokio::join!(codex::hydrate_provider_models(&mut listing), codex::list_official_models(),);
     let (official_models, official_models_error) = match official_models {
@@ -47,8 +59,16 @@ pub async fn codex_providers(_auth_user: Session) -> Json<Value> {
 
 pub async fn claude_models(_auth_user: Session) -> Result<Json<Value>, AppError> {
     let cfg = config::get();
-    let listing = claude::providers().map_err(AppError::internal_server_error)?;
-    let defaults = claude::cli_defaults(&cfg).map_err(AppError::internal_server_error)?;
+    // The native settings scan reads several files synchronously; keep it off
+    // the async workers in case HOME sits on slow storage.
+    let (listing, defaults) = tokio::task::spawn_blocking(move || {
+        let defaults = claude::cli_defaults(&cfg);
+        (claude::providers(), defaults)
+    })
+    .await
+    .map_err(|error| AppError::internal_server_error(format!("读取 Claude 配置任务失败: {error}")))?;
+    let listing = listing.map_err(AppError::internal_server_error)?;
+    let defaults = defaults.map_err(AppError::internal_server_error)?;
     Ok(Json(json!({
         "default": "cli",
         "providers": listing.providers,

@@ -599,7 +599,12 @@ pub async fn cancel_job(auth_user: Session, Path(job_id): Path<uuid::Uuid>) -> R
             }
         }
     }
-    let job = job.expect("registered cancellation path has a job");
+    // Every path above either returned or reassigned `job` from a fresh
+    // registry lookup; keep an explicit response instead of a panic invariant.
+    let Some(job) = job else {
+        crate::assistant_events::notify(Some(&user_id), "conversations");
+        return Ok(Json(json!({ "ok": true, "job_id": job_id, "status": "cancelling" })));
+    };
 
     if job.user_id != user_id {
         return Err(AppError::not_found("生成任务不存在或无权访问"));
