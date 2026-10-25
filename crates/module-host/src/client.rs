@@ -12,7 +12,7 @@ use rmcp::{
     },
     RoleClient, ServiceExt,
 };
-use serde_json::{json, Value};
+use serde_json::{json, Map, Value};
 use std::{collections::HashSet, sync::Arc, time::Duration};
 use tokio_util::sync::CancellationToken;
 
@@ -413,6 +413,99 @@ pub struct ModuleTool {
     pub module: Arc<Module>,
     pub definition: Value,
 }
+
+/// MCP permits omitted JSON Schema types; Moonshot's tool dialect does not.
+fn normalize_model_schema(schema: &Value) -> Value {
+    fn value_type(value: &Value) -> &'static str {
+        match value {
+            Value::Null => "null",
+            Value::Bool(_) => "boolean",
+            Value::Number(number) if number.is_i64() || number.is_u64() => "integer",
+            Value::Number(_) => "number",
+            Value::Array(_) => "array",
+            Value::Object(_) => "object",
+            Value::String(_) => "string",
+        }
+    }
+
+    fn repair(value: &Value, property: Option<&str>) -> Value {
+        let Value::Object(object) = value else {
+            return value.clone();
+        };
+        let mut repaired = object.clone();
+        repaired.remove("$schema");
+        repaired.remove("title");
+
+        if let Some(Value::Object(properties)) = object.get("properties") {
+            let properties = properties
+                .iter()
+                .map(|(name, schema)| (name.clone(), repair(schema, Some(name))))
+                .collect::<Map<_, _>>();
+            repaired.insert("properties".into(), Value::Object(properties));
+        }
+        for key in ["items", "additionalProperties", "contains"] {
+            if let Some(schema) = object.get(key).filter(|schema| schema.is_object()) {
+                repaired.insert(key.into(), repair(schema, None));
+            }
+        }
+        for key in ["allOf", "anyOf", "oneOf", "prefixItems"] {
+            if let Some(Value::Array(items)) = object.get(key) {
+                repaired.insert(
+                    key.into(),
+                    Value::Array(items.iter().map(|item| repair(item, None)).collect()),
+                );
+            }
+        }
+
+        if !repaired.contains_key("type") {
+            let inferred = if property == Some("body") {
+                "object"
+            } else if object.contains_key("properties")
+                || object.contains_key("required")
+                || object.contains_key("additionalProperties")
+            {
+                "object"
+            } else if object.contains_key("items") || object.contains_key("prefixItems") {
+                "array"
+            } else if let Some(Value::Array(values)) = object.get("enum") {
+                values.first().map(value_type).unwrap_or("string")
+            } else if let Some(value) = object.get("const") {
+                value_type(value)
+            } else {
+                "string"
+            };
+            repaired.insert("type".into(), json!(inferred));
+        }
+
+        if repaired["type"] == "object" {
+            repaired.entry("properties").or_insert_with(|| json!({}));
+            repaired.entry("required").or_insert_with(|| json!([]));
+        } else if repaired["type"] == "array" {
+            repaired
+                .entry("items")
+                .or_insert_with(|| json!({"type":"string"}));
+        }
+        Value::Object(repaired)
+    }
+
+    let mut normalized = repair(schema, None);
+    if !normalized.is_object() {
+        normalized = json!({"type":"object","properties":{},"required":[]});
+    }
+    normalized["type"] = json!("object");
+    normalized
+        .as_object_mut()
+        .unwrap()
+        .entry("properties")
+        .or_insert_with(|| json!({}));
+    normalized
+        .as_object_mut()
+        .unwrap()
+        .entry("required")
+        .or_insert_with(|| json!([]));
+    normalized
+}
+
 #[async_trait::async_trait]
 impl g::Tool for ModuleTool {
     fn spec(&self) -> g::ToolSpec {
@@ -427,7 +520,7 @@ impl g::Tool for ModuleTool {
                 self.module.manifest.name,
                 self.definition["description"].as_str().unwrap_or_default()
             ),
-            input_schema: self.definition["inputSchema"].clone(),
+            input_schema: normalize_model_schema(&self.definition["inputSchema"]),
             behavior: g::ToolBehavior {
                 read_only,
                 idempotent: read_only || self.definition["annotations"]["idempotentHint"] == true,
@@ -472,5 +565,32 @@ impl g::Tool for ModuleTool {
             is_error: result["isError"] == true,
             value: result,
         })
+    }
+}
+
+#[cfg(test)]
+mod schema_tests {
+    use super::normalize_model_schema;
+    use serde_json::json;
+
+    #[test]
+    fn normalizes_mcp_schemas_for_strict_model_providers() {
+        let schema = json!({
+            "type": "object",
+            "properties": {
+                "method": {"enum": ["POST", "DELETE"]},
+                "body": {},
+                "values": {"type": "array", "items": {"enum": [1, 2]}}
+            },
+            "required": ["method"]
+        });
+        let normalized = normalize_model_schema(&schema);
+        assert_eq!(normalized["properties"]["method"]["type"], "string");
+        assert_eq!(normalized["properties"]["body"]["type"], "object");
+        assert_eq!(
+            normalized["properties"]["values"]["items"]["type"],
+            "integer"
+        );
+        assert_eq!(normalized["required"], json!(["method"]));
     }
 }
