@@ -315,12 +315,45 @@ pub async fn refresh(memory: &MemoryRecord) {
     )
     .await
     {
-        Ok(Ok(())) => {}
-        Ok(Err(err)) => warn!(memory_id = memory.id, "memory embedding deferred: {err:#}"),
-        Err(_) => warn!(
-            memory_id = memory.id,
-            "memory embedding timed out; background indexer will retry"
-        ),
+        Ok(Ok(())) => note_refresh_outcome(&service, false),
+        Ok(Err(err)) => {
+            note_refresh_outcome(&service, true);
+            warn!(memory_id = memory.id, "memory embedding deferred: {err:#}");
+        }
+        Err(_) => {
+            note_refresh_outcome(&service, true);
+            warn!(
+                memory_id = memory.id,
+                "memory embedding timed out; background indexer will retry"
+            );
+        }
+    }
+}
+
+/// After a refresh failure, search skips on-path bulk re-embedding for a
+/// cooldown window instead of repeating doomed calls on every message.
+const REFRESH_FAILURE_COOLDOWN: Duration = Duration::from_secs(60);
+static REFRESH_FAILURES: std::sync::LazyLock<
+    std::sync::Mutex<std::collections::HashMap<String, std::time::Instant>>,
+> = std::sync::LazyLock::new(|| std::sync::Mutex::new(std::collections::HashMap::new()));
+
+fn refresh_cooldown_active(service: &EmbeddingService) -> bool {
+    REFRESH_FAILURES
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner())
+        .get(&service.space)
+        .is_some_and(|failed_at| failed_at.elapsed() < REFRESH_FAILURE_COOLDOWN)
+}
+
+fn note_refresh_outcome(service: &EmbeddingService, failed: bool) {
+    let mut failures = REFRESH_FAILURES.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    if failed {
+        failures.insert(service.space.clone(), std::time::Instant::now());
+    } else {
+        failures.remove(&service.space);
+    }
+    if failures.len() > 16 {
+        failures.clear();
     }
 }
 
@@ -709,8 +742,19 @@ async fn search_with(
     };
     let semantic = async {
         let query_vector = service.embed(&[query.to_owned()]).await?.remove(0);
-        // Also repair a missing index on first use, without waiting for the next background sweep.
-        refresh_with(&service, &memories, Some(query_vector.len())).await?;
+        // Repair missing or stale indexes on first use, without waiting for the
+        // next background sweep. Failures cool down per embedding space so a
+        // broken endpoint is not bulk re-embedded on every user message.
+        if refresh_cooldown_active(&service) {
+            anyhow::bail!("记忆索引刷新处于失败冷却中，等待后台索引器重试");
+        }
+        match refresh_with(&service, &memories, Some(query_vector.len())).await {
+            Ok(()) => note_refresh_outcome(&service, false),
+            Err(error) => {
+                note_refresh_outcome(&service, true);
+                return Err(error);
+            }
+        }
         // Re-read after the network wait: disabled, deleted, or edited memories must not be injected.
         let current = assistant_store::list_enabled_memories(user_id).await?;
         let cached = assistant_store::list_memory_embeddings(user_id, &service.space).await?;
