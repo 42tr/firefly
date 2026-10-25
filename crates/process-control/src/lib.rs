@@ -4,7 +4,10 @@
 //! disarms the guard before signalling so a later `Drop` cannot signal a
 //! recycled process-group ID. [`ProcessGroup::terminate`] is the optional
 //! graceful first signal and intentionally leaves the guard armed for the
-//! caller's later forceful [`ProcessGroup::kill`].
+//! caller's later forceful [`ProcessGroup::kill`]. Callers that have reaped
+//! the child through a normal exit should call [`ProcessGroup::disarm`]:
+//! signalling a group whose leader was already waited for risks hitting a
+//! recycled process-group ID.
 
 use std::sync::atomic::{AtomicU32, Ordering};
 
@@ -22,6 +25,13 @@ impl ProcessGroup {
             // Commands using this guard must be spawned with process_group(0).
             unsafe { libc::killpg(pid as libc::pid_t, libc::SIGTERM) };
         }
+    }
+
+    /// Stop tracking the group without signalling it. Call after the child has
+    /// been reaped through a normal exit: the group ID may be recycled later,
+    /// and descendants left behind by a successful exit are not ours to kill.
+    pub fn disarm(&self) {
+        self.0.store(0, Ordering::Release);
     }
 
     /// Forcefully stop the process group and disarm this guard.

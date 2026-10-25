@@ -47,9 +47,18 @@ impl ClaudeTurn {
             .ok_or_else(|| anyhow!("Claude CLI 缺少 stderr"))?;
         tokio::spawn(async move {
             let mut lines = BufReader::new(stderr).lines();
-            while let Ok(Some(line)) = lines.next_line().await {
-                if !line.trim().is_empty() {
-                    warn!("claude: {}", line);
+            loop {
+                match lines.next_line().await {
+                    Ok(Some(line)) => {
+                        if !line.trim().is_empty() {
+                            warn!("claude: {}", line);
+                        }
+                    }
+                    Ok(None) => break,
+                    Err(error) => {
+                        warn!("claude: 读取 stderr 失败: {error}");
+                        break;
+                    }
                 }
             }
         });
@@ -86,6 +95,10 @@ impl ClaudeTurn {
             .await
             .context("等待 Claude CLI 退出失败")?;
         if status.success() {
+            // The child is reaped and exited cleanly: stop tracking its group so
+            // a later Drop cannot signal a recycled process-group ID.
+            self.process_group.disarm();
+            self.stopped = true;
             Ok(None)
         } else {
             Err(anyhow!("Claude CLI 异常退出: {}", status))

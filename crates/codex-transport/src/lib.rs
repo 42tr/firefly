@@ -452,7 +452,12 @@ impl CodexAppServer {
         if result["status"] == "notLoaded" { return Ok(()); }
         timeout(INTERRUPT_TIMEOUT, async {
             loop {
-                let event = events.recv().await.context("等待 Codex 会话卸载失败")?;
+                let event = match events.recv().await {
+                    Ok(event) => event,
+                    // Falling behind only means missed unrelated notifications.
+                    Err(broadcast::error::RecvError::Lagged(_)) => continue,
+                    Err(_) => return Err(anyhow!("等待 Codex 会话卸载失败")),
+                };
                 if notification_method(&event) == Some("thread/closed")
                     && notification_params(&event)["threadId"].as_str() == Some(thread_id) {
                     return Ok::<_, anyhow::Error>(());
