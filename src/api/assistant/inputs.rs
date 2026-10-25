@@ -50,12 +50,6 @@ async fn attachment_content(attachment: &MessageAttachment) -> anyhow::Result<Ve
             base64::engine::general_purpose::STANDARD.encode(bytes)
         ))]);
     }
-    if attachment.content_type == "application/pdf" || attachment.file_name.to_ascii_lowercase().ends_with(".pdf") {
-        let bytes = read_limited(&attachment.storage_path, MAX_FILE_BYTES).await?;
-        anyhow::ensure!(bytes.len() <= MAX_FILE_BYTES, "PDF 超过读取上限");
-        let text = tokio::task::spawn_blocking(move || extract_pdf(&bytes)).await??;
-        return Ok(vec![GContent::text(text)]);
-    }
     if super::generation::is_text_attachment(attachment) {
         let bytes = read_limited(&attachment.storage_path, TEXT_BYTES).await?;
         let truncated = bytes.len() > TEXT_BYTES;
@@ -75,7 +69,7 @@ async fn attachment_content(attachment: &MessageAttachment) -> anyhow::Result<Ve
         return Ok(vec![GContent::text(text)]);
     }
     Ok(vec![GContent::text(format!(
-        "当前无法读取 {} 格式的正文。请用户转换为文本、PDF 或图片后提供，不能根据文件名推断内容。",
+        "当前无法读取 {} 格式的正文。请用户转换为文本或图片后提供，不能根据文件名推断内容。",
         attachment.content_type
     ))])
 }
@@ -91,32 +85,6 @@ fn prepare_image(bytes: Vec<u8>) -> anyhow::Result<Vec<u8>> {
     let mut output = std::io::Cursor::new(Vec::new());
     image.write_to(&mut output, image::ImageFormat::Png)?;
     Ok(output.into_inner())
-}
-
-fn extract_pdf(bytes: &[u8]) -> anyhow::Result<String> {
-    let document = lopdf::Document::load_mem(bytes)?;
-    let pages = document.get_pages();
-    let mut text = String::new();
-    let mut read_pages = 0;
-    for page in pages.keys().take(20) {
-        text.push_str(&format!("\n[第 {page} 页]\n"));
-        text.push_str(&document.extract_text(&[*page])?);
-        read_pages += 1;
-        if text.len() > TEXT_BYTES {
-            break;
-        }
-    }
-    // Page markers do not count as successfully extracted document content.
-    anyhow::ensure!(
-        text.lines()
-            .any(|line| !line.trim().is_empty() && !line.starts_with("[第 ")),
-        "PDF 没有可提取的正文，可能是扫描件；请提供页面图片（当前不自动 OCR）"
-    );
-    if text.len() > TEXT_BYTES || read_pages < pages.len() {
-        utils::truncate_to_char_boundary(&mut text, TEXT_BYTES);
-        text.push_str("\n[PDF 正文已截断，最多读取前 20 页和 8192 字节。]");
-    }
-    Ok(text)
 }
 
 #[cfg(test)]
@@ -151,7 +119,7 @@ mod tests {
         assert!(
             matches!(&parts[0], GContent::Text { text } if text.contains("已截断") && text.len() < TEXT_BYTES + 200)
         );
-        let (_dir, attachment) = file("document.docx", "application/octet-stream", b"binary").await;
+        let (_dir, attachment) = file("document.pdf", "application/pdf", b"binary").await;
         assert!(
             matches!(&attachment_content(&attachment).await.unwrap()[0], GContent::Text { text } if text.contains("无法读取"))
         );
@@ -188,31 +156,4 @@ mod tests {
             .contains("未能读取"));
     }
 
-    #[test]
-    fn pdf_extracts_actual_text_and_rejects_unreadable_documents() {
-        use lopdf::{dictionary, Document, Object, Stream};
-        let mut document = Document::with_version("1.5");
-        let pages = document.new_object_id();
-        let font =
-            document.add_object(dictionary! { "Type" => "Font", "Subtype" => "Type1", "BaseFont" => "Helvetica" });
-        let resources = document.add_object(dictionary! { "Font" => dictionary! { "F1" => font } });
-        let content = document.add_object(Stream::new(
-            dictionary! {},
-            b"BT /F1 12 Tf 10 100 Td (Actual PDF content) Tj ET".to_vec(),
-        ));
-        let page = document.add_object(
-            dictionary! { "Type" => "Page", "Parent" => pages, "Resources" => resources,
-            "Contents" => content, "MediaBox" => vec![0.into(), 0.into(), 200.into(), 200.into()] },
-        );
-        document.objects.insert(
-            pages,
-            dictionary! { "Type" => "Pages", "Kids" => vec![Object::Reference(page)], "Count" => 1 }.into(),
-        );
-        let catalog = document.add_object(dictionary! { "Type" => "Catalog", "Pages" => pages });
-        document.trailer.set("Root", catalog);
-        let mut bytes = Vec::new();
-        document.save_to(&mut bytes).unwrap();
-        assert!(extract_pdf(&bytes).unwrap().contains("Actual PDF content"));
-        assert!(extract_pdf(b"invalid PDF").is_err());
-    }
 }

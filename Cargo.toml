@@ -31,7 +31,6 @@ base64 = "0.22"
 # time
 chrono = { version = "0.4", features = ["serde", "std"] }
 chrono-tz = "0.10.0"
-lopdf = "0.45"
 
 tokio = { version = "1", features = ["full"] }
 tokio-util = { workspace = true }
@@ -86,7 +85,7 @@ tower = { version = "0.5", features = ["util"] }
 # CARGO_PROFILE_RELEASE_LTO/CODEGEN_UNITS 环境变量启用 fat LTO 和单 codegen unit。
 [profile.release]
 strip = true
-lto = "thin"
+lto = false
 codegen-units = 16
 
 [workspace]

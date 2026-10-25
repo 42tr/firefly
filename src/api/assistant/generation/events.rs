@@ -326,7 +326,7 @@ fn format_content_with_attachment_hint(content: &str, attachments: &[MessageAtta
         .collect::<Vec<_>>();
     desc.sort();
     let hint = format!(
-        "[附件提示] 用户随消息上传了 {} 个文件：{}。\n请根据附件内容回答；需要处理 PDF 时可使用合并附件工具。",
+        "[附件提示] 用户随消息上传了 {} 个文件：{}。\n请根据附件内容回答；无法读取的格式请用户转换为文本或图片后提供。",
         attachments.len(),
         desc.join("；")
     );
