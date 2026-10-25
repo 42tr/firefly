@@ -11,6 +11,13 @@ use serde_json::{json, Value};
 /// Additional generations for a malformed tool batch, separate from transport retries.
 const MAX_ARGUMENT_REGENERATIONS: usize = 2;
 const MAX_ARGUMENT_LOG_BYTES: usize = 16 * 1024;
+/// Total budget for buffered (non-streaming) requests, headers included.
+const REQUEST_TIMEOUT: Duration = Duration::from_secs(180);
+/// Streaming must survive arbitrarily long generations, so the request-level
+/// cap is only a hang guard; real stall detection is the per-event idle timeout.
+const STREAM_TOTAL_TIMEOUT: Duration = Duration::from_secs(6 * 60 * 60);
+/// No SSE event (including heartbeats) within this window means the stream stalled.
+const STREAM_EVENT_IDLE_TIMEOUT: Duration = Duration::from_secs(120);
 const TOOL_ARGUMENT_INSTRUCTIONS: &str = "Every function call's arguments must encode exactly one JSON object conforming to its tool schema. Include all required properties, even if older calls in the history omitted them. Do not add code fences or text outside the object. Escape string values exactly once. For run_tools, each call needs tool, arguments and a descriptive title in the user's language. Never guess missing executable arguments.";
 
 #[derive(Debug)]
@@ -152,9 +159,13 @@ impl AgentModel {
         Ok(body)
     }
 
-    async fn send(&self, body: Value) -> Result<reqwest::Response, ModelError> {
+    async fn send(&self, body: Value, stream: bool) -> Result<reqwest::Response, ModelError> {
+        // A total timeout on a streaming response would cut off long generations
+        // mid-stream; those get a generous hang guard plus per-event idle checks
+        // in `read_response` instead.
+        let timeout = if stream { STREAM_TOTAL_TIMEOUT } else { REQUEST_TIMEOUT };
         let response = self.client.post(format!("{}/responses", self.base_url))
-            .bearer_auth(&self.api_key).timeout(Duration::from_secs(180)).json(&body)
+            .bearer_auth(&self.api_key).timeout(timeout).json(&body)
             .send().await.map_err(|e| ModelError::retryable(e.to_string()))?;
         if response.status().is_success() { return Ok(response); }
         let status = response.status();
@@ -170,14 +181,24 @@ impl AgentModel {
     async fn read_response(&self, request: ModelRequest, budget: usize,
         sink: Option<&dyn ModelEventSink>, stream: bool, diagnostics: &mut ResponseDiagnostics<'_>)
         -> Result<Value, ModelError> {
-        let response = self.send(self.body(request, stream, budget)?).await?;
+        let body = self.body(request, stream, budget)?;
+        let response = if stream {
+            tokio::time::timeout(STREAM_EVENT_IDLE_TIMEOUT, self.send(body, stream))
+                .await
+                .map_err(|_| ModelError::retryable("模型服务 120 秒未开始返回响应"))??
+        } else {
+            self.send(body, stream).await?
+        };
         diagnostics.record_response(&response);
         if !stream {
             let raw = response.bytes().await.map_err(|e| ModelError::new(e.to_string()))?;
             return diagnostics.parse_json(&raw, "response_body", None, None, None);
         }
         let mut events = response.bytes_stream().eventsource();
-        while let Some(event) = events.next().await {
+        while let Some(event) = tokio::time::timeout(STREAM_EVENT_IDLE_TIMEOUT, events.next())
+            .await
+            .map_err(|_| ModelError::retryable("模型流 120 秒没有新事件，连接已停滞"))?
+        {
             let event = event.map_err(|e| ModelError::retryable(e.to_string()))?;
             if event.data == "[DONE]" { continue; }
             let value = diagnostics.parse_json(event.data.as_bytes(), "stream_event", Some(&event.event), None, None)?;
