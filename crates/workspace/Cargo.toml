@@ -5,11 +5,10 @@ edition = "2021"
 license.workspace = true
 repository.workspace = true
 rust-version.workspace = true
-description = "Native workspace preparation and the file worker protocol for Firefly"
+description = "Native workspace preparation and file access for Firefly"
 
 [dependencies]
 anyhow = { workspace = true }
-g = { workspace = true }
 # Select zip's backend explicitly so this crate also builds on its own.
 flate2 = { workspace = true }
 libc = { workspace = true }

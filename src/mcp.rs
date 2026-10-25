@@ -109,7 +109,7 @@ pub fn list_tools() -> Vec<ToolDefinition> {
     tools
 }
 
-/// Schema shown to the model; mirrors the wire format of `g::safe_http::Request`.
+/// Schema shown to the model; mirrors the wire format of `firefly_safe_http::Request`.
 /// Fields exist for the derived schema, not for direct access.
 #[allow(dead_code)]
 #[derive(JsonSchema)]
@@ -132,7 +132,7 @@ pub async fn call_tool(name: &str, arguments: Value, _ctx: Option<&ToolContext>)
             if !config::get().assistant_http_tool_enabled {
                 return Err(anyhow!("http_request 工具未启用（ASSISTANT_HTTP_TOOL_ENABLED=false）"));
             }
-            let request: g::safe_http::Request =
+            let request: firefly_safe_http::Request =
                 serde_json::from_value(arguments).map_err(|err| anyhow!("参数格式错误: {}", err))?;
             let allowed_hosts = config::get()
                 .assistant_http_tool_allowed_hosts
@@ -141,7 +141,7 @@ pub async fn call_tool(name: &str, arguments: Value, _ctx: Option<&ToolContext>)
                 .filter(|host| !host.is_empty())
                 .map(str::to_owned)
                 .collect::<Vec<_>>();
-            let response = g::safe_http::execute(request, &allowed_hosts).await?;
+            let response = firefly_safe_http::execute(request, &allowed_hosts).await?;
             Ok(ToolResponse::new(response))
         }
         _ => Err(anyhow!("Unknown tool: {}", name)),

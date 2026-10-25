@@ -862,6 +862,8 @@ dependencies = [
  "firefly-codex-transport",
  "firefly-db",
  "firefly-module-host",
+ "firefly-process-control",
+ "firefly-safe-http",
  "firefly-workspace",
  "futures-util",
  "glow-agent",
@@ -903,7 +905,7 @@ name = "firefly-claude-transport"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "glow-agent",
+ "firefly-process-control",
  "serde_json",
  "tempfile",
  "tokio",
@@ -916,7 +918,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "chrono",
- "glow-agent",
+ "firefly-process-control",
  "libc",
  "regex",
  "serde_json",
@@ -996,6 +998,25 @@ dependencies = [
 ]
 
 [[package]]
+name = "firefly-process-control"
+version = "0.1.0"
+dependencies = [
+ "libc",
+]
+
+[[package]]
+name = "firefly-safe-http"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "futures-util",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "tokio",
+]
+
+[[package]]
 name = "firefly-sdk-counter-example"
 version = "0.1.0"
 dependencies = [
@@ -1015,7 +1036,6 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "flate2",
- "glow-agent",
  "libc",
  "serde_json",
  "tempfile",
@@ -1273,18 +1293,16 @@ dependencies = [
 
 [[package]]
 name = "glow-agent"
-version = "0.2.1"
+version = "0.3.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "440a515dc6b260c8f379f1574d595b03ce99c4a93f23a83db9123354bbd36ada"
+checksum = "86f5b78c340228a007364a5e9448da55b68eae6f7729d26cd468814c5d65e8a8"
 dependencies = [
  "anyhow",
  "async-trait",
  "eventsource-stream",
- "flate2",
  "futures-util",
  "glow-agent-macros",
  "jsonschema",
- "libc",
  "reqwest",
  "schemars 1.2.1",
  "scraper",
@@ -1298,7 +1316,6 @@ dependencies = [
  "tokio-util",
  "tracing",
  "uuid",
- "zip",
 ]
 
 [[package]]
