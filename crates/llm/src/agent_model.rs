@@ -10,6 +10,7 @@ use serde_json::{json, Value};
 
 /// Additional generations for a malformed tool batch, separate from transport retries.
 const MAX_ARGUMENT_REGENERATIONS: usize = 2;
+const MAX_ARGUMENT_LOG_BYTES: usize = 16 * 1024;
 const TOOL_ARGUMENT_INSTRUCTIONS: &str = "Every function call's arguments must encode exactly one JSON object conforming to its tool schema. Include all required properties, even if older calls in the history omitted them. Do not add code fences or text outside the object. Escape string values exactly once. For run_tools, each call needs tool, arguments and a descriptive title in the user's language. Never guess missing executable arguments.";
 
 #[derive(Debug)]
@@ -70,6 +71,18 @@ fn json_error_excerpt<'a>(raw: &'a [u8], error: &serde_json::Error) -> (std::bor
         while !text.is_char_boundary(end) { end -= 1; }
     }
     (String::from_utf8_lossy(&raw[start..end]), start)
+}
+
+/// Keep rejected tool arguments visible for diagnosis without allowing one
+/// model response to flood the service log.
+/// shortcut: 16 KiB, increase when failed calls routinely exceed this size.
+fn tool_arguments_excerpt(raw: &str) -> (String, bool) {
+    let mut end = raw.len().min(MAX_ARGUMENT_LOG_BYTES);
+    while end > 0 && !raw.is_char_boundary(end) { end -= 1; }
+    let truncated = end < raw.len();
+    let mut excerpt = raw[..end].to_owned();
+    if truncated { excerpt.push('…'); }
+    (excerpt, truncated)
 }
 
 #[derive(Clone)]
@@ -334,10 +347,14 @@ fn decode_response(value: &Value, diagnostics: &ResponseDiagnostics<'_>, tools: 
                 let id = field("call_id")?;
                 let name = field("name")?;
                 let argument_error = |error: super::tool_arguments::ArgumentError| {
+                    let (arguments_excerpt, arguments_truncated) = item["arguments"].as_str()
+                        .map(tool_arguments_excerpt)
+                        .unwrap_or_else(|| ("<missing or non-string>".into(), false));
                     tracing::warn!(model = diagnostics.model, request_id = %diagnostics.request_id,
                         upstream_request_id = ?diagnostics.upstream_request_id,
                         tool_name = name, call_id = id,
                         payload_bytes = item["arguments"].as_str().map(str::len),
+                        arguments_excerpt = ?arguments_excerpt, arguments_truncated,
                         feedback = ?error.feedback, error = %error.message,
                         "model tool arguments rejected");
                     ResponseError::Arguments {
@@ -438,6 +455,20 @@ pub(crate) fn budget_request(request: ModelRequest, budget: usize) -> Result<Mod
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn tool_arguments_excerpt_is_bounded_and_utf8_safe() {
+        let (short, truncated) = tool_arguments_excerpt(r#"{"calls":[]}"#);
+        assert_eq!(short, r#"{"calls":[]}"#);
+        assert!(!truncated);
+
+        let raw = "中".repeat(MAX_ARGUMENT_LOG_BYTES);
+        let (excerpt, truncated) = tool_arguments_excerpt(&raw);
+        assert!(truncated);
+        assert!(excerpt.ends_with('…'));
+        assert!(excerpt.len() <= MAX_ARGUMENT_LOG_BYTES + '…'.len_utf8());
+        assert!(excerpt.is_char_boundary(excerpt.len() - '…'.len_utf8()));
+    }
 
     #[test]
     fn provider_replay_is_budgeted_once_and_blank_output_is_rejected() {
