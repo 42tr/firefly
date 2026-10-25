@@ -12,10 +12,7 @@ description = "A self-hosted AI workspace with configurable agents and optional 
 firefly-claude-transport = { path = "crates/claude-transport" }
 firefly-codex-transport = { path = "crates/codex-transport" }
 firefly-db = { path = "crates/db" }
-firefly-llm = { path = "crates/llm" }
 firefly-module-host = { path = "crates/module-host" }
-firefly-process-control = { path = "crates/process-control" }
-firefly-safe-http = { path = "crates/safe-http" }
 firefly-workspace = { path = "crates/workspace" }
 reqwest = { version = "0.13.4", features = [
     "json",
@@ -95,10 +92,7 @@ members = [
     "crates/claude-transport",
     "crates/codex-transport",
     "crates/db",
-    "crates/llm",
     "crates/module-host",
-    "crates/process-control",
-    "crates/safe-http",
     "crates/workspace",
     "examples/modules/rust-sdk-counter",
 ]
@@ -121,7 +115,7 @@ eventsource-stream = "0.2.3"
 croner = "=2.1.0"
 futures-util = "0.3"
 flate2 = { version = "1.0", default-features = false, features = ["rust_backend"] }
-g = { package = "glow-agent", version = "=0.1.0" }
+g = { package = "glow-agent", version = "=0.2.0", features = ["limits", "safe-http", "process"] }
 jsonschema = { version = "0.33", default-features = false }
 libsqlite3-sys = { version = "=0.37.0", features = ["bundled"] }
 rmcp = { version = "3.3", default-features = false, features = ["client", "transport-child-process", "transport-streamable-http-client-reqwest", "reqwest"] }
@@ -148,3 +142,4 @@ sqlx = { version = "0.9", default-features = false, features = ["runtime-tokio",
 uuid = { version = "1.0", features = ["v4", "serde"] }
 tempfile = "3"
 tower = { version = "0.5", features = ["util"] }
+

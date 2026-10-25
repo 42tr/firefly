@@ -1,7 +1,7 @@
 use super::{Manager, TaskRecord};
 use anyhow::Context;
 use async_trait::async_trait;
-use firefly_process_control::ProcessGroup;
+use g::process_control::ProcessGroup;
 use g::{Tool, ToolBehavior, ToolError, ToolSpec};
 use serde_json::{json, Value};
 use std::{path::PathBuf, process::Stdio, time::Duration};

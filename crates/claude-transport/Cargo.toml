@@ -9,7 +9,7 @@ description = "Claude CLI process and streaming event transport for Firefly"
 
 [dependencies]
 anyhow = { workspace = true }
-firefly-process-control = { path = "../process-control" }
+g = { workspace = true }
 serde_json = { workspace = true }
 tokio = { workspace = true }
 tracing = { workspace = true }

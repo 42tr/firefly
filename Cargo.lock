@@ -861,10 +861,7 @@ dependencies = [
  "firefly-claude-transport",
  "firefly-codex-transport",
  "firefly-db",
- "firefly-llm",
  "firefly-module-host",
- "firefly-process-control",
- "firefly-safe-http",
  "firefly-workspace",
  "futures-util",
  "glow-agent",
@@ -906,7 +903,7 @@ name = "firefly-claude-transport"
 version = "0.1.0"
 dependencies = [
  "anyhow",
- "firefly-process-control",
+ "glow-agent",
  "serde_json",
  "tempfile",
  "tokio",
@@ -919,7 +916,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "chrono",
- "firefly-process-control",
+ "glow-agent",
  "libc",
  "regex",
  "serde_json",
@@ -943,31 +940,6 @@ dependencies = [
  "tempfile",
  "tokio",
  "tracing",
-]
-
-[[package]]
-name = "firefly-llm"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "async-trait",
- "axum",
- "dotenvy",
- "eventsource-stream",
- "futures-util",
- "glow-agent",
- "jsonschema",
- "libsqlite3-sys",
- "reqwest",
- "scraper",
- "serde",
- "serde_json",
- "sha2 0.10.8",
- "sqlx",
- "tempfile",
- "tokio",
- "tracing",
- "uuid",
 ]
 
 [[package]]
@@ -1020,26 +992,6 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "uuid",
-]
-
-[[package]]
-name = "firefly-process-control"
-version = "0.1.0"
-dependencies = [
- "libc",
-]
-
-[[package]]
-name = "firefly-safe-http"
-version = "0.1.0"
-dependencies = [
- "anyhow",
- "futures-util",
- "reqwest",
- "schemars 0.8.22",
- "serde",
- "serde_json",
- "tokio",
 ]
 
 [[package]]
@@ -1319,19 +1271,24 @@ dependencies = [
 
 [[package]]
 name = "glow-agent"
-version = "0.1.0"
+version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "28ad602a269b78470ce3abe5ee8231b729b1a5e2044562287ab8c4b033e42e52"
+checksum = "c7f09a00502eab1d8f7922bbedcf2987a123b7cde4e5a568d4cd754e11de2cb2"
 dependencies = [
+ "anyhow",
  "async-trait",
  "eventsource-stream",
  "futures-util",
  "glow-agent-macros",
  "jsonschema",
+ "libc",
  "reqwest",
  "schemars 1.2.1",
+ "scraper",
  "serde",
  "serde_json",
+ "sha2 0.10.8",
+ "sqlx",
  "thiserror 2.0.18",
  "tokio",
  "tokio-stream",

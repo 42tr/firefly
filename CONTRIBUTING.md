@@ -14,13 +14,11 @@ cargo build --locked
 
 前端源码、npm 配置、Vite 配置、UI SDK、示例页面和浏览器测试统一在 `frontend/`。本文命令在仓库根目录执行，npm 通过 `--prefix frontend` 指定目录；进入 `frontend/` 后可直接运行 `npm ci`、`npm run check` 等命令。`npm --prefix frontend run dev` 提供开发页面，另起 Rust 后端使用真实接口。纯前端测试模拟接口，无需模型凭据。
 
-Rust workspace 中，根 `firefly` crate 负责服务启动、HTTP API 和业务编排；`crates/workspace` 提供原生工作区准备与文件访问；`crates/module-host` 负责外部 MCP 模块的加载、连接和调度，由主程序传入目录、时区和数据库连接池。`crates/llm` 负责模型调用、流式解析、上下文压缩及预算计算，由主程序传入共享 HTTP 客户端和可选的模型限制缓存连接池。`crates/codex-transport` 提供 Codex CLI 传输，`crates/module-sdk` 供外部模块作者使用。数据库迁移统一保留在根目录的 `migrations_sqlite/`。
+Rust workspace 中，根 `firefly` crate 负责服务启动、HTTP API 和业务编排；`crates/workspace` 提供原生工作区准备与文件访问；`crates/module-host` 负责外部 MCP 模块的加载、连接和调度，由主程序传入目录、时区和数据库连接池。模型调用、流式解析、工具参数修复、上下文压缩、预算计算、SSRF 防护和 Unix 进程组守卫由 [glow-agent](https://github.com/42tr/g)（`g`，启用 `limits`、`safe-http`、`process` feature）提供；`src/llm.rs` 保留兼容重导出。`crates/codex-transport` 提供 Codex CLI 传输，`crates/module-sdk` 供外部模块作者使用。数据库迁移统一保留在根目录的 `migrations_sqlite/`。
 
 `crates/db` 提供 SQLite 连接、时间戳转换、自定义函数、忙等重试和在线备份。主程序的 `src/db.rs` 持有全局连接池、应用迁移和业务表结构测试，将连接池参数、时区和迁移对象传入数据库库。
 
 `crates/claude-transport` 提供 Claude CLI 进程、事件传输和进程组中断，接收调用方构造的命令。主程序的 `src/claude.rs` 负责供应商和模型选择、CLI 参数、提示词及本轮临时 settings 文件的生命周期。
-
-`crates/process-control` 提供跨根程序、Claude 和 Codex transport 共用的 Unix 进程组终止保护；`crates/safe-http` 提供模型工具使用的 SSRF 防护、主机白名单、禁止重定向和有界响应读取。MCP 工具注册和应用配置仍由主程序负责。
 
 业务存储入口 `src/assistant_store.rs` 保留统一重导出，记录类型、会话操作、消息分页和附件访问分别位于 `src/assistant_store/{types,conversations,messages,attachments}.rs`，相关回归位于同目录的 `tests.rs`。消息与附件共用的事务写入辅助函数仅在存储模块内共享。
 
@@ -35,7 +33,7 @@ Codex 入口 `src/codex.rs` 保留兼容重导出；平台和模型目录、工�
 可以单独运行新库的测试：
 
 ```sh
-cargo test --locked -p firefly-workspace -p firefly-module-host -p firefly-llm -p firefly-db -p firefly-claude-transport -p firefly-process-control -p firefly-safe-http
+cargo test --locked -p firefly-workspace -p firefly-module-host -p firefly-db -p firefly-claude-transport
 ```
 
 ## 验证修改

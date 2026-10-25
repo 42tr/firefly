@@ -9,7 +9,7 @@ use std::{
 
 use chrono::Utc;
 use firefly_db::backup as db_backup;
-use firefly_llm as llm;
+mod llm;
 use firefly_module_host as modules;
 use firefly_workspace::{files as workspace_files, prepare as workspace_prepare};
 use tokio::{net::TcpListener, time::timeout};

@@ -318,10 +318,10 @@ impl Settings {
             "请在“更多功能 → Agent 配置”中填写模型名称"
         );
         let mut model = llm::AgentModel::new(
-            crate::http_client::client().clone(),
             llm::normalize_bearer_secret(profile.api_key.as_deref().unwrap_or_default()),
             &profile.model,
         )
+        .with_http_client(crate::http_client::client().clone())
         .with_base_url(&profile.base_url)
         .with_context_budget(profile.context_tokens);
         if let Some(pool) = crate::db::maybe_pool() {

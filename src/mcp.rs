@@ -103,10 +103,27 @@ pub fn list_tools() -> Vec<ToolDefinition> {
                 "发起一次 HTTP 请求并返回状态码与响应体。按接口的 URL、方法、参数说明调用此工具执行。\
                 3xx 重定向不会自动跟随，如需跳转请对 Location 再次调用。"
                     .to_string(),
-            input_schema: openai_tool_schema::<firefly_safe_http::Request>(),
+            input_schema: openai_tool_schema::<HttpRequestArguments>(),
         });
     }
     tools
+}
+
+/// Schema shown to the model; mirrors the wire format of `g::safe_http::Request`.
+/// Fields exist for the derived schema, not for direct access.
+#[allow(dead_code)]
+#[derive(JsonSchema)]
+struct HttpRequestArguments {
+    #[schemars(description = "HTTP 方法：GET、POST、PUT、PATCH、DELETE、HEAD，默认 GET")]
+    method: Option<String>,
+    #[schemars(description = "完整请求 URL，仅支持 http/https")]
+    url: String,
+    #[schemars(description = "可选，请求头键值对，如 {\"Authorization\": \"Bearer xxx\"}")]
+    headers: Option<std::collections::HashMap<String, String>>,
+    #[schemars(description = "可选，请求体原文（如 JSON 字符串），仅 POST/PUT/PATCH 时有效")]
+    body: Option<String>,
+    #[schemars(description = "可选，超时秒数，默认 30，最大 120", range(min = 1, max = 120))]
+    timeout_secs: Option<u64>,
 }
 
 pub async fn call_tool(name: &str, arguments: Value, _ctx: Option<&ToolContext>) -> anyhow::Result<ToolResponse> {
@@ -115,7 +132,7 @@ pub async fn call_tool(name: &str, arguments: Value, _ctx: Option<&ToolContext>)
             if !config::get().assistant_http_tool_enabled {
                 return Err(anyhow!("http_request 工具未启用（ASSISTANT_HTTP_TOOL_ENABLED=false）"));
             }
-            let request: firefly_safe_http::Request =
+            let request: g::safe_http::Request =
                 serde_json::from_value(arguments).map_err(|err| anyhow!("参数格式错误: {}", err))?;
             let allowed_hosts = config::get()
                 .assistant_http_tool_allowed_hosts
@@ -124,7 +141,7 @@ pub async fn call_tool(name: &str, arguments: Value, _ctx: Option<&ToolContext>)
                 .filter(|host| !host.is_empty())
                 .map(str::to_owned)
                 .collect::<Vec<_>>();
-            let response = firefly_safe_http::execute(request, &allowed_hosts).await?;
+            let response = g::safe_http::execute(request, &allowed_hosts).await?;
             Ok(ToolResponse::new(response))
         }
         _ => Err(anyhow!("Unknown tool: {}", name)),
