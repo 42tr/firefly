@@ -107,7 +107,7 @@ impl App {
                 self.description,
                 false,
                 false,
-                json!({"type":"object","properties":{"method":{"enum":["POST","PUT","PATCH","DELETE"]},"path":{"type":"string"},"body":{}},"required":["method","path"],"additionalProperties":false}),
+                json!({"type":"object","properties":{"method":{"type":"string","enum":["POST","PUT","PATCH","DELETE"]},"path":{"type":"string"},"body":{"type":"object"}},"required":["method","path"],"additionalProperties":false}),
             ),
         ];
         if self.has_indicator {
@@ -384,6 +384,23 @@ mod tests {
         let public = tools.iter().find(|t| t["name"] == "read_public").unwrap();
         assert_eq!(public["annotations"]["readOnlyHint"], true);
         assert_eq!(tools[0]["_meta"]["ui"]["resourceUri"], "ui://example/app");
+    }
+
+    #[test]
+    fn request_tool_schema_has_provider_compatible_property_types() {
+        let request = app()
+            .tools()
+            .into_iter()
+            .find(|tool| tool["name"] == "request")
+            .unwrap();
+        let properties = request["inputSchema"]["properties"].as_object().unwrap();
+        for name in ["method", "path", "body"] {
+            assert!(
+                properties[name]["type"].is_string(),
+                "request.{name} must declare a type"
+            );
+        }
+        assert_eq!(properties["method"]["type"], "string");
     }
 
     #[tokio::test]
