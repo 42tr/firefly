@@ -1015,6 +1015,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "flate2",
+ "glow-agent",
  "libc",
  "serde_json",
  "tempfile",
@@ -1272,13 +1273,14 @@ dependencies = [
 
 [[package]]
 name = "glow-agent"
-version = "0.2.0"
+version = "0.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c7f09a00502eab1d8f7922bbedcf2987a123b7cde4e5a568d4cd754e11de2cb2"
+checksum = "440a515dc6b260c8f379f1574d595b03ce99c4a93f23a83db9123354bbd36ada"
 dependencies = [
  "anyhow",
  "async-trait",
  "eventsource-stream",
+ "flate2",
  "futures-util",
  "glow-agent-macros",
  "jsonschema",
@@ -1296,6 +1298,7 @@ dependencies = [
  "tokio-util",
  "tracing",
  "uuid",
+ "zip",
 ]
 
 [[package]]
