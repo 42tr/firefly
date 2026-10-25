@@ -91,12 +91,12 @@ modules/                          # 独立模块包
 
 开发环境、检查命令、浏览器测试及提交约定见 [CONTRIBUTING.md](CONTRIBUTING.md)。对话接口、后台任务、恢复与预算见 [Agent 文档](docs/assistant.md)。安全问题报告见 [SECURITY.md](SECURITY.md)。
 
-GitHub Actions **仅在推送 `v*` tag 时**验证、构建并发布 Release。分支推送、PR 和手动操作不触发，不部署服务器。三个平台的压缩包包含前端、配置示例、文档、许可证及第三方声明，Release 附带 SHA-256 校验和。发布步骤：
+GitHub Actions 在分支推送和 PR 时运行基础检查（前端检查、Rust 测试、Clippy 及 Python 回归）；**仅在推送 `v*` tag 时**验证、构建并发布 Release，手动操作不触发，不部署服务器。三个平台的压缩包包含前端、配置示例、文档、许可证及第三方声明，Release 附带 SHA-256 校验和。发布步骤：
 
 ```sh
 # 先按 CONTRIBUTING.md 完成本地检查、提交代码并推送 main。
-git tag -a v0.1.7 -m 'Firefly v0.1.7'
-git push origin v0.1.7
+git tag -a vX.Y.Z -m 'Firefly vX.Y.Z'
+git push origin vX.Y.Z
 ```
 
 tag 必须与 `Cargo.toml`、`frontend/package.json` 版本一致。重新发布使用新 tag，避免覆盖已有发布。使用仓库提供的 `GITHUB_TOKEN`，不需要服务器地址、密码或 SSH secrets。

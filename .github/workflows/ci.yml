@@ -1,0 +1,46 @@
+name: Check Firefly
+
+# Continuous checks for branch pushes and pull requests. Release publishing
+# stays in build.yml and only runs for v* tags.
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: firefly-ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    runs-on: ubuntu-24.04
+    timeout-minutes: 40
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@949feb2413d6458794dcd2491c4babbbce0c15c1 # v7.1.0
+        with:
+          node-version: '24'
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+      - uses: dtolnay/rust-toolchain@e2a55d2ffb04f378e9626c28d38b36d230d1e12f
+        with:
+          toolchain: '1.97.1'
+          components: clippy
+      - uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.9.2
+      - run: npm ci
+        working-directory: frontend
+      - run: npm run check
+        working-directory: frontend
+      - run: npm run test:module-sdk
+        working-directory: frontend
+      - run: cargo clippy --workspace --locked --all-targets -- -D clippy::correctness
+      - run: cargo test --workspace --locked -- --test-threads=4
+      - name: Python workspace regression
+        run: PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s src -p '*workspace_test.py'
+      - name: Python file service regression
+        run: PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s src/api -p '*_test.py'
