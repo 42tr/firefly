@@ -93,14 +93,24 @@ impl Host {
                     ),
                     Err(error) => ("unknown", None, Some(error.to_string())),
                 };
-                // Persisting a completion may be retried; the module operation never is.
-                loop {
-                    let saved = sqlx::query("UPDATE external_module_runs SET status=?,result=?,error=?,ended_at=? WHERE id=?")
+                // Persisting a completion may be retried with backoff; the
+                // module operation itself never is. Giving up keeps the
+                // semaphore permit free instead of stalling every job.
+                let mut saved = false;
+                for delay in [1, 3, 10] {
+                    let attempt = sqlx::query("UPDATE external_module_runs SET status=?,result=?,error=?,ended_at=? WHERE id=?")
                         .bind(status).bind(&output).bind(&error).bind(Utc::now().timestamp_millis()).bind(&run).execute(&pool).await;
-                    if saved.is_ok() {
+                    if attempt.is_ok() {
+                        saved = true;
                         break;
                     }
-                    tokio::time::sleep(std::time::Duration::from_secs(2)).await;
+                    if let Err(err) = attempt {
+                        tracing::warn!("module run {run}: persisting completion failed, retrying in {delay}s: {err:#}");
+                        tokio::time::sleep(std::time::Duration::from_secs(delay)).await;
+                    }
+                }
+                if !saved {
+                    tracing::error!("module run {run}: dropping completion record (status {status}); persistence kept failing");
                 }
                 let _ = sqlx::query("DELETE FROM external_module_runs WHERE module_id=? AND status!='running' AND id NOT IN (SELECT id FROM external_module_runs WHERE module_id=? ORDER BY scheduled_at DESC LIMIT 100)")
                     .bind(&module_id).bind(&module_id).execute(&pool).await;

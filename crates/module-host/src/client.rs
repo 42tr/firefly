@@ -144,16 +144,25 @@ impl Module {
                 .await
                 .map_err(|_| anyhow!("MCP 返回错误，执行结果未知；请查看模块日志"))
         };
-        let result = tokio::select! {
+        enum Outcome {
+            // Boxed: ServerResult is large next to the unit variants.
+            Completed(anyhow::Result<Box<ServerResult>>),
+            Cancelled,
+            Stopped,
+            TimedOut,
+        }
+        let outcome = tokio::select! {
             biased;
-            _ = self.stop.cancelled() => Err(anyhow!("模块已停用，执行结果未知")),
-            _ = cancel.cancelled() => Err(anyhow!("调用已取消，执行结果未知")),
-            result = tokio::time::timeout(Duration::from_secs(self.manifest.call_timeout_secs), operation) => result
-                .map_err(|_| anyhow!("模块调用超时，执行结果未知；请勿直接重试写入操作")).and_then(|r| r),
+            _ = self.stop.cancelled() => Outcome::Stopped,
+            _ = cancel.cancelled() => Outcome::Cancelled,
+            result = tokio::time::timeout(Duration::from_secs(self.manifest.call_timeout_secs), operation) => match result {
+                Ok(result) => Outcome::Completed(result.map(Box::new)),
+                Err(_) => Outcome::TimedOut,
+            },
         };
-        match result {
-            Ok(result) => {
-                let value = match result {
+        match outcome {
+            Outcome::Completed(Ok(result)) => {
+                let value = match *result {
                     ServerResult::ListToolsResult(v) => serde_json::to_value(v)?,
                     ServerResult::CallToolResult(v) => serde_json::to_value(v)?,
                     ServerResult::ReadResourceResult(v) => serde_json::to_value(v)?,
@@ -166,7 +175,10 @@ impl Module {
                 state.error = None;
                 Ok(value)
             }
-            Err(error) => {
+            // Only a transport or protocol failure means the shared connection
+            // is broken. Caller cancellations, module stops and timeouts leave
+            // it connected so chat, UI and scheduled jobs are not disrupted.
+            Outcome::Completed(Err(error)) => {
                 state.error = Some(error.to_string());
                 state.tools = None;
                 if let Some(service) = state.service.take() {
@@ -174,6 +186,12 @@ impl Module {
                 }
                 Err(error)
             }
+            Outcome::TimedOut => {
+                state.error = Some("模块调用超时".to_string());
+                Err(anyhow!("模块调用超时，执行结果未知；请勿直接重试写入操作"))
+            }
+            Outcome::Cancelled => Err(anyhow!("调用已取消，执行结果未知")),
+            Outcome::Stopped => Err(anyhow!("模块已停用，执行结果未知")),
         }
     }
 
