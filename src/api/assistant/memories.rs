@@ -77,11 +77,7 @@ pub async fn create_memory(
     let (title, content) = validate_memory_fields(&payload.title, &payload.content)?;
     let record = assistant_store::create_memory(auth_user.storage_scope(), &title, &content, payload.enabled.unwrap_or(true))
         .await
-        .map_err(|error| if error.is::<assistant_store::MemoryLimit>() {
-            AppError::bad_request(error)
-        } else {
-            AppError::internal_server_error(error)
-        })?;
+        .map_err(AppError::internal_server_error)?;
     crate::assistant_memory::refresh(&record).await;
     Ok(Json(MemoryResponse::from(record)))
 }

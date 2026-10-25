@@ -27,10 +27,10 @@ async fn user_memory_mutations_preserve_source_and_ownership() {
 }
 
 #[tokio::test]
-async fn concurrent_memory_creates_cannot_cross_the_per_user_limit() {
+async fn memory_creates_and_agent_reviews_are_not_capped() {
     let pool = db::test_pool().await;
     db::set_test_pool(pool.clone());
-    for index in 0..(MAX_MEMORY_COUNT - 1) {
+    for index in 0..100 {
         query("INSERT INTO assistant_memories(user_id,title,content,source) VALUES ('owner',?1,?2,'manual')")
             .bind(format!("memory-{index}"))
             .bind(format!("content-{index}"))
@@ -38,15 +38,19 @@ async fn concurrent_memory_creates_cannot_cross_the_per_user_limit() {
             .await
             .unwrap();
     }
+    let checked = list_memories("owner").await.unwrap();
+    create_reviewed_memory("owner", "自动标题", "自动内容", &checked)
+        .await
+        .unwrap()
+        .unwrap();
     let (left, right) = tokio::join!(
         create_memory("owner", "last-a", "content-a", true),
         create_memory("owner", "last-b", "content-b", true),
     );
-    assert_eq!(left.is_ok() as u8 + right.is_ok() as u8, 1);
-    assert!(left.as_ref().err().is_some_and(|error| error.is::<MemoryLimit>())
-        || right.as_ref().err().is_some_and(|error| error.is::<MemoryLimit>()));
+    assert!(left.is_ok());
+    assert!(right.is_ok());
     assert_eq!(query_scalar::<_, i64>("SELECT count(*) FROM assistant_memories WHERE user_id='owner'")
-        .fetch_one(&pool).await.unwrap(), MAX_MEMORY_COUNT as i64);
+        .fetch_one(&pool).await.unwrap(), 103);
 }
 
 #[tokio::test]

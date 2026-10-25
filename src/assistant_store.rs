@@ -33,7 +33,7 @@ pub use memories::{
     claim_next_memory_review, create_memory, delete_memory,
     fail_memory_review, fetch_memory_review_messages, list_enabled_memories, list_memories,
     requeue_interrupted_memory_reviews, apply_reviewed_memories_for_turn, update_memory,
-    MemoryRecord, MemoryReviewJob, MemoryLimit,
+    MemoryRecord, MemoryReviewJob,
     ReviewedMemoryChange,
     MAX_MEMORY_REVIEW_CHANGES,
     list_all_memories, list_memory_embeddings, save_memory_embedding, MemoryEmbeddingRecord,

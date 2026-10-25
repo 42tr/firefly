@@ -2,7 +2,7 @@
 
 use chrono::{DateTime, Utc};
 use serde::Serialize;
-use sqlx::{query, query_as, query_scalar, FromRow};
+use sqlx::{query, query_as, FromRow};
 
 use crate::db;
 
@@ -34,15 +34,10 @@ pub struct MemoryReviewJob {
 const MEMORY_COLUMNS: &str = "id, user_id, title, content, enabled, source, created_at, updated_at";
 pub const MAX_MEMORY_TITLE_LEN: usize = 100;
 pub const MAX_MEMORY_CONTENT_LEN: usize = 4000;
-pub const MAX_MEMORY_COUNT: usize = 100;
 
 /// Agent memories are atomic facts: count Unicode characters, including the title.
 pub const MAX_AGENT_MEMORY_CHARS: usize = 200;
 pub const MAX_MEMORY_REVIEW_CHANGES: usize = 8;
-
-#[derive(Debug, thiserror::Error)]
-#[error("记忆数量已达上限（{MAX_MEMORY_COUNT} 条）")]
-pub struct MemoryLimit;
 
 #[derive(Debug, Clone)]
 pub struct ReviewedMemoryChange {
@@ -119,10 +114,6 @@ pub async fn apply_reviewed_memories_for_turn(
         tx.rollback().await?;
         return Ok(None);
     }
-    anyhow::ensure!(
-        current.len() + changes.iter().filter(|c| c.id.is_none()).count() <= MAX_MEMORY_COUNT,
-        "memory capacity exceeded"
-    );
     let mut ids = std::collections::HashSet::new();
     for change in changes {
         if let Some(id) = change.id {
@@ -306,13 +297,6 @@ pub async fn create_memory(
     enabled: bool,
 ) -> anyhow::Result<MemoryRecord> {
     let mut tx = db::pool().begin_with("BEGIN IMMEDIATE").await?;
-    let count: i64 = query_scalar("SELECT COUNT(*) FROM assistant_memories WHERE user_id=?1")
-        .bind(user_id)
-        .fetch_one(&mut *tx)
-        .await?;
-    if count >= MAX_MEMORY_COUNT as i64 {
-        return Err(MemoryLimit.into());
-    }
     let sql = format!(
         "INSERT INTO assistant_memories (user_id, title, content, enabled, source) VALUES (?1, ?2, ?3, ?4, ?5) RETURNING {}",
         MEMORY_COLUMNS
