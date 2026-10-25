@@ -12,6 +12,7 @@ axum = { workspace = true }
 base64 = { workspace = true }
 chrono = { workspace = true }
 chrono-tz = { workspace = true }
+firefly-db = { path = "../db" }
 reqwest = { workspace = true }
 rusqlite = { workspace = true }
 serde = { workspace = true }

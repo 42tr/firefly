@@ -980,6 +980,7 @@ dependencies = [
  "base64 0.22.1",
  "chrono",
  "chrono-tz",
+ "firefly-db",
  "regex",
  "reqwest",
  "rusqlite",
