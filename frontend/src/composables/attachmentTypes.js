@@ -1,3 +1,5 @@
+import { filePreviewType } from './filePreview.js'
+
 const videoTypes = {
   mp4: 'video/mp4', m4v: 'video/x-m4v', mov: 'video/quicktime',
   webm: 'video/webm', ogv: 'video/ogg', avi: 'video/x-msvideo',
@@ -12,3 +14,8 @@ export function attachmentContentType(attachment) {
 }
 
 export const isVideoAttachment = (attachment) => attachmentContentType(attachment).startsWith('video/')
+
+export const isTextAttachment = (attachment) => {
+  const type = filePreviewType({ name: attachment?.name || '' })
+  return type?.kind === 'text' || attachment?.type === 'application/json' || attachment?.type?.startsWith('text/')
+}

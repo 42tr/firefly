@@ -1,6 +1,8 @@
 const agentNames = { firefly: 'Firefly', codex: 'Codex', claude: 'Claude' }
 
-export const conversationAgentLabel = conversation => agentNames[conversation?.agent] || conversation?.agent || 'Agent'
+export const agentLabel = agent => agentNames[agent] || agent || 'Agent'
+
+export const conversationAgentLabel = conversation => agentLabel(conversation?.agent)
 
 export const conversationDirectoryLabel = conversation => {
   if (!conversation?.cwd && !['codex', 'claude'].includes(conversation?.agent)) return ''

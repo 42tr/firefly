@@ -1,7 +1,6 @@
 <script setup>
 import UiIcon from './UiIcon.vue'
-import { isVideoAttachment } from '../composables/attachmentTypes.js'
-import { filePreviewType } from '../composables/filePreview.js'
+import { isVideoAttachment, isTextAttachment } from '../composables/attachmentTypes.js'
 import { computed, nextTick, onBeforeUnmount, ref, useId, watch } from 'vue'
 import { apiFetch } from '@/utils/http'
 import { useWorkspaceCompletion } from '../composables/useWorkspaceCompletion.js'
@@ -110,11 +109,6 @@ const handleInput = (e) => {
   input.style.height = 'auto'
   input.style.height = `${input.scrollHeight}px`
   if (box) box.style.minHeight = previousMinHeight
-}
-
-const isTextAttachment = (attachment) => {
-  const type = filePreviewType({ name: attachment?.name || '' })
-  return type?.kind === 'text' || attachment?.type === 'application/json' || attachment?.type?.startsWith('text/')
 }
 
 const canPreviewAttachment = (attachment) => Boolean(attachment?.previewUrl || isTextAttachment(attachment))

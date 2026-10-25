@@ -1,5 +1,6 @@
 import { ref, computed, watch } from 'vue'
 import { apiFetch } from '@/utils/http'
+import { conversationAgentLabel } from '../utils/conversationLabels.js'
 
 export function useConversations({ pendingConversation = null, isRenamingConversation = null,
   showingArchivedConversations = ref(false), expandArchivedOnMore = false } = {}) {
@@ -50,8 +51,7 @@ export function useConversations({ pendingConversation = null, isRenamingConvers
 
   const formatConversationMeta = (conversation) => {
     if (!conversation) return ''
-    const agentNames = { firefly: 'Firefly', codex: 'Codex', claude: 'Claude' }
-    const agent = agentNames[conversation.agent] || conversation.agent
+    const agent = conversationAgentLabel(conversation)
     const workspace = formatConversationWorkspace(conversation)
     const cwd = workspace ? ` · ${workspace}` : ''
     const provider = String(conversation.codex_provider || '').trim()

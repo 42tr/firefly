@@ -23,20 +23,22 @@ import ConversationSidebar from './components/ConversationSidebar.vue'
 import ConversationContext from './components/ConversationContext.vue'
 import ScrollBottomButton from './components/ScrollBottomButton.vue'
 import ChatInputBar from './components/ChatInputBar.vue'
-import NewConversationDialog from './components/NewConversationDialog.vue'
-import ModelSettingsDialog from './components/ModelSettingsDialog.vue'
-import ScheduleDialog from './components/ScheduleDialog.vue'
-import MemoryDialog from './components/MemoryDialog.vue'
-import ImagePreview from './components/ImagePreview.vue'
-import WorkspaceFiles from './components/WorkspaceFiles.vue'
+// Dialogs are never part of first paint; splitting them out keeps the main
+// chunk small and loads their chunks in parallel after boot.
+const NewConversationDialog = defineAsyncComponent(() => import('./components/NewConversationDialog.vue'))
+const ModelSettingsDialog = defineAsyncComponent(() => import('./components/ModelSettingsDialog.vue'))
+const ScheduleDialog = defineAsyncComponent(() => import('./components/ScheduleDialog.vue'))
+const MemoryDialog = defineAsyncComponent(() => import('./components/MemoryDialog.vue'))
+const ImagePreview = defineAsyncComponent(() => import('./components/ImagePreview.vue'))
+const WorkspaceFiles = defineAsyncComponent(() => import('./components/WorkspaceFiles.vue'))
 import GoalCheckEvent from './components/GoalCheckEvent.vue'
 import InputQueue from './components/InputQueue.vue'
 import UiIcon from './components/UiIcon.vue'
 import WorkflowTree from './components/WorkflowTree.vue'
 import { provideAssistantRealtime, useRealtimeSubscription } from './composables/useAssistantRealtime.js'
 import { apiFetch } from '@/utils/http'
-import { filePreviewType } from './composables/filePreview.js'
-import { isVideoAttachment } from './composables/attachmentTypes.js'
+import { conversationAgentLabel } from './utils/conversationLabels.js'
+import { isVideoAttachment, isTextAttachment } from './composables/attachmentTypes.js'
 import { useGoalMode } from './composables/useGoalMode.js'
 
 // 仅在独立工作目录模式下渲染，按需加载，连带 composable 一起移出首屏主 chunk。
@@ -193,7 +195,10 @@ watch(conversationSearch, () => {
 const isArchivedConversation = computed(() => activeConversation.value?.is_archived === true)
 // A deleted or expired conversation is absent from the authoritative snapshot.
 const isMissingConversation = computed(() => !!activeConversationId.value && !activeConversation.value)
-const activeAgentName = computed(() => ({ firefly: 'Firefly', codex: 'Codex', claude: 'Claude' }[activeConversation.value?.agent] || 'Firefly'))
+const activeAgentName = computed(() => {
+  const agent = activeConversation.value?.agent
+  return agent ? conversationAgentLabel(activeConversation.value) : 'Firefly'
+})
 const activeConversationTitle = computed(() => formatConversationTitle(activeConversation.value))
 const {
   goal,
@@ -428,8 +433,15 @@ const statusText = computed(() => {
   if (isCreatingConversation.value) return '正在创建对话…'
   if (isLoadingMessages.value) return '历史同步中…'
   if (isStreaming.value) {
-    const runningStep = [...messages.value].reverse().find(message => message.status === 'running' && ['tool-run', 'handoff'].includes(message.kind))
-    const lastMessage = [...messages.value].reverse().find(message => !['submitting', 'queued'].includes(message.processingStatus))
+    // Scan from the end without copying the array twice per delta.
+    let runningStep = null
+    let lastMessage = null
+    for (let i = messages.value.length - 1; i >= 0; i -= 1) {
+      const message = messages.value[i]
+      if (!runningStep && message.status === 'running' && ['tool-run', 'handoff'].includes(message.kind)) runningStep = message
+      if (!lastMessage && !['submitting', 'queued'].includes(message.processingStatus)) lastMessage = message
+      if (runningStep && lastMessage) break
+    }
     const phase = runningStep
       ? `正在执行：${runningStep.name || runningStep.agent || '工具'}`
       : lastMessage?.role === 'assistant' && lastMessage.content ? '正在回复…' : '正在思考中…'
@@ -439,11 +451,6 @@ const statusText = computed(() => {
   if (isArchivedConversation.value) return '已归档 · 仅供查看'
   return '就绪'
 })
-
-const isTextAttachment = (attachment) => {
-  const type = filePreviewType({ name: attachment?.name || '' })
-  return type?.kind === 'text' || attachment?.type === 'application/json' || attachment?.type?.startsWith('text/')
-}
 
 const isPreviewableAttachment = (attachment) =>
   Boolean(attachment?.previewUrl || (attachment?.url && (attachment?.type?.startsWith('image/') || isVideoAttachment(attachment) || isTextAttachment(attachment))))
@@ -884,6 +891,9 @@ onMounted(() => {
               />
               <div
                 v-else
+                v-memo="[item.key, item.messageKey, item.latestReply, item.msg, item.msg.content, item.msg.status,
+                  item.msg.processingStatus, item.msg.processingError, item.msg.attachments, item.msg.detailOmitted,
+                  item.msg.chartOption, item.msg.imageOutput, item.msg.goal]"
                 v-stable-reply="item.latestReply ? item.msg : null"
                 class="message"
                 :class="[item.msg.role, item.msg.chartOption ? 'chart' : '', item.msg.kind || '', { 'latest-reply': item.latestReply, 'goal-message': Boolean(item.msg.goal), 'goal-reply': item.msg.goal?.origin === 'goal_reply', 'goal-continuation': item.msg.goal?.origin === 'goal_continue', 'goal-final-summary': item.msg.goal?.origin === 'goal_summary' }]"
@@ -933,6 +943,7 @@ onMounted(() => {
               </div>
               <WorkflowTree
                 v-if="activeConversation?.agent === 'firefly' && item.type === 'msg' && item.msg.role === 'user' && item.msg.generationJobId"
+                v-memo="[item.msg.generationJobId, item.msg.processingStatus]"
                 :conversation-id="activeConversationId"
                 :job-id="item.msg.generationJobId"
                 :reply-status="item.msg.processingStatus"

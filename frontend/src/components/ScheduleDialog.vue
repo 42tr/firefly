@@ -3,6 +3,7 @@ import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 import ChatInputBar from './ChatInputBar.vue'
 import NewConversationDialog from './NewConversationDialog.vue'
 import { scheduleRequest, useSchedules } from '../composables/useSchedules.js'
+import { agentLabel } from '../utils/conversationLabels.js'
 
 const props = defineProps({ open: Boolean })
 const emit = defineEmits(['close', 'open-conversation'])
@@ -15,7 +16,7 @@ const deleteId = ref(null), previewTimes = ref([]), previewError = ref(''), prev
 let refreshTimer, previewTimer, previewController, previewRevision = 0
 const close = () => { if (!saving.value) emit('close') }
 const formatTime = value => value ? new Date(value).toLocaleString('zh-CN', { timeZone: timezone.value, hour12: false }) : '—'
-const agentName = agent => ({ firefly: '流萤', codex: 'Codex', claude: 'Claude' }[agent] || agent)
+const agentName = agentLabel
 const statusName = task => ({ queued: '排队中', running: '执行中', completed: '已完成', failed: '执行失败' }[task.last_status] || (task.last_run_at ? '执行记录已清理' : '尚未执行'))
 const canSave = computed(() => title.value.trim() && prompt.value.trim() && cron.value.trim() && !saving.value && !settingsBusy.value && !previewError.value && !previewLoading.value)
 const edit = async task => {
