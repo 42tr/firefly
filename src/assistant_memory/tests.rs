@@ -406,12 +406,26 @@ async fn semantic_review_fails_open_when_embedding_step_times_out() {
         .unwrap();
     let checked = vec![existing];
     let mut filtered = filter_review_changes(
-        vec![MemoryReviewChange {
-            id: None,
-            title: "超时候选".into(),
-            content: "超时后仍保存".into(),
-            evidence: "依据：「本轮事实」".into(),
-        }],
+        vec![
+            MemoryReviewChange {
+                id: None,
+                title: "超时候选一".into(),
+                content: "超时后仍保存一".into(),
+                evidence: "依据：「本轮事实」".into(),
+            },
+            MemoryReviewChange {
+                id: None,
+                title: "超时候选二".into(),
+                content: "超时后仍保存二".into(),
+                evidence: "依据：「本轮事实」".into(),
+            },
+            MemoryReviewChange {
+                id: None,
+                title: "超时候选三".into(),
+                content: "超时后仍保存三".into(),
+                evidence: "依据：「本轮事实」".into(),
+            },
+        ],
         &checked,
         "本轮事实",
         "已确认",
@@ -421,10 +435,69 @@ async fn semantic_review_fails_open_when_embedding_step_times_out() {
         .await
         .unwrap();
     assert!(started.elapsed() < Duration::from_secs(2));
-    assert_eq!(filtered.changes.len(), 1);
-    assert_eq!(filtered.changes[0].content, "超时后仍保存");
-    assert_eq!(filtered.rejected.semantic_unavailable, 1);
+    assert_eq!(filtered.changes.len(), 3);
+    assert_eq!(
+        filtered
+            .changes
+            .iter()
+            .map(|change| change.content.as_str())
+            .collect::<Vec<_>>(),
+        ["超时后仍保存一", "超时后仍保存二", "超时后仍保存三"]
+    );
+    assert_eq!(filtered.rejected.semantic_unavailable, 3);
     assert!(filtered.semantic_nearest.is_empty());
+    server.abort();
+}
+
+#[tokio::test]
+async fn semantic_review_fails_open_when_cached_vector_dimension_mismatches() {
+    crate::db::set_test_pool(crate::db::test_pool().await);
+    let (cfg, _, server) = mock_server().await;
+    let existing = assistant_store::create_memory("owner", "已有", "existing", true)
+        .await
+        .unwrap();
+    let service = EmbeddingService::from_config(&cfg).unwrap().unwrap();
+    assert!(
+        assistant_store::save_memory_embedding(
+            &existing,
+            &service.space,
+            &content_hash(&existing),
+            2,
+            r#"[{"text":"existing","vector":[1.0,0.0]}]"#,
+        )
+        .await
+        .unwrap()
+    );
+    let checked = assistant_store::list_memories("owner").await.unwrap();
+    let mut filtered = filter_review_changes(
+        vec![MemoryReviewChange {
+            id: None,
+            title: "新候选".into(),
+            content: "new fact".into(),
+            evidence: "依据：「本轮事实」".into(),
+        }],
+        &checked,
+        "本轮事实",
+        "已确认",
+    );
+    apply_semantic_review(&cfg, "owner", &mut filtered, &checked)
+        .await
+        .unwrap();
+    assert_eq!(filtered.changes.len(), 1);
+    assert_eq!(filtered.rejected.semantic_duplicate, 0);
+    assert_eq!(filtered.rejected.semantic_unavailable, 0);
+    assert!(filtered.semantic_nearest.is_empty());
+    let saved = assistant_store::apply_reviewed_memories_for_turn(
+        "owner",
+        &filtered.changes,
+        &checked,
+        None,
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    assert_eq!(saved.len(), 1);
+    assert_eq!(saved[0].content, "new fact");
     server.abort();
 }
 
