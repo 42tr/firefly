@@ -1293,9 +1293,9 @@ dependencies = [
 
 [[package]]
 name = "glow-agent"
-version = "0.3.1"
+version = "0.3.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "a123ab437a910ffb2ac67e0b3beffef0544ecc63cbebe604a0fd32b90ba01d02"
+checksum = "9cae1202437625e97713558957d129da9bf0bafbf0e8fcd2d96bb0d9a4d05901"
 dependencies = [
  "anyhow",
  "async-trait",
