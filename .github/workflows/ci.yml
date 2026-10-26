@@ -40,6 +40,8 @@ jobs:
         working-directory: frontend
       - run: cargo clippy --workspace --locked --all-targets -- -D clippy::correctness
       - run: cargo test --workspace --locked -- --test-threads=4
+      - name: Build binary for Python regressions
+        run: cargo build --locked
       - name: Python workspace regression
         run: PYTHONDONTWRITEBYTECODE=1 python3 -m unittest discover -s src -p '*workspace_test.py'
       - name: Python file service regression

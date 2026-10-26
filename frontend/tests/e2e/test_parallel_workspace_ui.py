@@ -181,7 +181,7 @@ class ParallelWorkspaceUI(unittest.TestCase):
             trigger.click()
             expect(card).to_be_visible()
             expect(card).to_contain_text(conversation['title'])
-            expect(card).to_contain_text('Codex:openai/gpt-6.1-sol')
+            expect(card).to_contain_text('Codex · openai · gpt-6.1-sol')
             expect(card).to_contain_text(conversation['cwd'])
             box = card.bounding_box()
             self.assertGreaterEqual(box['x'], 0)
@@ -206,7 +206,7 @@ class ParallelWorkspaceUI(unittest.TestCase):
         expect(trigger).not_to_be_visible()
         expect(card).not_to_be_visible()
         expect(toolbar.locator('.toolbar-context-main .toolbar-title')).to_have_attribute('title', conversation['title'])
-        expect(toolbar.locator('.toolbar-agent')).to_have_text('Codex:openai/gpt-6.1-sol')
+        expect(toolbar.locator('.toolbar-agent')).to_have_text('Codex · openai · gpt-6.1-sol')
 
     def test_codex_quick_phrases_and_scroll_bottom_remain_functional(self):
         self.conversations = [self.conversation('ready')]

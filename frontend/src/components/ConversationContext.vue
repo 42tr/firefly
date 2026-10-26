@@ -34,7 +34,7 @@ onBeforeUnmount(() => {
     <div class="toolbar-context-main">
       <span class="toolbar-title" :title="title">{{ title }}</span>
       <div class="toolbar-metadata" role="group" tabindex="0" aria-label="模型与工作目录">
-        <span class="toolbar-agent" :class="agent" :title="agentLabel">{{ agentLabel }}</span>
+        <span class="toolbar-agent" :class="agent" :title="agentLabel"><span class="toolbar-agent-label">{{ agentLabel }}</span></span>
         <code v-if="workspace" class="toolbar-workspace" :title="workspaceLabel">{{ workspace }}</code>
       </div>
     </div>
@@ -61,11 +61,12 @@ onBeforeUnmount(() => {
 .toolbar-title { font-family: var(--font-display); font-weight: 600; font-size: 15px; letter-spacing: -0.01em; max-width: 34vw; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .toolbar-metadata { display: flex; align-items: center; gap: 8px; min-width: 0; }
 .toolbar-metadata:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: var(--radius-sm); }
-.toolbar-agent { flex-shrink: 0; display: inline-flex; align-items: center; gap: 5px; color: var(--text-secondary); padding: 2px 9px; border-radius: 999px; background: var(--bg-panel); border: 1px solid var(--border-glass); box-shadow: var(--shadow-xs); font-size: 12px; font-weight: 600; line-height: 16px; }
-.toolbar-agent::before { content: ''; width: 6px; height: 6px; border-radius: 50%; background: var(--glow-gradient); box-shadow: 0 0 8px rgba(246, 181, 69, .8); }
-.toolbar-agent.codex { max-width: min(40vw, 240px); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.toolbar-agent { flex: 0 1 auto; min-width: 0; max-width: min(40vw, 320px); overflow: hidden; display: inline-flex; align-items: center; gap: 5px; color: var(--text-secondary); padding: 2px 9px; border-radius: 999px; background: var(--bg-panel); border: 1px solid var(--border-glass); box-shadow: var(--shadow-xs); font-size: 12px; font-weight: 600; line-height: 16px; }
+.toolbar-agent::before { content: ''; flex: 0 0 6px; width: 6px; height: 6px; border-radius: 50%; background: var(--glow); box-shadow: 0 0 8px rgba(246, 181, 69, .8); }
+.toolbar-agent.firefly::before { background: var(--glow); box-shadow: 0 0 8px rgba(246, 181, 69, .8); }
 .toolbar-agent.codex::before { background: #5b8cff; box-shadow: 0 0 8px rgba(91, 140, 255, .8); }
 .toolbar-agent.claude::before { background: #e07b53; box-shadow: 0 0 8px rgba(224, 123, 83, .8); }
+.toolbar-agent-label { flex: 0 1 auto; min-width: 4ch; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .toolbar-workspace { display: block; min-width: 0; max-width: min(42vw, 420px); padding: 2px 9px; border-radius: 999px; background: var(--bg-subtle); border: 1px solid var(--border-glass); overflow: hidden; color: var(--muted); font-size: 12px; line-height: 16px; text-overflow: ellipsis; white-space: nowrap; }
 .toolbar-mobile-context { display: none; }
 @media (max-width: 768px) {
@@ -89,9 +90,10 @@ onBeforeUnmount(() => {
   .toolbar-context-summary:hover, details[open] .toolbar-context-summary { background: var(--bg-hover); }
   .toolbar-context-summary:focus-visible, .toolbar-context-card:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
   .toolbar-context-summary .toolbar-title { flex: 1; }
-  .toolbar-context-dot { flex: 0 0 6px; width: 6px; height: 6px; border-radius: 50%; background: var(--accent); }
-  .toolbar-context-dot.codex { background: #5b8cff; }
-  .toolbar-context-dot.claude { background: #e07b53; }
+  .toolbar-context-dot { flex: 0 0 6px; width: 6px; height: 6px; border-radius: 50%; background: var(--glow); box-shadow: 0 0 8px rgba(246, 181, 69, .8); }
+  .toolbar-context-dot.firefly { background: var(--glow); box-shadow: 0 0 8px rgba(246, 181, 69, .8); }
+  .toolbar-context-dot.codex { background: #5b8cff; box-shadow: 0 0 8px rgba(91, 140, 255, .8); }
+  .toolbar-context-dot.claude { background: #e07b53; box-shadow: 0 0 8px rgba(224, 123, 83, .8); }
   .toolbar-context-chevron { flex: 0 0 14px; width: 14px; height: 14px; color: var(--muted); transition: transform .15s; }
   details[open] .toolbar-context-chevron { transform: rotate(180deg); }
   .toolbar-context-card {

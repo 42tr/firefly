@@ -241,7 +241,8 @@ const activeModelLabel = computed(() => {
   const provider = String(activeConversation.value.codex_provider || '').trim() || 'openai'
   const model = String(activeConversation.value.codex_model || '').trim()
   const modelLabel = model.startsWith(`${provider}/`) ? model.slice(provider.length + 1) : model
-  return `Codex:${provider}${modelLabel ? `/${modelLabel}` : ''}`
+  const level = String(activeConversation.value.codex_reasoning_level || '').trim()
+  return ['Codex', provider, modelLabel, level].filter(Boolean).join(' · ')
 })
 watch(sidebarOpen, (open) => {
   document.body.classList.toggle('sidebar-open', open)
