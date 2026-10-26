@@ -304,7 +304,7 @@ watch([model, inputEl, isMobile], async () => {
     >
       <div class="attachment-preview-dialog-toolbar">
         <strong>{{ previewAttachment?.name }}</strong>
-        <button type="button" class="attachment-preview-dialog-close" aria-label="关闭预览" @click="closePreview">×</button>
+        <button type="button" class="attachment-preview-dialog-close" aria-label="关闭预览" @click="closePreview"><UiIcon name="x" /></button>
       </div>
       <div class="attachment-preview-dialog-body" :aria-busy="previewLoading">
         <p v-if="previewLoading" class="attachment-preview-dialog-status">正在读取预览…</p>

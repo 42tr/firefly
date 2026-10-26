@@ -4,6 +4,7 @@ import { apiFetch } from '@/utils/http'
 import { useCodexModels } from '@/composables/useCodexModels'
 import { useClaudeModels } from '@/composables/useClaudeModels'
 import ClaudeSettingsFields from './ClaudeSettingsFields.vue'
+import UiIcon from './UiIcon.vue'
 
 const props = defineProps({
   open: Boolean,
@@ -130,7 +131,7 @@ const save = async () => {
     <section ref="dialog" class="codex-settings-dialog" role="dialog" aria-modal="true" :aria-labelledby="titleId" tabindex="-1" @keydown="onKeydown">
       <div class="codex-settings-header">
         <h2 :id="titleId">模型设置</h2>
-        <button class="button ghost icon" type="button" aria-label="关闭模型设置" :disabled="saving" @click="close">×</button>
+        <button class="button ghost icon" type="button" aria-label="关闭模型设置" :disabled="saving" @click="close"><UiIcon name="x" /></button>
       </div>
       <p class="settings-hint">保存后发送的新消息使用新设置，运行和排队的消息保持原设置。</p>
       <form @submit.prevent="save">

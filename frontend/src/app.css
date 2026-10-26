@@ -191,9 +191,8 @@
   font-variant-numeric: tabular-nums;
 }
 
-.message {
-  animation: fadeSlide 0.45s var(--ease-out) both;
-}
+/* Keep history stable on mount; reserve motion for explicit dialogs and controls. */
+.message { animation: none; }
 
 .message.user {
   align-self: flex-end;

@@ -249,7 +249,7 @@
   height: 0;
   border-radius: 3px;
   background: var(--glow-gradient);
-  box-shadow: 0 0 10px rgba(246, 181, 69, 0.8);
+  box-shadow: none;
   transform: translateY(-50%);
   transition: height 0.3s var(--ease-spring);
 }

@@ -2,6 +2,7 @@
 import { onBeforeUnmount, ref } from 'vue'
 import { readPreviewBlob } from '../composables/filePreview.js'
 import { apiFetch } from '@/utils/http'
+import UiIcon from './UiIcon.vue'
 
 const dialog = ref(null)
 const preview = ref(null)
@@ -74,7 +75,7 @@ defineExpose({ open, openText, openVideo })
       @click.self="close"
       @close="close"
     >
-      <button class="image-preview-close" type="button" aria-label="关闭预览" autofocus @click="close">×</button>
+      <button class="image-preview-close" type="button" aria-label="关闭预览" autofocus @click="close"><UiIcon name="x" /></button>
       <p v-if="loading" class="image-preview-status">正在读取文件…</p>
       <p v-else-if="error" class="image-preview-error" role="alert">
         {{ error }}

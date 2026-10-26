@@ -4,6 +4,7 @@ import ChatInputBar from './ChatInputBar.vue'
 import NewConversationDialog from './NewConversationDialog.vue'
 import { scheduleRequest, useSchedules } from '../composables/useSchedules.js'
 import { agentLabel } from '../utils/conversationLabels.js'
+import UiIcon from './UiIcon.vue'
 
 const props = defineProps({ open: Boolean })
 const emit = defineEmits(['close', 'open-conversation'])
@@ -92,7 +93,7 @@ onBeforeUnmount(() => {
     <dialog id="schedule-dialog" ref="dialog" class="schedule-dialog" aria-labelledby="schedule-title" @cancel.prevent="close" @click.self="close">
       <header class="schedule-header">
         <div><h2 id="schedule-title">定时任务</h2><p>按 {{ timezone }} 运行，每次执行会新建一条对话。</p></div>
-        <button class="button ghost icon" type="button" :disabled="saving" aria-label="关闭定时任务" autofocus @click="close">×</button>
+        <button class="button ghost icon" type="button" :disabled="saving" aria-label="关闭定时任务" autofocus @click="close"><UiIcon name="x" /></button>
       </header>
       <div class="schedule-body">
         <p v-if="error" class="schedule-error" role="alert">{{ error }}</p>

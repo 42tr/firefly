@@ -70,7 +70,7 @@ const handleInputKeydown = event => {
       @cancel.prevent="close" @close="open && close()" @keydown="handleDialogKeydown" @click.self="close">
       <header class="search-dialog-header">
         <h2 id="conversation-search-title">搜索对话</h2>
-        <button class="search-close" type="button" aria-label="关闭搜索" title="关闭搜索" @click="close">×</button>
+        <button class="search-close" type="button" aria-label="关闭搜索" title="关闭搜索" @click="close"><UiIcon name="x" /></button>
       </header>
       <div class="search-field">
         <UiIcon name="search" />
@@ -105,7 +105,8 @@ const handleInputKeydown = event => {
 .conversation-search-dialog::backdrop { background: rgba(15, 20, 34, 0.32); }
 .search-dialog-header { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 16px 20px 4px; flex-shrink: 0; }
 .search-dialog-header h2 { margin: 0; font-size: 18px; font-weight: 600; }
-.search-close { display: grid; place-items: center; width: 44px; height: 44px; border: 0; border-radius: 10px; background: transparent; color: var(--muted); font: inherit; font-size: 26px; cursor: pointer; }
+.search-close { display: grid; place-items: center; width: 44px; height: 44px; border: 0; border-radius: 10px; background: transparent; color: var(--muted); cursor: pointer; }
+.search-close .ui-icon { width: 20px; height: 20px; }
 .search-close:hover, .search-result:hover, .search-more:hover { background: var(--bg-hover); }
 .search-field { display: flex; align-items: center; gap: 12px; flex-shrink: 0; margin: 8px 20px 16px; padding: 0 14px; border: 1px solid var(--border-soft); border-radius: 14px; }
 .search-field:focus-within { border-color: var(--focus-ring); }

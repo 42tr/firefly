@@ -1,6 +1,7 @@
 <script setup>
 import { nextTick, onBeforeUnmount, ref, watch } from 'vue'
 import { apiFetch } from '@/utils/http'
+import UiIcon from './UiIcon.vue'
 
 const props = defineProps({
   open: { type: Boolean, default: false },
@@ -218,7 +219,7 @@ watch(
     >
       <div class="dialog-header">
         <h2 id="memory-dialog-title">长期记忆</h2>
-        <button class="dialog-close" type="button" aria-label="关闭" @click="emit('close')">×</button>
+        <button class="dialog-close" type="button" aria-label="关闭" @click="emit('close')"><UiIcon name="x" /></button>
       </div>
 
       <p class="memory-hint">
