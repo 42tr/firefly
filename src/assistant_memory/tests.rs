@@ -196,7 +196,7 @@ async fn semantic_review_suppresses_duplicates_but_keeps_similar_candidates() {
     assert_eq!(filtered.changes[0].content, "similar");
     assert_eq!(filtered.rejected.semantic_duplicate, 1);
     assert_eq!(filtered.rejected.semantic_similar, 1);
-    assert_eq!(filtered.rejected.skipped_no_vector, 2);
+    assert_eq!(filtered.rejected.skipped_no_vector, 1);
     assert_eq!(filtered.semantic_nearest.len(), 2);
     assert!(filtered
         .semantic_nearest
@@ -208,6 +208,40 @@ async fn semantic_review_suppresses_duplicates_but_keeps_similar_candidates() {
         .iter()
         .any(|(_, nearest)| nearest.memory_id == existing.id
             && nearest.reason == SemanticMatchReason::Similar));
+    server.abort();
+}
+
+#[tokio::test]
+async fn semantic_review_leaves_explicit_updates_and_skips_embedding_calls() {
+    crate::db::set_test_pool(crate::db::test_pool().await);
+    let (cfg, calls, server) = mock_server().await;
+    let manual = assistant_store::create_memory("owner", "手动", "手动事实", true)
+        .await
+        .unwrap();
+    let agent = assistant_store::create_reviewed_memory("owner", "自动", "部署旧事实", &[manual])
+        .await
+        .unwrap()
+        .unwrap();
+    let checked = assistant_store::list_memories("owner").await.unwrap();
+    let mut filtered = filter_review_changes(
+        vec![MemoryReviewChange {
+            id: Some(agent.id),
+            title: "自动修正".into(),
+            content: "部署旧事实".into(),
+            evidence: "依据：「本轮事实」".into(),
+        }],
+        &checked,
+        "本轮事实",
+        "已确认",
+    );
+    apply_semantic_review(&cfg, "owner", &mut filtered, &checked)
+        .await
+        .unwrap();
+    assert_eq!(filtered.changes.len(), 1);
+    assert_eq!(filtered.changes[0].id, Some(agent.id));
+    assert_eq!(filtered.rejected.semantic_duplicate, 0);
+    assert_eq!(calls.documents.load(Ordering::SeqCst), 0);
+    assert_eq!(calls.queries.load(Ordering::SeqCst), 0);
     server.abort();
 }
 
