@@ -29,7 +29,10 @@ test('temporary images keep their absolute path, including nested workspace dire
 
 test('workspace images preserve local relative paths', () => {
   assert.equal(params(workspaceFileUrl('/disk/workspace/project/a.png')).get('path'), 'project/a.png')
+  assert.equal(params(workspaceFileUrl('firefly/workspace/project/a.png')).get('path'), 'project/a.png')
+  assert.equal(params(workspaceFileUrl('workspace/project/a.png')).get('path'), 'project/a.png')
   assert.equal(params(workspaceFileUrl('./output/a.png', { cwd: 'project' })).get('path'), 'project/output/a.png')
+  assert.equal(params(workspaceFileUrl('./output/a.png', { cwd: 'firefly/workspace' })).get('path'), 'output/a.png')
 })
 
 test('browser URLs are preserved and malformed or unsupported protocols are rejected', () => {

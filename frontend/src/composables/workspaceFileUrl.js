@@ -1,3 +1,9 @@
+function stripWorkspacePrefix(value) {
+  const match = String(value).match(/(?:^|\/)workspace(?:\/|$)/)
+  if (!match) return null
+  return String(value).slice(match.index + match[0].length).replace(/^\/+/, '')
+}
+
 // Markdown 和工具结果共用路径解析，确保临时图片以绝对路径读取。
 export function workspaceFileUrl(path, { cwd = '' } = {}) {
   if (typeof path !== 'string' || !path) return ''
@@ -18,9 +24,17 @@ export function workspaceFileUrl(path, { cwd = '' } = {}) {
   if (upload) return `/api/assistant/attachments/by-file/${upload[1]}`
   const url = relative => `/api/assistant/workspace/file?path=${encodeURIComponent(relative)}`
   if (decoded.startsWith('/tmp/')) return url(decoded)
-  const marker = '/workspace/'
-  const index = decoded.indexOf(marker)
-  if (index >= 0) decoded = decoded.slice(index + marker.length)
-  else if (!decoded.startsWith('/')) decoded = [String(cwd || '').replace(/^\/+|\/+$/g, ''), decoded.replace(/^\.\//, '')].filter(Boolean).join('/')
+  // Model output may contain either an absolute workspace path or a relative
+  // path prefixed with the repository directory (for example
+  // `firefly/workspace/dist/report.png`). The API expects a path relative to
+  // the configured workspace root.
+  const workspaceRelative = stripWorkspacePrefix(decoded)
+  if (workspaceRelative !== null) decoded = workspaceRelative
+  else if (!decoded.startsWith('/')) {
+    let base = String(cwd || '').replace(/^\/+|\/+$/g, '')
+    const workspaceBase = stripWorkspacePrefix(base)
+    if (workspaceBase !== null) base = workspaceBase
+    decoded = [base, decoded.replace(/^\.\//, '')].filter(Boolean).join('/')
+  }
   return decoded ? url(decoded) : ''
 }

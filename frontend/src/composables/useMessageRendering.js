@@ -135,10 +135,10 @@ export function useMessageRendering({ activeConversation, isStreaming, imagePrev
         anchor.setAttribute('href', workspaceUrl(pathname))
         return
       }
-      const marker = '/workspace/'
-      const markerIndex = pathname.indexOf(marker)
-      if (markerIndex < 0) return
-      const relativePath = pathname.slice(markerIndex + marker.length)
+      const marker = /(?:^|\/)workspace(?:\/|$)/
+      const markerMatch = pathname.match(marker)
+      if (!markerMatch) return
+      const relativePath = pathname.slice(markerMatch.index + markerMatch[0].length).replace(/^\/+/, '')
       if (!relativePath || relativePath.endsWith('/')) return
       anchor.setAttribute('href', `/api/assistant/workspace/file?path=${encodeURIComponent(relativePath)}`)
     })
