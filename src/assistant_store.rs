@@ -37,7 +37,7 @@ pub use memories::{
     ReviewedMemoryChange,
     MAX_MEMORY_REVIEW_CHANGES,
     list_all_memories, list_memory_embeddings, save_memory_embedding, MemoryEmbeddingRecord,
-    MAX_MEMORY_CONTENT_LEN, MAX_MEMORY_TITLE_LEN,
+    MAX_AGENT_MEMORY_CHARS, MAX_MEMORY_CONTENT_LEN, MAX_MEMORY_TITLE_LEN, memory_comparison_key,
 };
 #[cfg(test)]
 pub use memories::create_reviewed_memory;

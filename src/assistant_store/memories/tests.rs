@@ -124,7 +124,8 @@ async fn memory_source_migration_protects_legacy_entries_and_rejects_invalid_sou
     let previous = sqlx::migrate::Migrator::with_migrations(
         db::MIGRATOR
             .iter()
-            .filter(|migration| migration.version < 20261025000000)
+            // Migration filenames are the real sqlx versions (1..=6).
+            .filter(|migration| migration.version < 5)
             .cloned()
             .collect(),
     );
@@ -149,7 +150,7 @@ fn change(id: Option<i64>, content: &str) -> ReviewedMemoryChange {
         id,
         title: "标题".into(),
         content: content.into(),
-        evidence: "本轮已验证".into(),
+        evidence: "「本轮已验证」".into(),
     }
 }
 
@@ -237,7 +238,7 @@ async fn reviewed_batch_saves_history_and_deletion_removes_it() {
             old.title,
             old.content,
             old.updated_at.timestamp_micros(),
-            "本轮已验证".into()
+            "「本轮已验证」".into()
         )
     );
     delete_memory(old.id, "owner")
@@ -253,6 +254,25 @@ async fn reviewed_batch_saves_history_and_deletion_removes_it() {
 }
 
 #[tokio::test]
+async fn reviewed_batch_rejects_normalized_duplicate_content() {
+    db::set_test_pool(db::test_pool().await);
+    let existing = create_reviewed_memory("owner", "偏好", "喜欢，深色模式", &[])
+        .await
+        .unwrap()
+        .unwrap();
+    let change = ReviewedMemoryChange {
+        id: None,
+        title: "改写偏好".into(),
+        content: "喜欢,  深色模式".into(),
+        evidence: "「本轮已验证」".into(),
+    };
+    let error = apply_reviewed_memories("owner", &[change], &[existing])
+        .await
+        .unwrap_err();
+    assert!(error.to_string().contains("duplicate normalized memory content"));
+}
+
+#[tokio::test]
 async fn revision_migration_preserves_long_legacy_memories_and_is_repeatable() {
     let pool = sqlx::sqlite::SqlitePoolOptions::new()
         .max_connections(1)
@@ -262,7 +282,8 @@ async fn revision_migration_preserves_long_legacy_memories_and_is_repeatable() {
     let previous = sqlx::migrate::Migrator::with_migrations(
         db::MIGRATOR
             .iter()
-            .filter(|m| m.version < 20261027000000)
+            // Start before the final migration instead of including every migration.
+            .filter(|m| m.version < 6)
             .cloned()
             .collect(),
     );

@@ -39,6 +39,63 @@ pub const MAX_MEMORY_CONTENT_LEN: usize = 4000;
 pub const MAX_AGENT_MEMORY_CHARS: usize = 200;
 pub const MAX_MEMORY_REVIEW_CHANGES: usize = 8;
 
+/// Canonical comparison key for memory content. This is only for duplicate
+/// checks; persisted title/content stay exactly as supplied. Date tokens are
+/// retained, so only their surrounding punctuation/spacing can normalize.
+pub fn memory_comparison_key(text: &str) -> String {
+    let mut key = String::with_capacity(text.len());
+    let mut pending_space = false;
+    for character in text.chars() {
+        let character = match character {
+            '\u{3000}' => ' ',
+            '，' | '､' => ',',
+            '。' => '.',
+            '！' => '!',
+            '？' => '?',
+            '：' => ':',
+            '；' => ';',
+            '（' => '(',
+            '）' => ')',
+            '【' => '[',
+            '】' => ']',
+            '｛' => '{',
+            '｝' => '}',
+            '“' | '”' | '＂' => '"',
+            '‘' | '’' | '＇' => '\'',
+            '、' => ',',
+            '—' | '–' | '－' => '-',
+            '／' => '/',
+            '…' => '.',
+            other => other,
+        };
+        if character.is_whitespace() {
+            pending_space = true;
+            continue;
+        }
+        if pending_space && !key.is_empty() {
+            key.push(' ');
+        }
+        pending_space = false;
+        key.push(character);
+    }
+    let chars: Vec<_> = key.trim().chars().collect();
+    let mut normalized = String::with_capacity(key.len());
+    for (index, character) in chars.iter().copied().enumerate() {
+        let adjacent_punctuation = |candidate: Option<char>| {
+            candidate.is_some_and(|candidate| matches!(candidate,
+                ',' | '.' | '!' | '?' | ':' | ';' | '(' | ')' | '[' | ']' | '{' | '}' | '"' | '\'' | '-'))
+        };
+        if character == ' '
+            && (adjacent_punctuation(index.checked_sub(1).and_then(|i| chars.get(i)).copied())
+                || adjacent_punctuation(chars.get(index + 1).copied()))
+        {
+            continue;
+        }
+        normalized.push(character);
+    }
+    normalized
+}
+
 #[derive(Debug, Clone)]
 pub struct ReviewedMemoryChange {
     pub id: Option<i64>,
@@ -80,6 +137,7 @@ pub async fn apply_reviewed_memories_for_turn(
     );
     for change in changes {
         validate_agent_memory(&change.title, &change.content)?;
+        anyhow::ensure!(!change.evidence.trim().is_empty(), "missing memory evidence");
     }
     let mut tx = db::pool().begin_with("BEGIN IMMEDIATE").await?;
     if let Some((job_id, final_message_id)) = anchor {
@@ -127,16 +185,22 @@ pub async fn apply_reviewed_memories_for_turn(
         }
     }
     // Check the final state, including duplicates within the batch and disabled memories.
-    let mut contents = std::collections::HashSet::new();
+    let mut exact_contents = std::collections::HashSet::new();
+    let mut normalized_contents = std::collections::HashSet::new();
     for memory in &current {
         if !ids.contains(&memory.id) {
-            contents.insert(memory.content.trim());
+            exact_contents.insert(memory.content.trim().to_owned());
+            normalized_contents.insert(memory_comparison_key(&memory.content));
         }
     }
     for change in changes {
         anyhow::ensure!(
-            contents.insert(change.content.trim()),
+            exact_contents.insert(change.content.trim().to_owned()),
             "duplicate memory content"
+        );
+        anyhow::ensure!(
+            normalized_contents.insert(memory_comparison_key(&change.content)),
+            "duplicate normalized memory content"
         );
     }
     let mut saved = Vec::new();
@@ -258,7 +322,7 @@ pub async fn create_reviewed_memory(
         id: None,
         title: title.into(),
         content: content.into(),
-        evidence: "[]".into(),
+        evidence: "「测试」".into(),
     };
     Ok(apply_reviewed_memories(user_id, &[change], checked)
         .await?

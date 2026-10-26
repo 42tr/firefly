@@ -393,6 +393,24 @@ struct MemoryReviewChange {
     evidence: String,
 }
 
+#[derive(Debug, Default, PartialEq, Eq)]
+struct ReviewRejectCounts {
+    duplicate_exact: usize,
+    duplicate_normalized: usize,
+    invalid_id: usize,
+    manual_update: usize,
+    snapshot_stale: usize,
+    evidence_invalid: usize,
+    overlong: usize,
+    over_limit: usize,
+    invalid_content: usize,
+}
+
+struct FilteredReviewChanges {
+    changes: Vec<assistant_store::ReviewedMemoryChange>,
+    rejected: ReviewRejectCounts,
+}
+
 /// Process completed Firefly turns outside the conversation worker. The model
 /// is tool-free and can only propose bounded memory changes in JSON.
 pub async fn run_review_worker() {
@@ -436,11 +454,24 @@ async fn review_turn(job: &assistant_store::MemoryReviewJob) -> anyhow::Result<(
         .filter(|content| !content.is_empty())
         .ok_or_else(|| anyhow!("memory review final assistant message is missing"))?;
     let checked = assistant_store::list_memories(&job.user_id).await?;
-    let related = search(&job.user_id, &truncate_chars(user_message, 8000), 12_000)
-        .await
-        .map(|result| result.memories)
-        .unwrap_or_default();
-    let prompt = memory_review_prompt(user_message, assistant_message, &related);
+    let search_result = match search(&job.user_id, &truncate_chars(user_message, 8000), 12_000).await {
+        Ok(result) => result,
+        Err(error) => {
+            warn!(
+                job_id = %job.generation_job_id,
+                user_id = %job.user_id,
+                error = %error,
+                "memory review search failed; continuing without related memories"
+            );
+            SearchResult {
+                memories: Vec::new(),
+                omitted: 0,
+                method: "error",
+                scores: Vec::new(),
+            }
+        }
+    };
+    let prompt = memory_review_prompt(user_message, assistant_message, &search_result.memories);
 
     let settings = crate::agent_settings::Settings::load(crate::db::pool()).await?;
     let model = settings.model(&settings.firefly)?;
@@ -452,42 +483,179 @@ async fn review_turn(job: &assistant_store::MemoryReviewJob) -> anyhow::Result<(
         .await
         .map_err(|error| anyhow!("memory review model failed: {error}"))?;
     let response = parse_memory_review(&output.final_text)?;
-    let mut changes = response
-        .changes
-        .into_iter()
-        .map(|change| assistant_store::ReviewedMemoryChange {
-            id: change.id,
-            title: change.title,
-            content: change.content,
-            evidence: change.evidence,
-        })
-        .collect::<Vec<_>>();
-    changes.retain(|change| match change.id {
-        Some(id) => checked.iter().find(|memory| memory.id == id).is_some_and(|memory| {
-            memory.source == "agent"
-                && memory.enabled
-                && (memory.title.trim() != change.title.trim()
-                    || memory.content.trim() != change.content.trim())
-        }),
-        None => !checked
-            .iter()
-            .any(|memory| memory.content.trim() == change.content.trim()),
-    });
-    let mut contents = HashSet::new();
-    changes.retain(|change| contents.insert(change.content.trim().to_owned()));
-    changes.truncate(assistant_store::MAX_MEMORY_REVIEW_CHANGES);
+    let mut filtered = filter_review_changes(response.changes, &checked, user_message, assistant_message);
     let saved = assistant_store::apply_reviewed_memories_for_turn(
         &job.user_id,
-        &changes,
+        &filtered.changes,
         &checked,
         Some((job.generation_job_id, job.final_message_id)),
     )
-    .await?
-    .ok_or_else(|| anyhow!("memory review snapshot changed; retrying"))?;
+    .await?;
+    if saved.is_none() {
+        filtered.rejected.snapshot_stale += 1;
+    }
+    let selected_ids: Vec<_> = search_result.memories.iter().map(|memory| memory.id).collect();
+    info!(
+        job_id = %job.generation_job_id,
+        user_id = %job.user_id,
+        search_method = search_result.method,
+        selected_ids = ?selected_ids,
+        search_omitted = search_result.omitted,
+        search_scores = ?search_result.scores,
+        rejected_duplicate_exact = filtered.rejected.duplicate_exact,
+        rejected_duplicate_normalized = filtered.rejected.duplicate_normalized,
+        rejected_invalid_id = filtered.rejected.invalid_id,
+        rejected_manual_update = filtered.rejected.manual_update,
+        rejected_snapshot_stale = filtered.rejected.snapshot_stale,
+        rejected_evidence_invalid = filtered.rejected.evidence_invalid,
+        rejected_overlong = filtered.rejected.overlong,
+        rejected_over_limit = filtered.rejected.over_limit,
+        rejected_invalid_content = filtered.rejected.invalid_content,
+        "memory review filtered model changes"
+    );
+    let saved = match saved {
+        Some(saved) => saved,
+        None => {
+            warn!(
+                job_id = %job.generation_job_id,
+                user_id = %job.user_id,
+                rejected_snapshot_stale = filtered.rejected.snapshot_stale,
+                "memory review snapshot changed; retrying"
+            );
+            return Err(anyhow!("memory review snapshot changed; retrying"));
+        }
+    };
     for memory in saved {
         refresh(&memory).await;
     }
     Ok(())
+}
+
+fn filter_review_changes(
+    changes: Vec<MemoryReviewChange>,
+    checked: &[MemoryRecord],
+    user_message: &str,
+    assistant_message: &str,
+) -> FilteredReviewChanges {
+    // Invalid evidence is intentionally dropped here, so this gate can reduce
+    // the number of memories written; the counter is logged for later review.
+    let mut rejected = ReviewRejectCounts::default();
+    let mut exact_contents: HashSet<String> = checked
+        .iter()
+        .map(|memory| memory.content.trim().to_owned())
+        .collect();
+    let mut normalized_contents: HashSet<String> = checked
+        .iter()
+        .map(|memory| assistant_store::memory_comparison_key(&memory.content))
+        .collect();
+    let mut accepted = Vec::new();
+    for change in changes {
+        if !evidence_is_valid(&change.evidence, user_message, assistant_message) {
+            rejected.evidence_invalid += 1;
+            continue;
+        }
+        if change.title.trim().is_empty() || change.content.trim().is_empty() {
+            rejected.invalid_content += 1;
+            continue;
+        }
+        if change.title.chars().count() > assistant_store::MAX_MEMORY_TITLE_LEN
+            || change.title.chars().count() + change.content.chars().count()
+                > assistant_store::MAX_AGENT_MEMORY_CHARS
+        {
+            rejected.overlong += 1;
+            continue;
+        }
+        if let Some(id) = change.id {
+            let Some(memory) = checked.iter().find(|memory| memory.id == id) else {
+                rejected.invalid_id += 1;
+                continue;
+            };
+            if memory.source != "agent" {
+                rejected.manual_update += 1;
+                continue;
+            }
+            if !memory.enabled {
+                rejected.invalid_id += 1;
+                continue;
+            }
+            if memory.title.trim() == change.title.trim()
+                && memory.content.trim() == change.content.trim()
+            {
+                rejected.duplicate_exact += 1;
+                continue;
+            }
+            accepted.push(assistant_store::ReviewedMemoryChange {
+                id: Some(id),
+                title: change.title,
+                content: change.content,
+                evidence: change.evidence,
+            });
+            continue;
+        }
+        let exact = change.content.trim().to_owned();
+        if exact_contents.contains(&exact) {
+            rejected.duplicate_exact += 1;
+            continue;
+        }
+        let normalized = assistant_store::memory_comparison_key(&change.content);
+        if normalized_contents.contains(&normalized) {
+            rejected.duplicate_normalized += 1;
+            continue;
+        }
+        exact_contents.insert(exact);
+        normalized_contents.insert(normalized);
+        accepted.push(assistant_store::ReviewedMemoryChange {
+            id: None,
+            title: change.title,
+            content: change.content,
+            evidence: change.evidence,
+        });
+    }
+    if accepted.len() > assistant_store::MAX_MEMORY_REVIEW_CHANGES {
+        rejected.over_limit = accepted.len() - assistant_store::MAX_MEMORY_REVIEW_CHANGES;
+        accepted.truncate(assistant_store::MAX_MEMORY_REVIEW_CHANGES);
+    }
+    FilteredReviewChanges {
+        changes: accepted,
+        rejected,
+    }
+}
+
+fn evidence_is_valid(evidence: &str, user_message: &str, assistant_message: &str) -> bool {
+    extract_evidence_quotes(evidence).into_iter().any(|quote| {
+        let quote = evidence_match_key(quote);
+        !quote.is_empty()
+            && [user_message, assistant_message]
+                .iter()
+                .any(|source| evidence_match_key(source).contains(&quote))
+    })
+}
+
+fn evidence_match_key(text: &str) -> String {
+    assistant_store::memory_comparison_key(text)
+        .chars()
+        .filter(|character| {
+            !character.is_whitespace()
+                && !matches!(
+                    character,
+                    ',' | '.' | '!' | '?' | ':' | ';' | '(' | ')' | '[' | ']' | '{' | '}' | '"'
+                        | '\'' | '-' | '/'
+                )
+        })
+        .collect()
+}
+
+fn extract_evidence_quotes(evidence: &str) -> Vec<&str> {
+    let pairs = [('「', '」'), ('『', '』'), ('“', '”'), ('"', '"'), ('‘', '’'), ('\'', '\'')];
+    pairs
+        .iter()
+        .filter_map(|(open, close)| {
+            let open_index = evidence.find(*open)?;
+            let content_start = open_index + evidence[open_index..].chars().next()?.len_utf8();
+            let content_end = evidence[content_start..].find(*close)? + content_start;
+            (content_end > content_start).then_some(&evidence[content_start..content_end])
+        })
+        .collect()
 }
 
 fn memory_review_prompt(user_message: &str, assistant_message: &str, related: &[MemoryRecord]) -> String {
@@ -509,7 +677,7 @@ fn memory_review_prompt(user_message: &str, assistant_message: &str, related: &[
             .join("\n")
     };
     format!(
-        "审查本轮对话是否需要更新长期记忆。\n\n<user_message>\n{}\n</user_message>\n\n<assistant_reply>\n{}\n</assistant_reply>\n\n<related_memories>\n{}\n</related_memories>\n\n只返回 JSON，不要 Markdown：{{\"changes\":[{{\"id\":null,\"title\":\"记忆标题\",\"content\":\"独立、简短的事实\",\"evidence\":\"本轮依据\"}}]}}。没有值得保存的内容时返回 {{\"changes\":[]}}。\n规则：每轮自行判断，不要求用户说“记住”；只保存稳定、明确且未来可能有用的事实、偏好、配置或约定。用户明确要求长期保存的内容应保存，包括用户提供的配置和凭据，但不要猜测或扩写。已有记忆内容相同或没有实质变化时不要新增。若用户明确修正一条已有的 Agent 记忆，使用其 id 更新，不要新建重复项；手动记忆只能作为参考，不能自动修改。最多 8 条，每条标题加内容不超过 200 个字符。",
+        "审查本轮对话是否需要更新长期记忆。\n\n<user_message>\n{}\n</user_message>\n\n<assistant_reply>\n{}\n</assistant_reply>\n\n<related_memories>\n{}\n</related_memories>\n\n只返回 JSON，不要 Markdown：{{\"changes\":[{{\"id\":null,\"title\":\"记忆标题\",\"content\":\"独立、简短的事实\",\"evidence\":\"依据：「本轮原文连续片段」\"}}]}}。没有值得保存的内容时返回 {{\"changes\":[]}}。\n规则：每轮自行判断，不要求用户说“记住”；只保存稳定、明确且未来可能有用的事实、偏好、配置或约定。evidence 必须包含用成对引号（\"...\"、“...”或「...」）包裹的、从本轮用户消息或最终助手回复逐字连续复制的原文片段；不能只写概述、不能引用 related_memories，无法提供合规引文时不要提交 change。排除当日或一次性状态快照、任务进度与过程记录、易变数值（余额、容器数、文件大小、耗时等）以及纯“本次做了什么”的流水账。用户明确要求长期保存的内容应保存，包括用户提供的配置和凭据，但不要猜测或扩写。已有记忆内容相同或没有实质变化时不要新增。若用户明确修正一条已有的 Agent 记忆，使用其 id 更新，不要新建重复项；手动记忆只能作为参考，不能自动修改。最多 8 条，每条标题加内容不超过 200 个字符。",
         truncate_chars(user_message, 12_000),
         truncate_chars(assistant_message, 12_000),
         existing,

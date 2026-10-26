@@ -105,6 +105,65 @@ fn parses_structured_memory_review_and_tolerates_code_fences() {
 }
 
 #[test]
+fn memory_comparison_key_folds_rewrites_but_keeps_distinct_dates() {
+    assert_eq!(
+        assistant_store::memory_comparison_key("  喜欢，  深色模式。 "),
+        assistant_store::memory_comparison_key("喜欢,深色模式.")
+    );
+    assert_ne!(
+        assistant_store::memory_comparison_key("部署状态（截至 10-24）"),
+        assistant_store::memory_comparison_key("部署状态 (截至 10-25)")
+    );
+    assert_eq!(
+        assistant_store::memory_comparison_key("部署状态（截至 10/24）"),
+        assistant_store::memory_comparison_key("部署状态 (截至 10／24)")
+    );
+}
+
+#[test]
+fn evidence_requires_a_verbatim_quoted_fragment_from_this_turn() {
+    assert!(evidence_is_valid("依据：「我喜欢，深色模式」", "我喜欢深色模式", "已确认"));
+    assert!(evidence_is_valid("助手回复：“部署  已完成。”", "请部署", "部署已完成。"));
+    assert!(!evidence_is_valid("本轮提到喜欢深色模式", "我喜欢深色模式", "已确认"));
+    assert!(!evidence_is_valid("依据：「用户喜欢浅色模式」", "我喜欢深色模式", "已确认"));
+}
+
+#[test]
+fn review_filter_counts_rejections_and_caps_valid_changes() {
+    let mut agent = memory(2, "自动", "旧事实");
+    agent.source = "agent".into();
+    let mut disabled = memory(3, "停用", "停用事实");
+    disabled.source = "agent".into();
+    disabled.enabled = false;
+    let checked = vec![memory(1, "手动", "喜欢，深色模式"), agent, disabled];
+    let evidence = "依据：「我喜欢深色模式」";
+    let mut changes = vec![
+        MemoryReviewChange { id: None, title: "重复".into(), content: "喜欢，深色模式".into(), evidence: evidence.into() },
+        MemoryReviewChange { id: None, title: "改写重复".into(), content: "喜欢,  深色模式".into(), evidence: evidence.into() },
+        MemoryReviewChange { id: Some(404), title: "不存在".into(), content: "事实".into(), evidence: evidence.into() },
+        MemoryReviewChange { id: Some(1), title: "覆盖手动".into(), content: "事实".into(), evidence: evidence.into() },
+        MemoryReviewChange { id: Some(3), title: "启用".into(), content: "事实".into(), evidence: evidence.into() },
+        MemoryReviewChange { id: None, title: "无证据".into(), content: "无证据事实".into(), evidence: "没有引文".into() },
+    ];
+    for index in 0..9 {
+        changes.push(MemoryReviewChange {
+            id: None,
+            title: format!("事实 {index}"),
+            content: format!("新事实 {index}"),
+            evidence: evidence.into(),
+        });
+    }
+    let filtered = filter_review_changes(changes, &checked, "我喜欢深色模式", "已确认");
+    assert_eq!(filtered.changes.len(), 8);
+    assert_eq!(filtered.rejected.duplicate_exact, 1);
+    assert_eq!(filtered.rejected.duplicate_normalized, 1);
+    assert_eq!(filtered.rejected.invalid_id, 2);
+    assert_eq!(filtered.rejected.manual_update, 1);
+    assert_eq!(filtered.rejected.evidence_invalid, 1);
+    assert_eq!(filtered.rejected.over_limit, 1);
+}
+
+#[test]
 fn chunks_preserve_unicode_and_large_hits_fit_the_context_budget() {
     let content = "部署步骤".repeat(1000);
     let chunks = split_content(&content);
