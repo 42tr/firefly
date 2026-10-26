@@ -124,7 +124,11 @@ const {
   setConversationPinned,
 } = useConversations({ pendingConversation, isRenamingConversation, showingArchivedConversations, expandArchivedOnMore: true })
 
-watch(activeConversationId, () => { showModelSettings.value = false })
+let goalSummaryRefreshKey = null
+watch(activeConversationId, () => {
+  showModelSettings.value = false
+  goalSummaryRefreshKey = null
+})
 watch(pendingConversation, () => { showModelSettings.value = false })
 const handleModelSettingsSaved = conversation => patchConversation(conversation.id, {
   codex_provider: conversation.codex_provider,
@@ -214,6 +218,12 @@ const {
   onConversationPatched: next => {
     if (next?.status !== 'completed' || !next.last_check_result?.final_result || !activeConversationId.value) return
     if (messages.value.some(message => message.goal?.origin === 'goal_summary')) return
+    // Loading the history also loads Goal state. Without a guard, a completed
+    // Goal whose summary is outside the current history page causes this
+    // callback to force-load the same conversation forever.
+    const refreshKey = `${activeConversationId.value}:${JSON.stringify(next.last_check_result)}`
+    if (goalSummaryRefreshKey === refreshKey) return
+    goalSummaryRefreshKey = refreshKey
     void selectConversation(activeConversationId.value, { force: true })
   },
 })
