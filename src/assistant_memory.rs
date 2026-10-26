@@ -422,7 +422,9 @@ fn refresh_cooldown_active(service: &EmbeddingService) -> bool {
 }
 
 fn note_refresh_outcome(service: &EmbeddingService, failed: bool) {
-    let mut failures = REFRESH_FAILURES.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
+    let mut failures = REFRESH_FAILURES
+        .lock()
+        .unwrap_or_else(|poisoned| poisoned.into_inner());
     if failed {
         failures.insert(service.space.clone(), std::time::Instant::now());
     } else {
@@ -482,6 +484,7 @@ struct ReviewRejectCounts {
     invalid_content: usize,
     semantic_duplicate: usize,
     semantic_similar: usize,
+    // Per-review count of enabled memories without a usable cached vector.
     skipped_no_vector: usize,
     semantic_unavailable: usize,
 }
@@ -501,7 +504,9 @@ pub async fn run_review_worker() {
                 let job_id = job.generation_job_id;
                 if let Err(error) = review_turn(&job).await {
                     warn!(job_id = %job_id, attempts = job.attempts, "memory review failed: {error:#}");
-                    if let Err(update_error) = assistant_store::fail_memory_review(job_id, &truncate_error(&error)).await {
+                    if let Err(update_error) =
+                        assistant_store::fail_memory_review(job_id, &truncate_error(&error)).await
+                    {
                         warn!(job_id = %job_id, "failed to reschedule memory review: {update_error:#}");
                     }
                 }
@@ -535,23 +540,24 @@ async fn review_turn(job: &assistant_store::MemoryReviewJob) -> anyhow::Result<(
         .filter(|content| !content.is_empty())
         .ok_or_else(|| anyhow!("memory review final assistant message is missing"))?;
     let checked = assistant_store::list_memories(&job.user_id).await?;
-    let search_result = match search(&job.user_id, &truncate_chars(user_message, 8000), 12_000).await {
-        Ok(result) => result,
-        Err(error) => {
-            warn!(
-                job_id = %job.generation_job_id,
-                user_id = %job.user_id,
-                error = %error,
-                "memory review search failed; continuing without related memories"
-            );
-            SearchResult {
-                memories: Vec::new(),
-                omitted: 0,
-                method: "error",
-                scores: Vec::new(),
+    let search_result =
+        match search(&job.user_id, &truncate_chars(user_message, 8000), 12_000).await {
+            Ok(result) => result,
+            Err(error) => {
+                warn!(
+                    job_id = %job.generation_job_id,
+                    user_id = %job.user_id,
+                    error = %error,
+                    "memory review search failed; continuing without related memories"
+                );
+                SearchResult {
+                    memories: Vec::new(),
+                    omitted: 0,
+                    method: "error",
+                    scores: Vec::new(),
+                }
             }
-        }
-    };
+        };
     let prompt = memory_review_prompt(user_message, assistant_message, &search_result.memories);
 
     let settings = crate::agent_settings::Settings::load(crate::db::pool()).await?;
@@ -564,7 +570,8 @@ async fn review_turn(job: &assistant_store::MemoryReviewJob) -> anyhow::Result<(
         .await
         .map_err(|error| anyhow!("memory review model failed: {error}"))?;
     let response = parse_memory_review(&output.final_text)?;
-    let mut filtered = filter_review_changes(response.changes, &checked, user_message, assistant_message);
+    let mut filtered =
+        filter_review_changes(response.changes, &checked, user_message, assistant_message);
     apply_semantic_review(&crate::config::get(), &job.user_id, &mut filtered, &checked).await?;
     let saved = assistant_store::apply_reviewed_memories_for_turn(
         &job.user_id,
@@ -576,7 +583,11 @@ async fn review_turn(job: &assistant_store::MemoryReviewJob) -> anyhow::Result<(
     if saved.is_none() {
         filtered.rejected.snapshot_stale += 1;
     }
-    let selected_ids: Vec<_> = search_result.memories.iter().map(|memory| memory.id).collect();
+    let selected_ids: Vec<_> = search_result
+        .memories
+        .iter()
+        .map(|memory| memory.id)
+        .collect();
     info!(
         job_id = %job.generation_job_id,
         user_id = %job.user_id,
@@ -655,6 +666,7 @@ async fn apply_semantic_review(
             return Ok(());
         }
     };
+    // One configured timeout is the total budget for cache I/O and all candidate embeds.
     let semantic = tokio::time::timeout(
         service.timeout,
         semantic_review_step(&service, user_id, &changes, &enabled),
@@ -722,7 +734,7 @@ async fn semantic_review_step(
         ));
     }
     let mut result = semantic_review_candidates(service, user_id, changes, &memory_vectors).await;
-    result.rejected.skipped_no_vector = skipped_no_vector;
+    result.rejected.skipped_no_vector += skipped_no_vector;
     Ok(result)
 }
 
@@ -778,6 +790,22 @@ async fn semantic_review_candidates(
                 continue;
             }
         };
+        let mismatched = memory_vectors
+            .iter()
+            .filter(|(_, chunks)| {
+                chunks
+                    .first()
+                    .is_some_and(|chunk| chunk.len() != vectors[0].len())
+            })
+            .count();
+        if mismatched > 0 {
+            warn!(
+                user_id,
+                candidate_index,
+                mismatched,
+                "{mismatched} memories skipped for dimension mismatch"
+            );
+        }
         let nearest = vectors
             .iter()
             .filter_map(|vector| nearest_enabled_memory(vector, &memory_vectors))
@@ -927,15 +955,35 @@ fn evidence_match_key(text: &str) -> String {
             !character.is_whitespace()
                 && !matches!(
                     character,
-                    ',' | '.' | '!' | '?' | ':' | ';' | '(' | ')' | '[' | ']' | '{' | '}' | '"'
-                        | '\'' | '-' | '/'
+                    ',' | '.'
+                        | '!'
+                        | '?'
+                        | ':'
+                        | ';'
+                        | '('
+                        | ')'
+                        | '['
+                        | ']'
+                        | '{'
+                        | '}'
+                        | '"'
+                        | '\''
+                        | '-'
+                        | '/'
                 )
         })
         .collect()
 }
 
 fn extract_evidence_quotes(evidence: &str) -> Vec<&str> {
-    let pairs = [('「', '」'), ('『', '』'), ('“', '”'), ('"', '"'), ('‘', '’'), ('\'', '\'')];
+    let pairs = [
+        ('「', '」'),
+        ('『', '』'),
+        ('“', '”'),
+        ('"', '"'),
+        ('‘', '’'),
+        ('\'', '\''),
+    ];
     pairs
         .iter()
         .filter_map(|(open, close)| {
@@ -947,7 +995,11 @@ fn extract_evidence_quotes(evidence: &str) -> Vec<&str> {
         .collect()
 }
 
-fn memory_review_prompt(user_message: &str, assistant_message: &str, related: &[MemoryRecord]) -> String {
+fn memory_review_prompt(
+    user_message: &str,
+    assistant_message: &str,
+    related: &[MemoryRecord],
+) -> String {
     let existing = if related.is_empty() {
         "（没有检索到相关的现有记忆）".to_owned()
     } else {
@@ -980,8 +1032,12 @@ fn parse_memory_review(text: &str) -> anyhow::Result<MemoryReviewResponse> {
         .and_then(|value| value.strip_suffix("```"))
         .map(|value| value.trim_start_matches("json").trim())
         .unwrap_or(trimmed);
-    let start = candidate.find('{').ok_or_else(|| anyhow!("memory review returned no JSON"))?;
-    let end = candidate.rfind('}').ok_or_else(|| anyhow!("memory review JSON is incomplete"))?;
+    let start = candidate
+        .find('{')
+        .ok_or_else(|| anyhow!("memory review returned no JSON"))?;
+    let end = candidate
+        .rfind('}')
+        .ok_or_else(|| anyhow!("memory review JSON is incomplete"))?;
     Ok(serde_json::from_str(&candidate[start..=end])?)
 }
 

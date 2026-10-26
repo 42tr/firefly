@@ -35,12 +35,14 @@ fn memory(id: i64, title: &str, content: &str) -> MemoryRecord {
 struct Calls {
     queries: Arc<AtomicUsize>,
     documents: Arc<AtomicUsize>,
+    requests: Arc<AtomicUsize>,
 }
 
 async fn mock_server() -> (Config, Calls, tokio::task::JoinHandle<()>) {
     let calls = Calls::default();
     let app = Router::new().route("/v1/embeddings", post(|State(calls): State<Calls>, headers: HeaderMap,
         Json(body): Json<Value>| async move {
+        calls.requests.fetch_add(1, Ordering::SeqCst);
         assert!(headers.get("authorization").is_none(), "must not inherit conversation credentials");
         assert_eq!(body["model"], "bge-m3");
         assert_eq!(body["encoding_format"], "float");
@@ -246,6 +248,75 @@ async fn semantic_review_leaves_explicit_updates_and_skips_embedding_calls() {
 }
 
 #[tokio::test]
+async fn semantic_review_mixed_batch_keeps_updates_and_suppresses_only_new_candidates() {
+    crate::db::set_test_pool(crate::db::test_pool().await);
+    let (cfg, calls, server) = mock_server().await;
+    let manual = assistant_store::create_memory("owner", "基准", "部署基准", true)
+        .await
+        .unwrap();
+    let agent = assistant_store::create_reviewed_memory(
+        "owner",
+        "自动",
+        "部署旧事实",
+        std::slice::from_ref(&manual),
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    let service = EmbeddingService::from_config(&cfg).unwrap().unwrap();
+    refresh_with(&service, std::slice::from_ref(&manual), None)
+        .await
+        .unwrap();
+    let documents_before = calls.documents.load(Ordering::SeqCst);
+    let checked = assistant_store::list_memories("owner").await.unwrap();
+    let mut filtered = filter_review_changes(
+        vec![
+            MemoryReviewChange {
+                id: Some(agent.id),
+                title: "自动修正".into(),
+                content: "部署更新事实".into(),
+                evidence: "依据：「本轮事实」".into(),
+            },
+            MemoryReviewChange {
+                id: None,
+                title: "新增事实".into(),
+                content: "部署新增事实".into(),
+                evidence: "依据：「本轮事实」".into(),
+            },
+        ],
+        &checked,
+        "本轮事实",
+        "已确认",
+    );
+    apply_semantic_review(&cfg, "owner", &mut filtered, &checked)
+        .await
+        .unwrap();
+    assert_eq!(filtered.changes.len(), 1);
+    assert_eq!(filtered.changes[0].id, Some(agent.id));
+    assert_eq!(filtered.changes[0].content, "部署更新事实");
+    assert_eq!(filtered.rejected.semantic_duplicate, 1);
+    assert_eq!(filtered.semantic_nearest.len(), 1);
+    assert_eq!(
+        calls.documents.load(Ordering::SeqCst) - documents_before,
+        1,
+        "only the new candidate's one chunk is embedded"
+    );
+    let saved = assistant_store::apply_reviewed_memories_for_turn(
+        "owner",
+        &filtered.changes,
+        &checked,
+        None,
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    assert_eq!(saved.len(), 1);
+    assert_eq!(saved[0].id, agent.id);
+    assert_eq!(saved[0].content, "部署更新事实");
+    server.abort();
+}
+
+#[tokio::test]
 async fn semantic_review_counts_embedding_failure_without_suppressing_new_memory() {
     crate::db::set_test_pool(crate::db::test_pool().await);
     let app = Router::new().route(
@@ -281,6 +352,82 @@ async fn semantic_review_counts_embedding_failure_without_suppressing_new_memory
     server.abort();
 }
 
+#[tokio::test]
+async fn semantic_review_fails_open_when_cache_read_fails() {
+    let pool = crate::db::test_pool().await;
+    crate::db::set_test_pool(pool.clone());
+    assistant_store::create_memory("owner", "已有", "已有事实", true)
+        .await
+        .unwrap();
+    let checked = assistant_store::list_memories("owner").await.unwrap();
+    let mut filtered = filter_review_changes(
+        vec![MemoryReviewChange {
+            id: None,
+            title: "缓存失败候选".into(),
+            content: "缓存失败时仍保存".into(),
+            evidence: "依据：「本轮事实」".into(),
+        }],
+        &checked,
+        "本轮事实",
+        "已确认",
+    );
+    pool.close().await;
+    let (cfg, calls, server) = mock_server().await;
+    apply_semantic_review(&cfg, "owner", &mut filtered, &checked)
+        .await
+        .unwrap();
+    assert_eq!(filtered.changes.len(), 1);
+    assert_eq!(filtered.changes[0].content, "缓存失败时仍保存");
+    assert_eq!(filtered.rejected.semantic_unavailable, 1);
+    assert!(filtered.semantic_nearest.is_empty());
+    assert_eq!(calls.documents.load(Ordering::SeqCst), 0);
+    assert_eq!(calls.requests.load(Ordering::SeqCst), 0, "a cache read failure must not call the embedding endpoint");
+    server.abort();
+}
+
+#[tokio::test]
+async fn semantic_review_fails_open_when_embedding_step_times_out() {
+    crate::db::set_test_pool(crate::db::test_pool().await);
+    let app = Router::new().route(
+        "/v1/embeddings",
+        post(|| async {
+            tokio::time::sleep(Duration::from_secs(3)).await;
+            Json(json!({"data": []}))
+        }),
+    );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let mut cfg = config(&format!("http://{}/v1", listener.local_addr().unwrap()));
+    cfg.embedding_timeout_secs = 1;
+    let server = tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+    let existing = assistant_store::create_memory("owner", "已有", "已有事实", true)
+        .await
+        .unwrap();
+    let checked = vec![existing];
+    let mut filtered = filter_review_changes(
+        vec![MemoryReviewChange {
+            id: None,
+            title: "超时候选".into(),
+            content: "超时后仍保存".into(),
+            evidence: "依据：「本轮事实」".into(),
+        }],
+        &checked,
+        "本轮事实",
+        "已确认",
+    );
+    let started = std::time::Instant::now();
+    apply_semantic_review(&cfg, "owner", &mut filtered, &checked)
+        .await
+        .unwrap();
+    assert!(started.elapsed() < Duration::from_secs(2));
+    assert_eq!(filtered.changes.len(), 1);
+    assert_eq!(filtered.changes[0].content, "超时后仍保存");
+    assert_eq!(filtered.rejected.semantic_unavailable, 1);
+    assert!(filtered.semantic_nearest.is_empty());
+    server.abort();
+}
+
 #[test]
 fn parses_structured_memory_review_and_tolerates_code_fences() {
     let review = parse_memory_review(
@@ -310,10 +457,26 @@ fn memory_comparison_key_folds_rewrites_but_keeps_distinct_dates() {
 
 #[test]
 fn evidence_requires_a_verbatim_quoted_fragment_from_this_turn() {
-    assert!(evidence_is_valid("依据：「我喜欢，深色模式」", "我喜欢深色模式", "已确认"));
-    assert!(evidence_is_valid("助手回复：“部署  已完成。”", "请部署", "部署已完成。"));
-    assert!(!evidence_is_valid("本轮提到喜欢深色模式", "我喜欢深色模式", "已确认"));
-    assert!(!evidence_is_valid("依据：「用户喜欢浅色模式」", "我喜欢深色模式", "已确认"));
+    assert!(evidence_is_valid(
+        "依据：「我喜欢，深色模式」",
+        "我喜欢深色模式",
+        "已确认"
+    ));
+    assert!(evidence_is_valid(
+        "助手回复：“部署  已完成。”",
+        "请部署",
+        "部署已完成。"
+    ));
+    assert!(!evidence_is_valid(
+        "本轮提到喜欢深色模式",
+        "我喜欢深色模式",
+        "已确认"
+    ));
+    assert!(!evidence_is_valid(
+        "依据：「用户喜欢浅色模式」",
+        "我喜欢深色模式",
+        "已确认"
+    ));
 }
 
 #[test]
@@ -326,12 +489,42 @@ fn review_filter_counts_rejections_and_caps_valid_changes() {
     let checked = vec![memory(1, "手动", "喜欢，深色模式"), agent, disabled];
     let evidence = "依据：「我喜欢深色模式」";
     let mut changes = vec![
-        MemoryReviewChange { id: None, title: "重复".into(), content: "喜欢，深色模式".into(), evidence: evidence.into() },
-        MemoryReviewChange { id: None, title: "改写重复".into(), content: "喜欢,  深色模式".into(), evidence: evidence.into() },
-        MemoryReviewChange { id: Some(404), title: "不存在".into(), content: "事实".into(), evidence: evidence.into() },
-        MemoryReviewChange { id: Some(1), title: "覆盖手动".into(), content: "事实".into(), evidence: evidence.into() },
-        MemoryReviewChange { id: Some(3), title: "启用".into(), content: "事实".into(), evidence: evidence.into() },
-        MemoryReviewChange { id: None, title: "无证据".into(), content: "无证据事实".into(), evidence: "没有引文".into() },
+        MemoryReviewChange {
+            id: None,
+            title: "重复".into(),
+            content: "喜欢，深色模式".into(),
+            evidence: evidence.into(),
+        },
+        MemoryReviewChange {
+            id: None,
+            title: "改写重复".into(),
+            content: "喜欢,  深色模式".into(),
+            evidence: evidence.into(),
+        },
+        MemoryReviewChange {
+            id: Some(404),
+            title: "不存在".into(),
+            content: "事实".into(),
+            evidence: evidence.into(),
+        },
+        MemoryReviewChange {
+            id: Some(1),
+            title: "覆盖手动".into(),
+            content: "事实".into(),
+            evidence: evidence.into(),
+        },
+        MemoryReviewChange {
+            id: Some(3),
+            title: "启用".into(),
+            content: "事实".into(),
+            evidence: evidence.into(),
+        },
+        MemoryReviewChange {
+            id: None,
+            title: "无证据".into(),
+            content: "无证据事实".into(),
+            evidence: "没有引文".into(),
+        },
     ];
     for index in 0..9 {
         changes.push(MemoryReviewChange {
@@ -654,10 +847,9 @@ async fn embedding_protocol_rejects_missing_duplicate_wrong_dimension_and_zero_v
 async fn live_embedding_retrieval_smoke() {
     let pool = crate::db::test_pool().await;
     crate::db::set_test_pool(pool);
-    let mut cfg: Config = serde_json::from_value(
-        json!({"jwt_secret":"test", "auth_password":"test-password"}),
-    )
-    .unwrap();
+    let mut cfg: Config =
+        serde_json::from_value(json!({"jwt_secret":"test", "auth_password":"test-password"}))
+            .unwrap();
     if let Ok(value) = std::env::var("EMBEDDING_BASE_URL") {
         cfg.embedding_base_url = value;
     }
