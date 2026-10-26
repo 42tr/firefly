@@ -597,16 +597,11 @@ class NewConversationUI(unittest.TestCase):
         expect(sidebar.get_by_role('button', name=re.compile(r'关闭|收起'))).to_have_count(0)
         expect(sidebar.locator('.conversation-meta')).to_have_count(0)
         self.page.evaluate('document.fonts.ready')
-        expect(sidebar.locator('.conversation-directory-name')).to_have_text(
-            ['firefly', 'firefly', 'firefly', '笔记', 'firefly', 'firefly', 'codex-tools', 'codex-tools', 'firefly'])
-        expect(rows.last.locator('.conversation-directory-prefix')).to_have_count(0)
-        self.assertTrue(sidebar.locator('.conversation-directory-name').last.evaluate(
-            'element => element.scrollWidth <= element.clientWidth'))
-        expect(sidebar.locator('.conversation-directory-prefix svg')).to_have_count(0)
+        expect(sidebar.locator('.conversation-directory-prefix')).to_have_count(0)
+        expect(sidebar.locator('.conversation-directory-name')).to_have_count(0)
+        expect(sidebar.locator('.conversation-directory-agent')).to_have_count(0)
         github_title = rows.filter(has_text='GitHub Actions 卡片优化').locator('.conversation-title-text')
         self.assertTrue(github_title.evaluate('element => element.scrollWidth <= element.clientWidth'))
-        expect(rows.filter(has_text='修复实时消息同步').locator('.conversation-directory-prefix')).to_have_attribute(
-            'aria-label', '创建目录：/tools/codex-tools')
         expect(sidebar.get_by_role('separator')).to_have_count(1)
         self.page.wait_for_function("Math.abs(document.querySelector('.tool-panel').getBoundingClientRect().x) < 0.5")
         self.page.evaluate('document.fonts.ready')
@@ -627,14 +622,9 @@ class NewConversationUI(unittest.TestCase):
                 title_text = row.locator('.conversation-title-text').bounding_box()
                 self.assertAlmostEqual(title_text['x'], title['x'], delta=0.5)
                 directory_prefix = row.locator('.conversation-directory-prefix')
-                if directory_prefix.count() > 0:
-                    directory = directory_prefix.bounding_box()
-                    self.assertLessEqual(directory['width'], 60)
-                    self.assertEqual(directory_prefix.evaluate(
-                        'element => getComputedStyle(element).borderRightWidth'), '0px')
-                    self.assertGreaterEqual(title['x'], directory['x'] + directory['width'])
-                    self.assertAlmostEqual(directory['y'] + directory['height'] / 2,
-                                           title['y'] + title['height'] / 2, delta=1)
+                expect(directory_prefix).to_have_count(0)
+                expect(row.locator('.conversation-directory-name')).to_have_count(0)
+                expect(row.locator('.conversation-directory-agent')).to_have_count(0)
         self.page.set_viewport_size(dict(width=390, height=844))
         search = sidebar.get_by_role('searchbox', name='搜索对话', exact=True)
         search.fill('GitHub')
@@ -643,7 +633,9 @@ class NewConversationUI(unittest.TestCase):
         expect(self.page.get_by_role('dialog')).to_have_count(0)
         search.fill('tools/codex-tools')
         expect(rows).to_have_count(1)
-        expect(rows.first.locator('.conversation-directory-name')).to_have_text('codex-tools')
+        expect(rows.first.locator('.conversation-directory-prefix')).to_have_count(0)
+        expect(rows.first.locator('.conversation-directory-name')).to_have_count(0)
+        expect(rows.first.locator('.conversation-directory-agent')).to_have_count(0)
         expect(rows.first.locator('.conversation-title-text')).to_have_text('修复实时消息同步')
         search.fill('不存在的标题')
         expect(sidebar.get_by_text('没有匹配的对话', exact=True)).to_be_visible()

@@ -529,19 +529,6 @@
     font-size: 0;
     line-height: 0;
   }
-  .conversation-directory-prefix {
-    display: flex;
-    flex-direction: column;
-    justify-content: center;
-    flex: 0 0 60px;
-    min-width: 0;
-    color: var(--muted);
-    font-size: 11px;
-    line-height: 16px;
-    white-space: nowrap;
-  }
-  .conversation-directory-name, .conversation-directory-agent { overflow: hidden; text-overflow: ellipsis; }
-  .conversation-directory-agent { font-size: 10px; }
   .conversation-menu-trigger { width: 28px; height: 28px; flex-shrink: 0; }
   .conversation-show-more { justify-content: space-between; margin-top: 6px; }
 }
@@ -589,18 +576,6 @@
   .conversation-item.active { background: var(--accent-soft); box-shadow: none; }
   .conversation-item.active .conversation-title { font-weight: 500; }
   .conversation-title { line-height: 20px; font-weight: 400; white-space: nowrap; }
-  .conversation-directory-prefix {
-    display: flex;
-    align-items: center;
-    flex: 0 0 60px;
-    min-width: 0;
-    margin-right: 8px;
-    color: var(--muted);
-    font-size: 11px;
-    line-height: 20px;
-    white-space: nowrap;
-  }
-  .conversation-directory-name { min-width: 0; overflow: hidden; text-overflow: ellipsis; }
   .conversation-menu { top: 44px; min-width: 120px; }
   .conversation-menu.drop-up, .delete-bubble.drop-up { bottom: 44px; top: auto; }
   .conversation-menu button { min-height: 44px; font-size: 14px; }
