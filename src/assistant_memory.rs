@@ -21,6 +21,23 @@ const BATCH_SIZE: usize = 32;
 const MAX_RESPONSE_BYTES: usize = 4 * 1024 * 1024;
 const PARTIAL_NOTICE: &str =
     "\n[仅载入命中的相关片段，原记忆未完整载入；不要据此猜测缺失的参数或步骤。]";
+// Temporary, uncalibrated thresholds; they are not validated product thresholds.
+const MEMORY_SEMANTIC_DUPLICATE_SIM: f64 = 0.90;
+const MEMORY_SEMANTIC_SIMILAR_SIM: f64 = 0.70;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum SemanticMatchReason {
+    Duplicate,
+    Similar,
+    BelowThreshold,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct SemanticNearestMatch {
+    memory_id: i64,
+    similarity: f64,
+    reason: SemanticMatchReason,
+}
 
 #[derive(Clone)]
 struct EmbeddingService {
@@ -238,6 +255,65 @@ fn cached_chunks(
     Some(chunks)
 }
 
+fn cosine_similarity(left: &[f32], right: &[f32]) -> Option<f64> {
+    if left.is_empty()
+        || left.len() != right.len()
+        || !left.iter().chain(right).all(|value| value.is_finite())
+    {
+        return None;
+    }
+    let mut dot = 0.0;
+    let mut left_norm = 0.0;
+    let mut right_norm = 0.0;
+    for (&left, &right) in left.iter().zip(right) {
+        let left = f64::from(left);
+        let right = f64::from(right);
+        dot += left * right;
+        left_norm += left * left;
+        right_norm += right * right;
+    }
+    let denominator = left_norm.sqrt() * right_norm.sqrt();
+    (denominator.is_finite() && denominator > 0.0)
+        .then(|| (dot / denominator).clamp(-1.0, 1.0))
+        .filter(|similarity| similarity.is_finite())
+}
+
+fn nearest_enabled_memory(
+    candidate: &[f32],
+    memories: &[(i64, Vec<Vec<f32>>)],
+) -> Option<SemanticNearestMatch> {
+    if candidate.is_empty() || !candidate.iter().all(|value| value.is_finite()) {
+        return None;
+    }
+    let (memory_id, similarity) = memories
+        .iter()
+        .filter_map(|(memory_id, chunks)| {
+            let similarity = chunks
+                .iter()
+                .filter_map(|chunk| cosine_similarity(candidate, chunk))
+                // One strongly matching chunk is enough to flag a memory; keep the max.
+                .max_by(f64::total_cmp)?;
+            Some((*memory_id, similarity))
+        })
+        .max_by(|(left_id, left_similarity), (right_id, right_similarity)| {
+            left_similarity
+                .total_cmp(right_similarity)
+                .then_with(|| right_id.cmp(left_id))
+        })?;
+    let reason = if similarity >= MEMORY_SEMANTIC_DUPLICATE_SIM {
+        SemanticMatchReason::Duplicate
+    } else if similarity >= MEMORY_SEMANTIC_SIMILAR_SIM {
+        SemanticMatchReason::Similar
+    } else {
+        SemanticMatchReason::BelowThreshold
+    };
+    Some(SemanticNearestMatch {
+        memory_id,
+        similarity,
+        reason,
+    })
+}
+
 /// Refresh only absent/stale records. API calls run before guarded database writes.
 async fn refresh_with(
     service: &EmbeddingService,
@@ -404,11 +480,16 @@ struct ReviewRejectCounts {
     overlong: usize,
     over_limit: usize,
     invalid_content: usize,
+    semantic_duplicate: usize,
+    semantic_similar: usize,
+    skipped_no_vector: usize,
+    semantic_unavailable: usize,
 }
 
 struct FilteredReviewChanges {
     changes: Vec<assistant_store::ReviewedMemoryChange>,
     rejected: ReviewRejectCounts,
+    semantic_nearest: Vec<(usize, SemanticNearestMatch)>,
 }
 
 /// Process completed Firefly turns outside the conversation worker. The model
@@ -484,6 +565,7 @@ async fn review_turn(job: &assistant_store::MemoryReviewJob) -> anyhow::Result<(
         .map_err(|error| anyhow!("memory review model failed: {error}"))?;
     let response = parse_memory_review(&output.final_text)?;
     let mut filtered = filter_review_changes(response.changes, &checked, user_message, assistant_message);
+    apply_semantic_review(&crate::config::get(), &job.user_id, &mut filtered, &checked).await?;
     let saved = assistant_store::apply_reviewed_memories_for_turn(
         &job.user_id,
         &filtered.changes,
@@ -511,6 +593,11 @@ async fn review_turn(job: &assistant_store::MemoryReviewJob) -> anyhow::Result<(
         rejected_overlong = filtered.rejected.overlong,
         rejected_over_limit = filtered.rejected.over_limit,
         rejected_invalid_content = filtered.rejected.invalid_content,
+        rejected_semantic_duplicate = filtered.rejected.semantic_duplicate,
+        rejected_semantic_similar = filtered.rejected.semantic_similar,
+        rejected_skipped_no_vector = filtered.rejected.skipped_no_vector,
+        rejected_semantic_unavailable = filtered.rejected.semantic_unavailable,
+        semantic_nearest = ?filtered.semantic_nearest,
         "memory review filtered model changes"
     );
     let saved = match saved {
@@ -528,6 +615,148 @@ async fn review_turn(job: &assistant_store::MemoryReviewJob) -> anyhow::Result<(
     for memory in saved {
         refresh(&memory).await;
     }
+    Ok(())
+}
+
+async fn apply_semantic_review(
+    cfg: &Config,
+    user_id: &str,
+    filtered: &mut FilteredReviewChanges,
+    checked: &[MemoryRecord],
+) -> anyhow::Result<()> {
+    let changes = std::mem::take(&mut filtered.changes);
+    let candidate_count = changes.iter().filter(|change| change.id.is_none()).count();
+    let enabled: Vec<_> = checked.iter().filter(|memory| memory.enabled).collect();
+    if candidate_count == 0 {
+        filtered.changes = changes;
+        return Ok(());
+    }
+    let service = match EmbeddingService::from_config(cfg) {
+        Ok(Some(service)) => service,
+        Ok(None) => {
+            filtered.rejected.semantic_unavailable += candidate_count;
+            warn!(
+                user_id,
+                candidates = candidate_count,
+                "memory semantic duplicate check unavailable; allowing new memories"
+            );
+            filtered.changes = changes;
+            return Ok(());
+        }
+        Err(error) => {
+            filtered.rejected.semantic_unavailable += candidate_count;
+            warn!(
+                user_id,
+                candidates = candidate_count,
+                error = %error,
+                "memory semantic duplicate check unavailable; allowing new memories"
+            );
+            filtered.changes = changes;
+            return Ok(());
+        }
+    };
+    let cached: HashMap<_, _> = assistant_store::list_memory_embeddings(user_id, &service.space)
+        .await?
+        .into_iter()
+        .map(|record| (record.memory_id, record))
+        .collect();
+    let mut kept = Vec::with_capacity(changes.len());
+    for (candidate_index, change) in changes.into_iter().enumerate() {
+        if change.id.is_some() {
+            kept.push(change);
+            continue;
+        }
+        let texts = split_content(&change.content);
+        let inputs: Vec<_> = texts
+            .iter()
+            .map(|text| format!("{}\n{text}", change.title.trim()))
+            .collect();
+        let vectors = match service.embed(&inputs).await {
+            Ok(vectors)
+                if !vectors.is_empty()
+                    && vectors
+                        .iter()
+                        .all(|vector| vector.len() == vectors[0].len()) =>
+            {
+                vectors
+            }
+            Ok(_) => {
+                filtered.rejected.semantic_unavailable += 1;
+                warn!(
+                    user_id,
+                    candidate_index,
+                    "memory semantic duplicate check returned inconsistent vectors; allowing new memory"
+                );
+                kept.push(change);
+                continue;
+            }
+            Err(error) => {
+                filtered.rejected.semantic_unavailable += 1;
+                warn!(
+                    user_id,
+                    candidate_index,
+                    error = %error,
+                    "memory semantic duplicate check failed; allowing new memory"
+                );
+                kept.push(change);
+                continue;
+            }
+        };
+        let dimensions = vectors[0].len();
+        let mut memory_vectors = Vec::new();
+        for memory in &enabled {
+            let Some(record) = cached.get(&memory.id) else {
+                filtered.rejected.skipped_no_vector += 1;
+                continue;
+            };
+            let Some(chunks) = cached_chunks(record, memory, Some(dimensions)) else {
+                filtered.rejected.skipped_no_vector += 1;
+                continue;
+            };
+            memory_vectors.push((
+                memory.id,
+                chunks.into_iter().map(|chunk| chunk.vector).collect(),
+            ));
+        }
+        let nearest = vectors
+            .iter()
+            .filter_map(|vector| nearest_enabled_memory(vector, &memory_vectors))
+            .max_by(|left, right| {
+                left.similarity
+                    .total_cmp(&right.similarity)
+                    .then_with(|| right.memory_id.cmp(&left.memory_id))
+            });
+        let Some(nearest) = nearest else {
+            kept.push(change);
+            continue;
+        };
+        filtered.semantic_nearest.push((candidate_index, nearest));
+        match nearest.reason {
+            SemanticMatchReason::Duplicate => {
+                filtered.rejected.semantic_duplicate += 1;
+                warn!(
+                    user_id,
+                    candidate_index,
+                    nearest_id = nearest.memory_id,
+                    similarity = nearest.similarity,
+                    "memory semantic duplicate suppressed"
+                );
+            }
+            SemanticMatchReason::Similar => {
+                filtered.rejected.semantic_similar += 1;
+                warn!(
+                    user_id,
+                    candidate_index,
+                    nearest_id = nearest.memory_id,
+                    similarity = nearest.similarity,
+                    "memory semantic similarity detected; keeping new memory"
+                );
+                kept.push(change);
+            }
+            SemanticMatchReason::BelowThreshold => kept.push(change),
+        }
+    }
+    filtered.changes = kept;
     Ok(())
 }
 
@@ -618,6 +847,7 @@ fn filter_review_changes(
     FilteredReviewChanges {
         changes: accepted,
         rejected,
+        semantic_nearest: Vec::new(),
     }
 }
 

@@ -64,6 +64,38 @@ async fn mock_server() -> (Config, Calls, tokio::task::JoinHandle<()>) {
     (cfg, calls, handle)
 }
 
+async fn semantic_mock_server() -> (Config, tokio::task::JoinHandle<()>) {
+    let app = Router::new().route(
+        "/v1/embeddings",
+        post(|Json(body): Json<Value>| async move {
+            let data: Vec<_> = body["input"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .enumerate()
+                .map(|(index, input)| {
+                    let text = input.as_str().unwrap();
+                    let vector = if text.contains("existing") || text.contains("duplicate") {
+                        vec![1.0, 0.0]
+                    } else if text.contains("similar") {
+                        vec![0.8, 0.6]
+                    } else {
+                        vec![0.0, 1.0]
+                    };
+                    json!({"index": index, "embedding": vector})
+                })
+                .collect();
+            Json(json!({"data": data}))
+        }),
+    );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let cfg = config(&format!("http://{}/v1", listener.local_addr().unwrap()));
+    let handle = tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+    (cfg, handle)
+}
+
 #[test]
 fn validates_configuration_and_vectors() {
     let mut cfg = config("http://127.0.0.1:59801/v1/");
@@ -91,6 +123,128 @@ fn validates_configuration_and_vectors() {
     assert!(normalize(vec![f32::NAN]).is_err());
     assert!(normalize(vec![f32::INFINITY]).is_err());
     assert_eq!(normalize(vec![3.0, 4.0]).unwrap(), vec![0.6, 0.8]);
+}
+
+#[test]
+fn semantic_nearest_uses_max_chunk_stable_ties_and_ignores_bad_vectors() {
+    let memories = vec![
+        (9, vec![vec![0.0, 1.0], vec![2.0, 0.0]]),
+        (3, vec![vec![1.0, 0.0], vec![f32::NAN, 0.0]]),
+    ];
+    let nearest = nearest_enabled_memory(&[1.0, 0.0], &memories).unwrap();
+    assert_eq!(
+        nearest.memory_id, 3,
+        "equal similarities use the smallest id"
+    );
+    assert_eq!(nearest.reason, SemanticMatchReason::Duplicate);
+    assert!((nearest.similarity - 1.0).abs() < f64::EPSILON);
+    assert!(nearest_enabled_memory(&[], &memories).is_none());
+    assert!(nearest_enabled_memory(&[f32::NAN, 0.0], &memories).is_none());
+    assert!(nearest_enabled_memory(&[1.0, 0.0], &[(1, vec![vec![1.0]])]).is_none());
+    assert!(nearest_enabled_memory(&[1.0, 0.0], &[(1, vec![vec![f32::INFINITY, 0.0]])]).is_none());
+}
+
+#[test]
+fn semantic_nearest_classifies_uncalibrated_thresholds() {
+    let similar = nearest_enabled_memory(&[1.0, 0.0], &[(1, vec![vec![0.8, 0.6]])]).unwrap();
+    assert_eq!(similar.reason, SemanticMatchReason::Similar);
+    assert!((similar.similarity - 0.8).abs() < 1e-6);
+    let below = nearest_enabled_memory(&[1.0, 0.0], &[(1, vec![vec![0.0, 1.0]])]).unwrap();
+    assert_eq!(below.reason, SemanticMatchReason::BelowThreshold);
+}
+
+#[tokio::test]
+async fn semantic_review_suppresses_duplicates_but_keeps_similar_candidates() {
+    crate::db::set_test_pool(crate::db::test_pool().await);
+    let (cfg, server) = semantic_mock_server().await;
+    let existing = assistant_store::create_memory("owner", "基准", "existing", true)
+        .await
+        .unwrap();
+    assistant_store::create_memory("owner", "未索引", "uncached", true)
+        .await
+        .unwrap();
+    let service = EmbeddingService::from_config(&cfg).unwrap().unwrap();
+    refresh_with(&service, std::slice::from_ref(&existing), None)
+        .await
+        .unwrap();
+    let checked = assistant_store::list_memories("owner").await.unwrap();
+    let evidence = "依据：「本轮事实」";
+    let filtered = filter_review_changes(
+        vec![
+            MemoryReviewChange {
+                id: None,
+                title: "重复候选".into(),
+                content: "duplicate".into(),
+                evidence: evidence.into(),
+            },
+            MemoryReviewChange {
+                id: None,
+                title: "相似候选".into(),
+                content: "similar".into(),
+                evidence: evidence.into(),
+            },
+        ],
+        &checked,
+        "本轮事实",
+        "已确认",
+    );
+    let mut filtered = filtered;
+    apply_semantic_review(&cfg, "owner", &mut filtered, &checked)
+        .await
+        .unwrap();
+    assert_eq!(filtered.changes.len(), 1);
+    assert_eq!(filtered.changes[0].content, "similar");
+    assert_eq!(filtered.rejected.semantic_duplicate, 1);
+    assert_eq!(filtered.rejected.semantic_similar, 1);
+    assert_eq!(filtered.rejected.skipped_no_vector, 2);
+    assert_eq!(filtered.semantic_nearest.len(), 2);
+    assert!(filtered
+        .semantic_nearest
+        .iter()
+        .any(|(_, nearest)| nearest.memory_id == existing.id
+            && nearest.reason == SemanticMatchReason::Duplicate));
+    assert!(filtered
+        .semantic_nearest
+        .iter()
+        .any(|(_, nearest)| nearest.memory_id == existing.id
+            && nearest.reason == SemanticMatchReason::Similar));
+    server.abort();
+}
+
+#[tokio::test]
+async fn semantic_review_counts_embedding_failure_without_suppressing_new_memory() {
+    crate::db::set_test_pool(crate::db::test_pool().await);
+    let app = Router::new().route(
+        "/v1/embeddings",
+        post(|| async { StatusCode::SERVICE_UNAVAILABLE }),
+    );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let cfg = config(&format!("http://{}/v1", listener.local_addr().unwrap()));
+    let server = tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+    let existing = assistant_store::create_memory("owner", "已有", "existing", true)
+        .await
+        .unwrap();
+    let checked = vec![existing];
+    let mut filtered = filter_review_changes(
+        vec![MemoryReviewChange {
+            id: None,
+            title: "新候选".into(),
+            content: "new fact".into(),
+            evidence: "依据：「本轮事实」".into(),
+        }],
+        &checked,
+        "本轮事实",
+        "已确认",
+    );
+    apply_semantic_review(&cfg, "owner", &mut filtered, &checked)
+        .await
+        .unwrap();
+    assert_eq!(filtered.changes.len(), 1);
+    assert_eq!(filtered.rejected.semantic_unavailable, 1);
+    assert_eq!(filtered.rejected.semantic_duplicate, 0);
+    server.abort();
 }
 
 #[test]
