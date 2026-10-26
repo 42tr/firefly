@@ -4,7 +4,7 @@ import RecentChats from './RecentChats.vue'
 import SidebarSettingsMenu from './SidebarSettingsMenu.vue'
 import ConversationUnreadBadge from './ConversationUnreadBadge.vue'
 import ConversationSearchDialog from './ConversationSearchDialog.vue'
-import { conversationAgentLabel, conversationCreationDirectoryLabel, conversationCreationDirectoryPath } from '../utils/conversationLabels.js'
+import { conversationAgentLabel, conversationCreationDirectoryLabel, conversationCreationDirectoryPath, hasCreationDirectory } from '../utils/conversationLabels.js'
 import ModuleIndicator from './ModuleIndicator.vue'
 import { useModules } from '../composables/useModules.js'
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
@@ -350,7 +350,7 @@ const handleTitleKeydown = (event, conversation) => {
           @keydown.enter.self.prevent="emit('select', conversation.id)"
           @keydown.space.self.prevent="emit('select', conversation.id)"
         >
-          <span class="conversation-directory-prefix"
+          <span v-if="hasCreationDirectory(conversation)" class="conversation-directory-prefix"
             :title="conversationCreationDirectoryPath(conversation)"
             :aria-label="`创建目录：${conversationCreationDirectoryPath(conversation)}`">
             <span class="conversation-directory-name">{{ conversationCreationDirectoryLabel(conversation) }}</span>

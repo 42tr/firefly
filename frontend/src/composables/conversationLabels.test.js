@@ -1,6 +1,6 @@
 import assert from 'node:assert/strict'
 import test from 'node:test'
-import { conversationCreationDirectoryLabel, conversationCreationDirectoryPath } from '../utils/conversationLabels.js'
+import { conversationCreationDirectoryLabel, conversationCreationDirectoryPath, hasCreationDirectory } from '../utils/conversationLabels.js'
 
 test('conversation directory prefixes retain the original creation directory of parallel copies', () => {
   const conversation = { cwd: '.assistant-parallel/copy/work', source_cwd: 'projects/firefly', workspace_mode: 'parallel' }
@@ -18,5 +18,14 @@ test('conversation directory prefixes cover ordinary paths, empty sources and de
   ]) {
     assert.equal(conversationCreationDirectoryLabel(conversation), label)
     assert.equal(conversationCreationDirectoryPath(conversation), path)
+  }
+})
+
+test('sidebar hides the directory label when the conversation has no real creation directory', () => {
+  for (const conversation of [{}, { agent: 'firefly' }, { cwd: '' }, { cwd: '.' }, { source_cwd: '   ' }]) {
+    assert.equal(hasCreationDirectory(conversation), false)
+  }
+  for (const conversation of [{ cwd: '/workspace/笔记' }, { cwd: 'tools/codex-tools' }, { source_cwd: 'projects/firefly' }]) {
+    assert.equal(hasCreationDirectory(conversation), true)
   }
 })

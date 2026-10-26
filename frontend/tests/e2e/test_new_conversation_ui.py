@@ -598,8 +598,9 @@ class NewConversationUI(unittest.TestCase):
         expect(sidebar.locator('.conversation-meta')).to_have_count(0)
         self.page.evaluate('document.fonts.ready')
         expect(sidebar.locator('.conversation-directory-name')).to_have_text(
-            ['firefly', 'firefly', 'firefly', '笔记', 'firefly', 'firefly', 'codex-tools', 'codex-tools', 'firefly', 'workspace'])
-        self.assertTrue(rows.last.locator('.conversation-directory-name').evaluate(
+            ['firefly', 'firefly', 'firefly', '笔记', 'firefly', 'firefly', 'codex-tools', 'codex-tools', 'firefly'])
+        expect(rows.last.locator('.conversation-directory-prefix')).to_have_count(0)
+        self.assertTrue(sidebar.locator('.conversation-directory-name').last.evaluate(
             'element => element.scrollWidth <= element.clientWidth'))
         expect(sidebar.locator('.conversation-directory-prefix svg')).to_have_count(0)
         github_title = rows.filter(has_text='GitHub Actions 卡片优化').locator('.conversation-title-text')
@@ -622,16 +623,18 @@ class NewConversationUI(unittest.TestCase):
                 self.assertEqual(round(row.bounding_box()['height']), 44)
                 self.assertEqual(row.locator('.conversation-title').evaluate(
                     'element => getComputedStyle(element).whiteSpace'), 'nowrap')
-                directory = row.locator('.conversation-directory-prefix').bounding_box()
-                self.assertLessEqual(directory['width'], 60)
-                self.assertEqual(row.locator('.conversation-directory-prefix').evaluate(
-                    'element => getComputedStyle(element).borderRightWidth'), '0px')
                 title = row.locator('.conversation-title').bounding_box()
                 title_text = row.locator('.conversation-title-text').bounding_box()
                 self.assertAlmostEqual(title_text['x'], title['x'], delta=0.5)
-                self.assertGreaterEqual(title['x'], directory['x'] + directory['width'])
-                self.assertAlmostEqual(directory['y'] + directory['height'] / 2,
-                                       title['y'] + title['height'] / 2, delta=1)
+                directory_prefix = row.locator('.conversation-directory-prefix')
+                if directory_prefix.count() > 0:
+                    directory = directory_prefix.bounding_box()
+                    self.assertLessEqual(directory['width'], 60)
+                    self.assertEqual(directory_prefix.evaluate(
+                        'element => getComputedStyle(element).borderRightWidth'), '0px')
+                    self.assertGreaterEqual(title['x'], directory['x'] + directory['width'])
+                    self.assertAlmostEqual(directory['y'] + directory['height'] / 2,
+                                           title['y'] + title['height'] / 2, delta=1)
         self.page.set_viewport_size(dict(width=390, height=844))
         search = sidebar.get_by_role('searchbox', name='搜索对话', exact=True)
         search.fill('GitHub')

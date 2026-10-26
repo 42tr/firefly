@@ -23,3 +23,9 @@ export const conversationCreationDirectoryPath = conversation => {
   if (!directory || directory === '.') return 'workspace'
   return directory.startsWith('/') ? directory : `workspace/${directory}`
 }
+
+/** 会话是否真的带着创建目录（空、'.' 都算没有）。 */
+export const hasCreationDirectory = conversation => {
+  const directory = creationDirectory(conversation)
+  return Boolean(directory) && directory !== '.'
+}
