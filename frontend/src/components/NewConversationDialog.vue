@@ -253,7 +253,7 @@ const openPane = async (value, event) => {
   else if (value === 'workspace') workspacePanel.value?.focus()
 }
 const confirmPane = () => {
-  if (busy.value || props.creating) return
+  if (isCreatingDirectory.value || props.creating) return
   if (pane.value === 'workspace') {
     confirmedPath.value = path.value
   }
@@ -359,7 +359,7 @@ onBeforeUnmount(() => {
     <div class="workspace-actions">
       <span class="workspace-hint">在当前目录中开始工作</span>
       <button class="button quiet small" type="button" @click="close">取消</button>
-      <button class="button primary small" type="button" :disabled="busy" @click="confirmPane">使用此目录</button>
+      <button class="button primary small" type="button" :disabled="isCreatingDirectory || creating" @click="confirmPane">使用此目录</button>
     </div>
   </fieldset>
   <div v-if="open" ref="controls" class="new-conversation-controls">

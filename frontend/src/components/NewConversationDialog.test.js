@@ -245,6 +245,9 @@ test('directory browsing updates the selection only after confirming the chosen 
   state.pane.value = 'workspace'
   state.path.value = 'projects/firefly'
   assert.equal(state.selection.value.cwd, '')
+  // Directory listing and model catalog requests must not block confirming a
+  // path that is already selected in the picker.
+  state.isLoading.value = true
   state.confirmPane()
   assert.equal(state.selection.value.cwd, 'projects/firefly')
   assert.equal(state.directoryLabel.value, 'firefly')
