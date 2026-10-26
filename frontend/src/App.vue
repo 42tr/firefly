@@ -40,6 +40,7 @@ import { apiFetch } from '@/utils/http'
 import { conversationAgentLabel } from './utils/conversationLabels.js'
 import { isVideoAttachment, isTextAttachment } from './composables/attachmentTypes.js'
 import { useGoalMode } from './composables/useGoalMode.js'
+import { goalCheckAnchor } from './composables/goalCheckAnchor.js'
 
 // 仅在独立工作目录模式下渲染，按需加载，连带 composable 一起移出首屏主 chunk。
 const ParallelWorkspaceStatus = defineAsyncComponent(() => import('./components/ParallelWorkspaceStatus.vue'))
@@ -217,6 +218,7 @@ const {
   },
 })
 const goalCheckResult = computed(() => goal.value?.last_check_result || null)
+const goalCheckMessageKey = computed(() => goalCheckAnchor(groupedMessages.value, goal.value, activeConversationId.value))
 const toggleGoalMode = async () => {
   if (goalEnabled.value) await setGoalEnabled(false)
   else goalEnabled.value = true
@@ -949,8 +951,8 @@ onMounted(() => {
                 :job-id="item.msg.generationJobId"
                 :reply-status="item.msg.processingStatus"
               />
+              <GoalCheckEvent v-if="item.key === goalCheckMessageKey" :result="goalCheckResult" />
               </template>
-              <GoalCheckEvent :result="goalCheckResult" />
             </div>
           </div>
           <ScrollBottomButton
