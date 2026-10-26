@@ -3,6 +3,7 @@ import { onBeforeUnmount, ref, watch, nextTick } from 'vue'
 import { moduleRequest, jsonRequest, useModules } from '../composables/useModules'
 import { createModuleBridge } from '../composables/moduleBridge'
 import { getAppTimezone } from '../composables/appTimezone.js'
+import { copyText } from '../utils/clipboard.js'
 
 const props = defineProps({ module: Object, page: Object })
 const emit = defineEmits(['close'])
@@ -22,7 +23,7 @@ const attachBridge = () => {
     close,
     clipboard: async ({ text, png }) => {
       if (png) { const data = Uint8Array.from(atob(png.split(',')[1]), c => c.charCodeAt(0)); await navigator.clipboard.write([new ClipboardItem({ 'image/png': new Blob([data], { type: 'image/png' }) })]) }
-      else await navigator.clipboard.writeText(text)
+      else await copyText(text)
     },
     openLink: url => window.open(url, '_blank', 'noopener,noreferrer'),
     context: { origin: window.location.origin, theme: 'light', locale: navigator.language, timeZone: getAppTimezone(), displayMode: 'inline', containerDimensions: { width: frame.value.clientWidth, height: frame.value.clientHeight } },

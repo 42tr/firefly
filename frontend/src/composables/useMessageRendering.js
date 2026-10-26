@@ -1,6 +1,7 @@
 import { ref, onBeforeUnmount } from 'vue'
 import { useMarkdown } from '@/composables/useMarkdown'
 import { workspaceFileUrl } from './workspaceFileUrl.js'
+import { copyText } from '@/utils/clipboard.js'
 
 export function useMessageRendering({ activeConversation, isStreaming, imagePreview }) {
   const { renderMarkdown } = useMarkdown()
@@ -95,10 +96,9 @@ export function useMessageRendering({ activeConversation, isStreaming, imagePrev
     if (!btn) return
     const text = btn.closest('.code-block')?.querySelector('pre')?.textContent || ''
     if (!text) return
-    Promise.resolve().then(() => {
-      if (!navigator.clipboard?.writeText) throw new Error('剪贴板不可用')
-      return navigator.clipboard.writeText(text)
-    }).then(() => {
+    // Call copyText directly from the click handler so browsers retain the
+    // user-activation required by navigator.clipboard.
+    copyText(text).then(() => {
       btn.textContent = '已复制'
       setTimeout(() => { btn.textContent = '复制' }, 1500)
     }).catch(() => {

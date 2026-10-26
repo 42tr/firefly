@@ -1,5 +1,6 @@
 <script setup>
 import { onBeforeUnmount, ref, watch } from 'vue'
+import { copyText } from '../utils/clipboard.js'
 
 const props = defineProps({ text: String, label: { type: String, default: '复制' } })
 const state = ref('')
@@ -17,8 +18,7 @@ const copy = async () => {
   const current = revision
   state.value = '复制中…'
   try {
-    if (!navigator.clipboard?.writeText) throw new Error('剪贴板不可用')
-    await navigator.clipboard.writeText(props.text || '')
+    await copyText(props.text || '')
     if (current !== revision) return
     state.value = '已复制'
   } catch {
