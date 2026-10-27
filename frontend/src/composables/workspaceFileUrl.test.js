@@ -35,6 +35,13 @@ test('workspace images preserve local relative paths', () => {
   assert.equal(params(workspaceFileUrl('./output/a.png', { cwd: 'firefly/workspace' })).get('path'), 'output/a.png')
 })
 
+test('workspace download URLs remove repository prefixes from their query path', () => {
+  const input = 'http://ap.42tr.cn:59008/api/assistant/workspace/file?path=firefly%2Fworkspace%2Fesp43%2Fesp32-science.html'
+  const output = workspaceFileUrl(input)
+  assert.equal(params(output).get('path'), 'esp43/esp32-science.html')
+  assert.equal(output.startsWith('http://ap.42tr.cn:59008/api/assistant/workspace/file?'), true)
+})
+
 test('browser URLs are preserved and malformed or unsupported protocols are rejected', () => {
   for (const path of ['https://example.com/a%20b.png', 'data:image/png;base64,abcd', 'blob:https://example.com/id', '/api/assistant/workspace/file?path=%2Ftmp%2Fa.png']) {
     assert.equal(workspaceFileUrl(path), path)

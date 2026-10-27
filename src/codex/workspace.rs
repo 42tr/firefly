@@ -90,6 +90,16 @@ pub async fn create_workspace_directory(parent: Option<&str>, name: &str) -> any
     Ok(WorkspaceEntry { name: name.to_string(), path: child_path })
 }
 
+fn strip_workspace_prefix(path: &str) -> Option<&str> {
+    let marker = "workspace/";
+    let index = path.find(marker)?;
+    if index > 0 && !path.as_bytes().get(index - 1).is_some_and(|byte| *byte == b'/') {
+        return None;
+    }
+    let relative = &path[index + marker.len()..];
+    (!relative.is_empty()).then_some(relative)
+}
+
 pub async fn resolve_workspace_file(path: &str) -> anyhow::Result<(PathBuf, String)> {
     let root = workspace_root().await?;
     let relative = path.trim();
@@ -104,7 +114,17 @@ pub async fn resolve_workspace_file(path: &str) -> anyhow::Result<(PathBuf, Stri
         absolute
     } else {
         validate_relative_path(relative)?;
-        root.join(relative)
+        let candidate = root.join(relative);
+        // Models sometimes copy the repository-relative workspace path into a
+        // link (for example `firefly/workspace/report.html`). The public file
+        // endpoint is workspace-relative, so retry that path after removing
+        // the leading repository/workspace directories when the literal path
+        // does not exist. Keep the literal candidate first so a real child
+        // directory named `workspace` remains addressable.
+        match fs::canonicalize(&candidate).await {
+            Ok(_) => candidate,
+            Err(_) => root.join(strip_workspace_prefix(relative).unwrap_or(relative)),
+        }
     };
     let candidate = fs::canonicalize(candidate_path).await.context("workspace 文件不存在")?;
     if !candidate.starts_with(&root) {
@@ -115,4 +135,16 @@ pub async fn resolve_workspace_file(path: &str) -> anyhow::Result<(PathBuf, Stri
     }
     let display = candidate.strip_prefix(&root).unwrap_or(Path::new("/")).to_string_lossy().replace('\\', "/");
     Ok((candidate, display))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::strip_workspace_prefix;
+
+    #[test]
+    fn strips_repository_workspace_prefix_from_compatibility_paths() {
+        assert_eq!(strip_workspace_prefix("firefly/workspace/esp43/esp32-science.html"), Some("esp43/esp32-science.html"));
+        assert_eq!(strip_workspace_prefix("workspace/esp43/esp32-science.html"), Some("esp43/esp32-science.html"));
+        assert_eq!(strip_workspace_prefix("someworkspace/esp43.html"), None);
+    }
 }

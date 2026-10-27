@@ -124,7 +124,17 @@ export function useMessageRendering({ activeConversation, isStreaming, imagePrev
         return
       }
       const isLocalOrigin = url.origin === window.location.origin || ['localhost', '127.0.0.1'].includes(url.hostname)
-      if (!isLocalOrigin || url.pathname.startsWith('/api/assistant/workspace/')) return
+      if (!isLocalOrigin) return
+      // A model may return an already formed workspace download URL using the
+      // repository-relative path (`firefly/workspace/report.html`). Normalize
+      // its query through the same path resolver used for Markdown images.
+      if (url.pathname === '/api/assistant/workspace/file') {
+        const path = url.searchParams.get('path')
+        const rewritten = path ? workspaceUrl(path) : ''
+        if (rewritten) anchor.setAttribute('href', rewritten)
+        return
+      }
+      if (url.pathname.startsWith('/api/assistant/workspace/')) return
       let pathname
       try {
         pathname = decodeURIComponent(url.pathname)
