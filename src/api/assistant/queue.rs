@@ -102,7 +102,7 @@ fn submission_fingerprint(content: &str, enable_tools: bool, attachments: &[Pend
 
 pub async fn chat_stream(
     auth_user: Session, request: axum::http::Request<Body>,
-) -> Result<Sse<ReceiverStream<Result<Event, Infallible>>>, AppError> {
+) -> Result<Sse<impl futures_util::Stream<Item = Result<Event, Infallible>>>, AppError> {
     let enqueued = enqueue_turn(auth_user.storage_scope(), None, request).await?;
     let job_id = enqueued.job_id;
     let conversation_id_for_event = enqueued.message.conversation_id;
@@ -528,7 +528,7 @@ pub async fn get_active_generation(
 pub async fn resume_job_stream(
     auth_user: Session, Path(job_id): Path<uuid::Uuid>,
     axum::extract::Query(params): axum::extract::Query<HashMap<String, String>>,
-) -> Result<Sse<ReceiverStream<Result<Event, Infallible>>>, AppError> {
+) -> Result<Sse<impl futures_util::Stream<Item = Result<Event, Infallible>>>, AppError> {
     let user_id = auth_user.storage_scope().to_owned();
 
     let start_seq = params.get("after_seq").and_then(|v| v.parse::<u64>().ok()).unwrap_or(0);
