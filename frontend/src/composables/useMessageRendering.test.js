@@ -128,6 +128,19 @@ test('switching the working directory invalidates cached links', async t => {
   assert.ok(parse.mock.callCount() > calls, 'changing cwd must invalidate the cached HTML')
 })
 
+test('workspace video links become inline browser players with a download link', async t => {
+  if (typeof DOMParser === 'undefined') {
+    t.skip('DOMParser is provided by the browser runtime')
+    return
+  }
+  const message = ref({ content: '[登陆动画](/tmp/beach_landing_animation_30s.mp4)' })
+  const view = mount(t, api => api.renderMessageHtml(message.value))
+  assert.match(view.html(), /<video[^>]+controls/)
+  assert.match(view.html(), /preload="metadata"/)
+  assert.match(view.html(), /path=%2Ftmp%2Fbeach_landing_animation_30s\.mp4/)
+  assert.match(view.html(), />下载视频</)
+})
+
 test('unmounting cancels deferred Markdown work', async t => {
   t.mock.timers.enable({ apis: ['Date', 'setTimeout'], now: 1000 })
   const clear = t.mock.method(globalThis, 'clearTimeout')

@@ -91,7 +91,7 @@ pub async fn create_workspace_directory(
 }
 
 pub async fn download_workspace_file(
-    _auth_user: Session, Query(query): Query<WorkspaceFileQuery>,
+    _auth_user: Session, Query(query): Query<WorkspaceFileQuery>, request: axum::extract::Request,
 ) -> Result<Response, AppError> {
     if query.path.starts_with("/tmp/") {
         let file = open_temporary_image(&query.path)
@@ -105,9 +105,37 @@ pub async fn download_workspace_file(
     }
     let (path, _relative_path) =
         codex::resolve_workspace_file(&query.path).await.map_err(|err| AppError::not_found(err.to_string()))?;
+    let mime = mime_guess::from_path(&path).first_or_octet_stream();
+    if mime.type_().as_str() == "video" {
+        return serve_workspace_video(&path, request).await;
+    }
     let file = fs::File::open(&path).await.map_err(|_| AppError::not_found("workspace 文件暂不可用"))?;
     let stream = tokio_util::io::ReaderStream::new(file);
     Ok(workspace_file_response(Body::from_stream(stream), &path))
+}
+
+// ServeFile handles Range and HEAD requests so browser video controls can seek
+// without downloading the entire workspace file first.
+async fn serve_workspace_video(path: &std::path::Path, request: axum::extract::Request) -> Result<Response, AppError> {
+    let mut response = tower_http::services::ServeFile::new(path)
+        .try_call(request)
+        .await
+        .map_err(AppError::internal_server_error)?
+        .map(Body::new);
+    let mime = mime_guess::from_path(path).first_or_octet_stream();
+    let file_name = path.file_name().and_then(|name| name.to_str()).unwrap_or("video");
+    response.headers_mut().insert(
+        header::CONTENT_TYPE,
+        office::header_value_or_default(&mime.to_string(), "application/octet-stream"),
+    );
+    response.headers_mut().insert(
+        header::CONTENT_DISPOSITION,
+        office::build_disposition_header("inline", file_name),
+    );
+    response.headers_mut().insert(header::CACHE_CONTROL, "no-store".parse().unwrap());
+    response.headers_mut().insert(header::X_CONTENT_TYPE_OPTIONS, "nosniff".parse().unwrap());
+    response.headers_mut().insert(header::CONTENT_SECURITY_POLICY, "sandbox".parse().unwrap());
+    Ok(response)
 }
 
 /// Workspace text files are UTF-8. Declare the encoding for inline browser
@@ -200,5 +228,32 @@ mod tests {
         let response = workspace_file_response(Body::from("<script>alert(1)</script>"), "index.html");
         assert!(response.headers()[header::CONTENT_DISPOSITION].to_str().unwrap().starts_with("attachment;"));
         assert_eq!(response.headers()[header::CONTENT_SECURITY_POLICY], "sandbox");
+    }
+
+    #[tokio::test]
+    async fn workspace_video_response_supports_ranges_and_head() {
+        let path = std::env::temp_dir().join(format!("workspace-video-{}.mp4", uuid::Uuid::new_v4()));
+        fs::write(&path, b"0123456789").await.unwrap();
+        for (method, range, status, expected) in [
+            ("GET", None, StatusCode::OK, "0123456789"),
+            ("GET", Some("bytes=2-5"), StatusCode::PARTIAL_CONTENT, "2345"),
+            ("HEAD", None, StatusCode::OK, ""),
+        ] {
+            let mut request = axum::http::Request::builder().method(method);
+            if let Some(range) = range {
+                request = request.header(header::RANGE, range);
+            }
+            let response = serve_workspace_video(&path, request.body(Body::empty()).unwrap()).await.unwrap();
+            assert_eq!(response.status(), status);
+            assert_eq!(response.headers()[header::CONTENT_TYPE], "video/mp4");
+            assert!(response.headers()[header::CONTENT_DISPOSITION].as_bytes().starts_with(b"inline;"));
+            if range.is_some() {
+                assert_eq!(response.headers()[header::CONTENT_RANGE], "bytes 2-5/10");
+                assert_eq!(response.headers()[header::CONTENT_LENGTH], "4");
+            }
+            let body = axum::body::to_bytes(response.into_body(), 100).await.unwrap();
+            assert_eq!(body.as_ref(), expected.as_bytes());
+        }
+        fs::remove_file(&path).await.unwrap();
     }
 }

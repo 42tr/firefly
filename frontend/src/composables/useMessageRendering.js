@@ -131,7 +131,10 @@ export function useMessageRendering({ activeConversation, isStreaming, imagePrev
       if (url.pathname === '/api/assistant/workspace/file') {
         const path = url.searchParams.get('path')
         const rewritten = path ? workspaceUrl(path) : ''
-        if (rewritten) anchor.setAttribute('href', rewritten)
+        if (rewritten) {
+          anchor.setAttribute('href', rewritten)
+          replaceVideoLink(anchor, rewritten, path)
+        }
         return
       }
       if (url.pathname.startsWith('/api/assistant/workspace/')) return
@@ -142,7 +145,9 @@ export function useMessageRendering({ activeConversation, isStreaming, imagePrev
         return
       }
       if (pathname.startsWith('/tmp/')) {
-        anchor.setAttribute('href', workspaceUrl(pathname))
+        const rewritten = workspaceUrl(pathname)
+        anchor.setAttribute('href', rewritten)
+        replaceVideoLink(anchor, rewritten, pathname)
         return
       }
       const marker = /(?:^|\/)workspace(?:\/|$)/
@@ -150,9 +155,32 @@ export function useMessageRendering({ activeConversation, isStreaming, imagePrev
       if (!markerMatch) return
       const relativePath = pathname.slice(markerMatch.index + markerMatch[0].length).replace(/^\/+/, '')
       if (!relativePath || relativePath.endsWith('/')) return
-      anchor.setAttribute('href', `/api/assistant/workspace/file?path=${encodeURIComponent(relativePath)}`)
+      const rewritten = `/api/assistant/workspace/file?path=${encodeURIComponent(relativePath)}`
+      anchor.setAttribute('href', rewritten)
+      replaceVideoLink(anchor, rewritten, relativePath)
     })
     return documentFragment.body.innerHTML
+  }
+
+  // Workspace videos are rendered inline so a Markdown file link is useful in
+  // the chat itself. The endpoint remains the source of truth and the small
+  // download link keeps the original file workflow available.
+  const replaceVideoLink = (anchor, href, path = '') => {
+    if (!/\.(?:mp4|webm|ogg|mov)(?:$|[?#])/i.test(path || href)) return
+    const video = anchor.ownerDocument.createElement('video')
+    video.setAttribute('src', href)
+    video.setAttribute('controls', '')
+    video.setAttribute('playsinline', '')
+    video.setAttribute('preload', 'metadata')
+    video.setAttribute('aria-label', anchor.textContent?.trim() || '视频预览')
+    const download = anchor.ownerDocument.createElement('a')
+    download.setAttribute('href', href)
+    download.setAttribute('download', '')
+    download.textContent = '下载视频'
+    const wrapper = anchor.ownerDocument.createElement('div')
+    wrapper.className = 'markdown-video'
+    wrapper.append(video, download)
+    anchor.replaceWith(wrapper)
   }
 
   onBeforeUnmount(() => { if (streamRenderTimer) clearTimeout(streamRenderTimer) })

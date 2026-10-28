@@ -490,6 +490,26 @@ code, pre { font-family: var(--font-mono); }
   cursor: zoom-in;
 }
 
+.markdown-body .markdown-video {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  gap: 6px;
+  margin: 0 0 1em;
+}
+
+.markdown-body .markdown-video video {
+  display: block;
+  width: min(100%, 720px);
+  max-height: min(70vh, 520px);
+  border-radius: var(--radius-sm);
+  background: #10131a;
+}
+
+.markdown-body .markdown-video a {
+  font-size: 13px;
+}
+
 /* ---------- 动画 ---------- */
 
 @keyframes fadeSlide {

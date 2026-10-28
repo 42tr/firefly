@@ -45,8 +45,8 @@ export function useMarkdown() {
     })
     return DOMPurify.sanitize(raw, {
       USE_PROFILES: { html: true },
-      ADD_TAGS: ['img'],
-      ADD_ATTR: ['src', 'alt', 'title', 'loading'],
+      ADD_TAGS: ['img', 'video'],
+      ADD_ATTR: ['src', 'alt', 'title', 'loading', 'controls', 'playsinline', 'preload', 'aria-label'],
       ALLOWED_URI_REGEXP:
         /^(?:(?:(?:f|ht)tps?|mailto|tel|callto|cid|xmpp|xxx|data|blob):|[^a-z]|[a-z+.-]+(?:[^a-z+.-:]|$))/i,
     })
