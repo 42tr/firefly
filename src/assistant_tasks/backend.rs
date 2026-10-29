@@ -1,5 +1,5 @@
 //! Model task submission, scoped control, and result acknowledgement.
-use anyhow::{anyhow, Context};
+use anyhow::anyhow;
 use async_trait::async_trait;
 use g::{TaskBackend, TaskSubmission, ToolError};
 use serde_json::{json, Value};
@@ -138,7 +138,7 @@ impl Backend {
                     value["result_bytes"] = json!(original.to_string().len());
                     value["readable_fields"] = json!(result::fields(original));
                     value["read_result"] = result::reading_hint(&task.id, original);
-                    value["output_hint"] = json!("结果已完整保存。通过 run_tools 提交 read_task_result，按 read_result 示例选择字段并分页；不要重复调用原工具或扫描目录找结果。next_offset 为 null 时已到末尾。");
+                    value["output_hint"] = json!("结果已完整保存。直接调用 read_task_result，按 read_result 示例选择字段并分页；不要重复调用原工具或扫描目录找结果。next_offset 为 null 时已到末尾。");
                     tracing::info!(job_id = %task.generation_job_id, task_id = %task.id, result_bytes = original.to_string().len(), preview_budget = payload_budget / 2, "task result preview truncated");
                 }
             }
@@ -169,12 +169,22 @@ impl TaskBackend for Backend {
             anyhow::ensure!(queued as usize + tasks.len() <= self.manager.max_queued, "任务队列已满，请稍后再试");
             let mut prepared = Vec::new();
             for mut submission in tasks {
-                let title = submission.request.title.as_deref().context("每个任务必须填写 title，简短描述具体动作和对象，例如：检查 RDP 会话状态")?.trim();
+                let generated_title = || {
+                    let detail = match submission.request.tool.as_str() {
+                        "command" => submission.request.arguments["command"].as_str().map(|value| format!("执行命令：{value}")),
+                        "read_task_result" => submission.request.arguments["task_id"].as_str().map(|value| format!("读取任务结果 {value}")),
+                        _ => Some(format!("执行 {}", submission.request.tool)),
+                    };
+                    detail.unwrap_or_else(|| format!("执行 {}", submission.request.tool))
+                        .chars().take(200).collect::<String>()
+                };
+                let title = submission.request.title.as_deref().map(str::trim).filter(|title| !title.is_empty()).map(ToOwned::to_owned)
+                    .unwrap_or_else(generated_title);
                 anyhow::ensure!(!title.is_empty() && title.chars().count() <= 200, "任务 title 必须为 1–200 个字符，不能全为空白");
                 anyhow::ensure!(!title.eq_ignore_ascii_case(&submission.request.tool)
                     && !title.eq_ignore_ascii_case(&submission.tool.spec().name),
                     "任务 title 不能只填写工具名，请描述具体动作和对象，例如：运行项目测试");
-                submission.request.title = Some(title.to_owned());
+                submission.request.title = Some(title);
                 if let Some(parent) = &submission.request.parent_task_id {
                     let owned: bool = query_scalar("SELECT EXISTS(SELECT 1 FROM assistant_tasks WHERE id=?1 AND user_id=?2 AND conversation_id=?3 AND generation_job_id=?4 AND (?5 IS NULL OR scope_id=?5))")
                         .bind(parent).bind(&self.user).bind(self.conversation).bind(&self.job).bind(&self.scope_id)

@@ -845,7 +845,7 @@ checksum = "5baebc0774151f905a1a2cc41989300b1e6fbb29aff0ceffa1064fdd3088d582"
 
 [[package]]
 name = "firefly"
-version = "0.1.9"
+version = "0.1.10"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -1293,9 +1293,9 @@ dependencies = [
 
 [[package]]
 name = "glow-agent"
-version = "0.3.3"
+version = "0.3.4"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "fc7feee65ae0786afafe2fd744de05713732391cc232428bb1ba12a0437b4d09"
+checksum = "7eb6b8985daac5d08b79209e5d4a13b7c34c3de3c7c7ec7ca369b8338d560842"
 dependencies = [
  "anyhow",
  "async-trait",

@@ -17,7 +17,7 @@ impl Tool for ReadTaskResultTool {
     fn spec(&self) -> ToolSpec {
         ToolSpec {
             name: "read_task_result".into(),
-            description: "Read a saved task result without rerunning its tool. Submit via run_tools. Select a field using JSON Pointer, for example /structuredContent/body/prices, then page arrays with offset and limit. Each returned item is complete; next_offset continues the page. Use total to select the last records. Task previews list readable fields. Only tasks in your user/conversation/handoff scope are readable.".into(),
+            description: "Read a saved task result without rerunning its tool. Call this tool directly. Select a field using JSON Pointer, for example /structuredContent/body/prices, then page arrays with offset and limit. Each returned item is complete; next_offset continues the page. Use total to select the last records. Task previews list readable fields. Only tasks in your user/conversation/handoff scope are readable.".into(),
             input_schema: json!({"type":"object","properties":{
                 "task_id":{"type":"string","minLength":1},
                 "json_pointer":{"type":"string","default":"","description":"RFC 6901 pointer into the ORIGINAL result. Empty selects the root. Escape ~ as ~0 and / as ~1."},
@@ -29,7 +29,7 @@ impl Tool for ReadTaskResultTool {
     }
 
     async fn call(&self, _: g::ToolContext, _: Value) -> Result<Value, ToolError> {
-        Err(ToolError::new("Submit read_task_result via run_tools so the host can enforce the execution's handoff scope"))
+        Err(ToolError::new("The host must submit read_task_result as a task so it can enforce the execution's handoff scope"))
     }
 }
 

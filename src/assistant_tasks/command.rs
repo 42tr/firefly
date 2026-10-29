@@ -12,7 +12,7 @@ pub struct CommandTool;
 #[async_trait]
 impl Tool for CommandTool {
     fn spec(&self) -> ToolSpec {
-        ToolSpec { name:"command".into(), description:"Run a noninteractive shell command in the agent workspace, including codex/claude CLI, builds and tests. Submit via run_tools, never invoke directly. Output is available in get_tasks. Default execution timeout: 2 hours; queue has no timeout. Commands run concurrently regardless of cwd. Set the same resource_key only for operations that must not overlap on a shared resource (for example writes to the same repository); cwd is not a lock. Commands must keep descendants in their process group; do not daemonize.".into(),
+        ToolSpec { name:"command".into(), description:"Run a noninteractive shell command in the agent workspace, including codex/claude CLI, builds and tests. Call this tool directly; output is returned as a host-owned task and is available in get_tasks. Default execution timeout: 2 hours; queue has no timeout. Commands run concurrently regardless of cwd. Set the same resource_key only for operations that must not overlap on a shared resource (for example writes to the same repository); cwd is not a lock. Commands must keep descendants in their process group; do not daemonize.".into(),
             input_schema:json!({"type":"object","properties":{
                 "command":{"type":"string","minLength":1,"maxLength":64000},
                 "cwd":{"type":"string","description":"Workspace-relative directory, or an absolute directory inside WORKSPACE_ROOT; defaults to workspace root"},
@@ -26,7 +26,7 @@ impl Tool for CommandTool {
     }
     async fn call(&self, _: g::ToolContext, _: Value) -> Result<Value, ToolError> {
         Err(ToolError::new(
-            "Use run_tools with tool=command so execution is tracked and cancellable",
+            "The host must submit command as a task so execution is tracked and cancellable",
         ))
     }
 }

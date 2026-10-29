@@ -60,8 +60,7 @@ async fn setup() -> Arc<Backend> {
 #[tokio::test]
 async fn invalid_titles_reject_the_entire_batch_without_creating_tasks() {
     let backend = setup().await;
-    for title in [None, Some("".into()), Some(" \t\n\u{3000}".into()),
-        Some(" command ".into()), Some("COMMAND".into()), Some("检".repeat(201))] {
+    for title in [Some(" command ".into()), Some("COMMAND".into()), Some("检".repeat(201))] {
         let run = Uuid::new_v4();
         let valid = submission("lookup", Arc::new(Notify::new()), 0, run);
         let mut invalid = submission("command", Arc::new(Notify::new()), 1, run);
@@ -71,6 +70,18 @@ async fn invalid_titles_reject_the_entire_batch_without_creating_tasks() {
         assert!(backend.manager.list(&backend.user, backend.conversation).await.unwrap().is_empty());
         assert!(backend.manager.tools.lock().await.is_empty());
     }
+}
+
+#[tokio::test]
+async fn direct_task_without_title_gets_a_readable_title() {
+    let backend = setup().await;
+    let run = Uuid::new_v4();
+    let mut task = submission("lookup", Arc::new(Notify::new()), 0, run);
+    task.request.title = None;
+    let id = backend.submit(vec![task]).await.unwrap().pop().unwrap();
+    let record = backend.manager.list(&backend.user, backend.conversation).await.unwrap()
+        .into_iter().find(|task| task.id == id).unwrap();
+    assert_eq!(record.title, "执行 lookup");
 }
 
 #[tokio::test]

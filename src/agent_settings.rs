@@ -390,7 +390,7 @@ pub fn tool_instruction(definition: &AgentDefinition) -> String {
     if definition.tools.iter().any(|tool| tool == "command") {
         instruction.push_str(crate::agent::FILE_SEARCH_INSTRUCTION);
     }
-    instruction.push_str("\n工具结果截断时，按 read_result 示例通过 run_tools 提交 read_task_result，使用 JSON Pointer 和 next_offset 读取完整字段。不要重复执行原工具或扫描文件、业务数据库寻找结果。模块数据以模块工具返回为准；行情图表标明实际数据截止日期，读取失败时如实说明。\n");
+    instruction.push_str("\n工具结果截断时，按 read_result 示例直接调用 read_task_result，使用 JSON Pointer 和 next_offset 读取完整字段。不要重复执行原工具或扫描文件、业务数据库寻找结果。模块数据以模块工具返回为准；行情图表标明实际数据截止日期，读取失败时如实说明。\n");
     instruction
 }
 
