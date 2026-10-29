@@ -8,7 +8,7 @@
 use std::{
     ffi::{CStr, CString, OsString},
     fs::{File, OpenOptions},
-    io::{Seek, SeekFrom, Write},
+    io::{Read, Seek, SeekFrom, Write},
     os::{
         fd::{AsRawFd, FromRawFd},
         unix::{
@@ -192,6 +192,36 @@ pub fn check_image(file: &File, path: &str) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// 应用内 HTML 预览的硬上限：8 MiB。
+pub const PREVIEW_MAX_BYTES: u64 = 8 * 1024 * 1024;
+
+/// Worker 侧的纵深防御：扩展名只由 handler 校验时，单独调用 worker 仍会输出正文。
+///
+/// 与 handler 的 `validate_preview_query` 保持同一条中文错误文案。
+fn ensure_preview_extension(relative: &str) -> anyhow::Result<()> {
+    let extension = Path::new(relative)
+        .extension()
+        .and_then(|value| value.to_str())
+        .map(|value| value.to_ascii_lowercase());
+    ensure!(
+        matches!(extension.as_deref(), Some("html" | "htm")),
+        "只能预览 .html/.htm 文件"
+    );
+    Ok(())
+}
+
+/// 打开预览文件，并在同一个 fd 上取快照大小。
+///
+/// 复用 `open_path` 的 O_NOFOLLOW / 路径段校验；只接受普通文件，因此
+/// 名字以 `.html` 结尾的目录也不会被当成可预览文件。
+pub fn open_preview(root: &Path, relative: &str) -> anyhow::Result<(File, u64)> {
+    ensure_preview_extension(relative)?;
+    let file = open_path(root, relative)?;
+    let metadata = file.metadata()?;
+    ensure!(metadata.is_file(), "该路径不是文件");
+    Ok((file, metadata.len()))
+}
+
 /// Append a directory tree to an in-progress ZIP archive. Only regular files
 /// and directories are included; the walk revalidates each child after the
 /// directory listing so entries swapped mid-archive are still type-checked.
@@ -236,10 +266,30 @@ pub fn archive_prefix(root: &Path, relative: &str) -> String {
 }
 
 
+/// 预览协议：`OK <字节数>\n` 一行元数据，随后是原始字节。
+///
+/// 超限时只写头部、不读正文，让 handler 能在提交响应前返回 413；
+/// `file.take(size)` 以打开时的快照为准，文件增长多出的部分不会被发送。
+pub fn write_preview(writer: &mut impl Write, file: File, size: u64) -> anyhow::Result<()> {
+    writeln!(writer, "OK {size}")?;
+    writer.flush()?;
+    if size <= PREVIEW_MAX_BYTES {
+        std::io::copy(&mut file.take(size), writer)?;
+        writer.flush()?;
+    }
+    Ok(())
+}
+
 /// Workers keep downloads streaming and ZIP preparation isolated from the server.
 pub fn run(root: &Path, relative: &str, operation: &str) -> anyhow::Result<()> {
     if operation == "list" {
         println!("{}", listing(root, relative)?);
+        return Ok(());
+    }
+    if operation == "preview" {
+        let (file, size) = open_preview(root, relative)?;
+        let mut stdout = std::io::stdout().lock();
+        write_preview(&mut stdout, file, size)?;
         return Ok(());
     }
     let mut file = open_path(root, relative)?;
@@ -307,6 +357,83 @@ mod tests {
         assert_eq!(entries[0]["name"], "sub");
         assert!(entries[0]["is_dir"].as_bool().unwrap());
         assert_eq!(entries[1]["size"], 5);
+    }
+
+    #[test]
+    fn preview_only_opens_regular_files_inside_the_root() {
+        let directory = tempfile::tempdir().unwrap();
+        let root = directory.path();
+        std::fs::write(root.join("index.html"), b"<p>hi</p>").unwrap();
+        std::os::unix::fs::symlink(root.join("index.html"), root.join("link.html")).unwrap();
+
+        let (_file, size) = open_preview(root, "index.html").unwrap();
+        assert_eq!(size, b"<p>hi</p>".len() as u64);
+        // 目录、缺失文件与符号链接都不进入预览。
+        assert!(open_preview(root, "").is_err());
+        assert!(open_preview(root, "missing.html").is_err());
+        assert!(open_preview(root, "link.html").is_err());
+    }
+
+    #[test]
+    fn preview_rejects_non_html_extensions() {
+        let directory = tempfile::tempdir().unwrap();
+        let root = directory.path();
+        // worker 直调也必须拒绝：内容合法、名字不是 .html/.htm。
+        for name in ["noext.txt", "a.html.txt", "noext", "page.htmlx"] {
+            std::fs::write(root.join(name), b"<p>hi</p>").unwrap();
+            let error = open_preview(root, name).unwrap_err().to_string();
+            assert_eq!(error, "只能预览 .html/.htm 文件", "accepted {name}");
+        }
+        for name in ["INDEX.HTML", "x.htm"] {
+            std::fs::write(root.join(name), b"<!doctype html>").unwrap();
+            let handle = std::fs::OpenOptions::new()
+                .write(true)
+                .open(root.join(name))
+                .unwrap();
+            // 用 set_len 构造大小，不实际写入内容。
+            handle.set_len(16).unwrap();
+            drop(handle);
+            let (_file, size) = open_preview(root, name).unwrap();
+            assert_eq!(size, 16);
+        }
+    }
+
+    #[test]
+    fn preview_protocol_streams_sized_header_then_body() {
+        let directory = tempfile::tempdir().unwrap();
+        let root = directory.path();
+        std::fs::write(root.join("index.html"), b"<p>hi</p>").unwrap();
+        let (file, size) = open_preview(root, "index.html").unwrap();
+        let mut output = Vec::new();
+        write_preview(&mut output, file, size).unwrap();
+        assert_eq!(output, b"OK 9\n<p>hi</p>");
+    }
+
+    #[test]
+    fn preview_limit_accepts_exactly_eight_mib_and_rejects_one_byte_more() {
+        let directory = tempfile::tempdir().unwrap();
+        let root = directory.path();
+        std::fs::write(root.join("exact.html"), b"<!doctype html>").unwrap();
+        let exact = std::fs::OpenOptions::new().write(true).open(root.join("exact.html")).unwrap();
+        // 用 set_len 构造边界大小，不实际分配 8 MiB 内容。
+        exact.set_len(PREVIEW_MAX_BYTES).unwrap();
+        drop(exact);
+        let (file, size) = open_preview(root, "exact.html").unwrap();
+        assert_eq!(size, PREVIEW_MAX_BYTES);
+        let mut output = Vec::new();
+        write_preview(&mut output, file, size).unwrap();
+        assert_eq!(output.len() as u64, format!("OK {PREVIEW_MAX_BYTES}\n").len() as u64 + PREVIEW_MAX_BYTES);
+
+        std::fs::write(root.join("over.html"), b"<!doctype html>").unwrap();
+        let over = std::fs::OpenOptions::new().write(true).open(root.join("over.html")).unwrap();
+        over.set_len(PREVIEW_MAX_BYTES + 1).unwrap();
+        drop(over);
+        let (file, size) = open_preview(root, "over.html").unwrap();
+        assert_eq!(size, PREVIEW_MAX_BYTES + 1);
+        let mut output = Vec::new();
+        write_preview(&mut output, file, size).unwrap();
+        // 超限时只有头部，正文一个字节都不发送。
+        assert_eq!(output, format!("OK {}\n", PREVIEW_MAX_BYTES + 1).into_bytes());
     }
 
     #[test]

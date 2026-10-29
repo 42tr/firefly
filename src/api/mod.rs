@@ -139,6 +139,7 @@ fn assistant_routes() -> Router {
         .route("/api/assistant/conversations/{id}/files", get(assistant_files::list))
         .route("/api/assistant/conversations/{id}/workspace/retry", post(assistant::retry_parallel_workspace))
         .route("/api/assistant/conversations/{id}/files/download", get(assistant_files::download))
+        .route("/api/assistant/conversations/{id}/files/preview", get(assistant_files::preview))
         .route(
             "/api/assistant/conversations/{id}/messages",
             get(assistant::get_conversation_messages).post(assistant::enqueue_conversation_message),
@@ -460,5 +461,31 @@ mod tests {
 
         assert_eq!(response.status(), StatusCode::NOT_FOUND);
         assert_eq!(response.headers().get("x-test-path").unwrap(), "/does-not-exist");
+    }
+}
+
+#[cfg(test)]
+mod route_tests {
+    use axum::{
+        body::Body,
+        http::{Request, StatusCode},
+    };
+    use tower::ServiceExt;
+
+    /// 未登录的预览请求必须被 `Session` 拦截（401），而不是落到前端 fallback。
+    #[tokio::test]
+    async fn preview_route_requires_a_session() {
+        crate::config::init_test_config();
+        let response = super::app()
+            .oneshot(
+                Request::builder()
+                    .method("GET")
+                    .uri("/api/assistant/conversations/1/files/preview?path=index.html")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
     }
 }

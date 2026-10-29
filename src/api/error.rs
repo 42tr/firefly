@@ -39,6 +39,10 @@ impl AppError {
         Self { status: StatusCode::NOT_FOUND, message: msg.to_string(), source: None, retry_after_secs: None }
     }
 
+    pub fn payload_too_large(msg: impl std::fmt::Display) -> Self {
+        Self { status: StatusCode::PAYLOAD_TOO_LARGE, message: msg.to_string(), source: None, retry_after_secs: None }
+    }
+
     pub fn conflict(msg: impl std::fmt::Display) -> Self {
         Self { status: StatusCode::CONFLICT, message: msg.to_string(), source: None, retry_after_secs: None }
     }
@@ -112,6 +116,13 @@ mod tests {
     use axum::http::{header, StatusCode};
 
     use super::*;
+
+    #[test]
+    fn payload_too_large_reports_413() {
+        let error = AppError::payload_too_large("文件超过预览上限（8MB），请下载查看");
+        assert_eq!(error.status(), StatusCode::PAYLOAD_TOO_LARGE);
+        assert_eq!(error.into_response().status(), StatusCode::PAYLOAD_TOO_LARGE);
+    }
 
     #[test]
     fn too_many_requests_sets_retry_after_header() {

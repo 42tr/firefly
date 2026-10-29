@@ -9,7 +9,7 @@
     "build": "vite build",
     "dev": "vite",
     "preview": "vite preview",
-    "test": "node --test --test-concurrency=1 src/composables/*.test.js src/components/*.test.js tests/*.test.js",
+    "test": "node --test --test-concurrency=1 src/composables/*.test.js src/components/*.test.js src/utils/*.test.js tests/*.test.js",
     "typecheck": "vue-tsc --noEmit -p tsconfig.json",
     "audit:deps": "npm audit --audit-level=moderate --registry=https://registry.npmjs.org",
     "check": "npm run typecheck && npm test && npm run build",

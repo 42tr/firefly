@@ -2,7 +2,7 @@ use super::{auth::Session, error::AppError};
 use crate::modules;
 use axum::{
     extract::{DefaultBodyLimit, Path},
-    http::header,
+    http::{header, HeaderValue},
     response::{IntoResponse, Response},
     routing::{get, post, put},
     Json, Router,
@@ -10,6 +10,13 @@ use axum::{
 use serde::Deserialize;
 use serde_json::{json, Value};
 use tokio_util::sync::CancellationToken;
+
+/// 模块页与 HTML 预览共用的沙箱页面 CSP。
+///
+/// 只允许内联脚本/样式以及 `data:`/`blob:` 图片与 `data:` 字体；`connect-src`、
+/// `frame-src`、`object-src`、`base-uri`、`form-action` 全部关闭，并叠加
+/// `sandbox allow-scripts allow-forms allow-downloads`（绝不包含 `allow-same-origin`）。
+pub(crate) const SANDBOXED_PAGE_CSP: &str = "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data: blob:; font-src data:; connect-src 'none'; frame-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'self'; sandbox allow-scripts allow-forms allow-downloads";
 
 pub fn routes() -> Router {
     Router::new()
@@ -121,7 +128,10 @@ async fn page_html(
         "text/html; charset=utf-8".parse().unwrap(),
     );
     headers.insert(header::CACHE_CONTROL, "no-store".parse().unwrap());
-    headers.insert(header::CONTENT_SECURITY_POLICY, "default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; img-src data: blob:; font-src data:; connect-src 'none'; frame-src 'none'; object-src 'none'; base-uri 'none'; form-action 'none'; frame-ancestors 'self'; sandbox allow-scripts allow-forms allow-downloads".parse().unwrap());
+    headers.insert(
+        header::CONTENT_SECURITY_POLICY,
+        HeaderValue::from_static(SANDBOXED_PAGE_CSP),
+    );
     headers.insert(header::X_FRAME_OPTIONS, "SAMEORIGIN".parse().unwrap());
     Ok(response)
 }

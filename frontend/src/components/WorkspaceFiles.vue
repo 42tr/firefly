@@ -2,6 +2,7 @@
 import UiIcon from './UiIcon.vue'
 import CopyButton from './CopyButton.vue'
 import { filePreviewType, readPreviewBlob } from '../composables/filePreview.js'
+import { htmlPreviewErrorMessage, htmlPreviewTooLarge, htmlPreviewUrl, isHtmlPreview } from '../utils/htmlPreview.js'
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 import { apiFetch } from '@/utils/http'
 import { formatAppDateTime } from '../composables/appTimezone.js'
@@ -22,6 +23,14 @@ const previewError = ref('')
 const previewText = ref('')
 const previewUrl = ref('')
 let previewController
+
+const htmlDialog = ref(null)
+const htmlPreviewItem = ref(null)
+const htmlPreviewSrc = ref('')
+const htmlPreviewLoading = ref(false)
+const htmlPreviewError = ref('')
+let htmlPreviewController
+let htmlLoadTimer
 function closePreview() {
   previewController?.abort()
   if (previewUrl.value) URL.revokeObjectURL(previewUrl.value)
@@ -61,6 +70,64 @@ async function preview(item) {
     if (!request.signal.aborted) previewLoading.value = false
   }
 }
+function closeHtmlPreview() {
+  htmlPreviewController?.abort()
+  htmlPreviewController = undefined
+  clearTimeout(htmlLoadTimer)
+  htmlLoadTimer = undefined
+  // 先清空 src 移除 iframe（停止其中的脚本与网络活动），再关对话框。
+  htmlPreviewSrc.value = ''
+  htmlDialog.value?.close()
+  htmlPreviewItem.value = null
+  htmlPreviewError.value = ''
+  htmlPreviewLoading.value = false
+}
+
+async function openHtmlPreview(item) {
+  if (!item) return
+  closePreview()
+  closeHtmlPreview()
+  htmlPreviewItem.value = item
+  htmlPreviewError.value = ''
+  htmlPreviewLoading.value = true
+  await nextTick()
+  htmlDialog.value?.showModal()
+  const request = new AbortController()
+  htmlPreviewController = request
+  const url = htmlPreviewUrl(endpoint('/preview'), item.path)
+  try {
+    // 错误响应带全局 X-Frame-Options: DENY，先 HEAD 预检才能在抽屉里显示中文提示。
+    const response = await apiFetch(url, { method: 'HEAD', credentials: 'include', signal: request.signal })
+    if (!response.ok) throw new Error(htmlPreviewErrorMessage(response.status))
+    if (request.signal.aborted) return
+    htmlPreviewSrc.value = url
+    htmlLoadTimer = setTimeout(() => {
+      if (htmlPreviewLoading.value) {
+        htmlPreviewLoading.value = false
+        htmlPreviewError.value = '页面加载超时，请下载查看'
+      }
+    }, 15000)
+  } catch (err) {
+    if (!request.signal.aborted) {
+      htmlPreviewLoading.value = false
+      htmlPreviewError.value = err.message || '预览失败，请重试'
+    }
+  }
+}
+
+function onHtmlFrameLoad() {
+  clearTimeout(htmlLoadTimer)
+  htmlLoadTimer = undefined
+  htmlPreviewLoading.value = false
+  // 超时之后才到的 load 说明页面其实已渲染，错误条（position:absolute）必须一起收起。
+  htmlPreviewError.value = ''
+}
+
+/** 超限提示；正常条目返回空串，由模板回落到常规 aria-label。 */
+function htmlPreviewSizeHint(item) {
+  return htmlPreviewTooLarge(item.size) ? '超过 8MB，请下载查看' : ''
+}
+
 let controller
 let downloadController
 const frames = new Set()
@@ -74,6 +141,7 @@ const errorMessage = async response => {
 
 async function load(target = path.value) {
   closePreview()
+  closeHtmlPreview()
   controller?.abort()
   const request = new AbortController()
   controller = request
@@ -153,6 +221,7 @@ watch([() => props.open, () => props.conversation?.id], async ([open, conversati
   controller?.abort()
   downloadController?.abort()
   closePreview()
+  closeHtmlPreview()
   checking.value = false
   if (!open) {
     // Native dialog.close() restores focus only when the panel was open.
@@ -175,12 +244,13 @@ onBeforeUnmount(() => {
   controller?.abort()
   downloadController?.abort()
   closePreview()
+  closeHtmlPreview()
   frames.forEach(frame => frame.remove())
 })
 </script>
 
 <template>
-  <dialog ref="dialog" class="files-drawer" aria-labelledby="files-title" @cancel.prevent="emit('close')" @click="event => { if (event.target === dialog) emit('close') }">
+  <dialog ref="dialog" class="files-drawer" aria-labelledby="files-title" @cancel.prevent="htmlPreviewItem ? closeHtmlPreview() : emit('close')" @click="event => { if (event.target === dialog) emit('close') }">
     <section class="files-content">
       <header>
         <div><h2 id="files-title">文件</h2><p class="workspace">{{ conversation?.cwd || 'workspace' }}</p></div>
@@ -220,16 +290,47 @@ onBeforeUnmount(() => {
             <UiIcon class="file-icon" :name="item.is_dir ? 'folder' : 'file'" />
             <div class="file-info">
               <button v-if="item.is_dir" type="button" class="file-name folder" @click="load(item.path)">{{ item.name }}</button>
+              <button v-else-if="isHtmlPreview(item)" type="button" class="file-name folder" @click="openHtmlPreview(item)">{{ item.name }}</button>
               <button v-else-if="filePreviewType(item)" type="button" class="file-name folder" :aria-label="`预览 ${item.name}`" @click="preview(item)">{{ item.name }}</button>
               <span v-else class="file-name">{{ item.name }}</span>
               <div class="file-meta">{{ size(item.size) }} · {{ modified(item.modified_at) }}</div>
             </div>
+            <button v-if="isHtmlPreview(item)" type="button" class="button ghost small" :disabled="htmlPreviewTooLarge(item.size)" :title="htmlPreviewSizeHint(item) || undefined" :aria-label="htmlPreviewSizeHint(item) || `在应用内预览 ${item.name}`" @click="openHtmlPreview(item)">预览</button>
             <button type="button" class="button ghost small" :disabled="checking" :aria-label="`${item.is_dir ? '打包下载' : '下载'} ${item.name}`" @click="download(item)">{{ item.is_dir ? '打包下载' : '下载' }}</button>
           </div>
         </template>
       </div>
-      <footer>点击文本或图片文件名可预览（文本 ≤ 1MB，图片 ≤ 10MB）。目录下载为 ZIP，不包含符号链接。</footer>
+      <footer>点击文本或图片文件名可预览（文本 ≤ 1MB，图片 ≤ 10MB）。HTML 原型可在应用内沙箱预览（≤ 8MB），仅支持自包含的内联脚本/样式与 data: 图片。目录下载为 ZIP，不包含符号链接。</footer>
     </section>
+  </dialog>
+
+  <dialog
+    ref="htmlDialog"
+    class="html-preview"
+    aria-labelledby="html-preview-title"
+    @cancel.prevent="closeHtmlPreview"
+    @click="event => { if (event.target === htmlDialog) closeHtmlPreview() }"
+  >
+    <header>
+      <h2 id="html-preview-title">{{ htmlPreviewItem?.name }}</h2>
+      <div class="html-preview-actions">
+        <button type="button" class="button ghost small" :disabled="checking" @click="download(htmlPreviewItem)">下载</button>
+        <button type="button" class="button ghost small" aria-label="关闭 HTML 预览" @click="closeHtmlPreview">关闭</button>
+      </div>
+    </header>
+    <p v-if="htmlPreviewLoading" class="empty html-preview-status" role="status">正在打开预览…</p>
+    <p v-if="htmlPreviewError" class="file-error html-preview-status" role="alert">
+      {{ htmlPreviewError }}
+      <button type="button" @click="openHtmlPreview(htmlPreviewItem)">重试</button>
+    </p>
+    <iframe
+      v-if="htmlPreviewSrc"
+      :src="htmlPreviewSrc"
+      :title="`预览 ${htmlPreviewItem?.name || ''}`"
+      sandbox="allow-scripts allow-forms allow-downloads"
+      referrerpolicy="no-referrer"
+      @load="onHtmlFrameLoad"
+    ></iframe>
   </dialog>
 </template>
 
@@ -263,5 +364,12 @@ input { min-width: 120px; flex: 1; border: 1px solid var(--border-soft); border-
 .file-error { color: #c44545; }
 .file-notice, footer { color: var(--text-secondary); }
 footer { font-size: 12px; line-height: 1.6; }
+.html-preview { width: min(1100px, calc(100vw - 24px)); height: min(850px, 90dvh); max-width: none; max-height: none; padding: 0; border: 1px solid var(--border-soft); border-radius: 14px; background: var(--bg-panel); color: var(--text-primary); }
+.html-preview::backdrop { background: rgba(15, 23, 42, .45); }
+.html-preview > header { display: flex; align-items: center; justify-content: space-between; gap: 12px; padding: 12px 16px; border-bottom: 1px solid var(--border-soft); }
+.html-preview h2 { font-size: 16px; overflow-wrap: anywhere; }
+.html-preview-actions { display: flex; gap: 8px; flex-shrink: 0; }
+.html-preview-status { position: absolute; top: 57px; left: 0; right: 0; margin: 0; padding: 12px 16px; text-align: left; background: var(--bg-panel); }
+.html-preview iframe { display: block; width: 100%; height: calc(100% - 57px); border: 0; background: #fff; }
 @media (max-width: 640px) { .files-drawer { width: 100vw; border: 0; } .files-content { padding: 16px; padding-bottom: max(16px, env(safe-area-inset-bottom)); } }
 </style>
