@@ -128,6 +128,15 @@ fn validates_configuration_and_vectors() {
 }
 
 #[test]
+fn vectors_are_consistent_checks_nonempty_equal_dimensions() {
+    assert!(!vectors_are_consistent(&[]));
+    assert!(vectors_are_consistent(&[vec![1.0, 2.0]]));
+    assert!(vectors_are_consistent(&[vec![1.0], vec![2.0]]));
+    assert!(!vectors_are_consistent(&[vec![1.0], vec![2.0, 3.0]]));
+    assert!(!vectors_are_consistent(&[vec![], vec![]]));
+}
+
+#[test]
 fn semantic_nearest_uses_max_chunk_stable_ties_and_ignores_bad_vectors() {
     let memories = vec![
         (9, vec![vec![0.0, 1.0], vec![2.0, 0.0]]),
@@ -353,6 +362,39 @@ async fn semantic_review_counts_embedding_failure_without_suppressing_new_memory
 }
 
 #[tokio::test]
+async fn semantic_review_fails_open_when_embedding_response_is_empty() {
+    crate::db::set_test_pool(crate::db::test_pool().await);
+    let app = Router::new().route(
+        "/v1/embeddings",
+        post(|| async { Json(json!({"data": []})) }),
+    );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let cfg = config(&format!("http://{}/v1", listener.local_addr().unwrap()));
+    let server = tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+    let mut filtered = filter_review_changes(
+        vec![MemoryReviewChange {
+            id: None,
+            title: "空响应候选".into(),
+            content: "空响应时仍保存".into(),
+            evidence: "依据：「本轮事实」".into(),
+        }],
+        &[],
+        "本轮事实",
+        "已确认",
+    );
+    apply_semantic_review(&cfg, "owner", &mut filtered, &[])
+        .await
+        .unwrap();
+    assert_eq!(filtered.changes.len(), 1);
+    assert_eq!(filtered.changes[0].content, "空响应时仍保存");
+    assert_eq!(filtered.rejected.semantic_unavailable, 1);
+    assert!(filtered.semantic_nearest.is_empty());
+    server.abort();
+}
+
+#[tokio::test]
 async fn semantic_review_fails_open_when_cache_read_fails() {
     let pool = crate::db::test_pool().await;
     crate::db::set_test_pool(pool.clone());
@@ -382,6 +424,8 @@ async fn semantic_review_fails_open_when_cache_read_fails() {
     assert!(filtered.semantic_nearest.is_empty());
     assert_eq!(calls.documents.load(Ordering::SeqCst), 0);
     assert_eq!(calls.requests.load(Ordering::SeqCst), 0, "a cache read failure must not call the embedding endpoint");
+    // 约定：凡关闭槽位池的用例，结束前必须恢复活池。
+    crate::db::set_test_pool(crate::db::test_pool().await);
     server.abort();
 }
 

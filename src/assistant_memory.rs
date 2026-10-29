@@ -199,6 +199,13 @@ fn normalize(mut vector: Vec<f32>) -> anyhow::Result<Vec<f32>> {
     Ok(vector)
 }
 
+fn vectors_are_consistent(vectors: &[Vec<f32>]) -> bool {
+    !vectors.is_empty()
+        && vectors
+            .iter()
+            .all(|vector| !vector.is_empty() && vector.len() == vectors[0].len())
+}
+
 fn split_content(content: &str) -> Vec<String> {
     let mut remaining = content.trim();
     let mut chunks = Vec::new();
@@ -760,14 +767,7 @@ async fn semantic_review_candidates(
             .map(|text| format!("{}\n{text}", change.title.trim()))
             .collect();
         let vectors = match service.embed(&inputs).await {
-            Ok(vectors)
-                if !vectors.is_empty()
-                    && vectors
-                        .iter()
-                        .all(|vector| vector.len() == vectors[0].len()) =>
-            {
-                vectors
-            }
+            Ok(vectors) if vectors_are_consistent(&vectors) => vectors,
             Ok(_) => {
                 result.rejected.semantic_unavailable += 1;
                 warn!(
