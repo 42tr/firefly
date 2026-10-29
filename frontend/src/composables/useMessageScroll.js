@@ -88,7 +88,7 @@ export function useMessageScroll() {
     },
     beforeUnmount(element) { reservedReplies.delete(element) },
   }
-  // Finishing a turn can also remove its workflow above the reply. Preserve
+  // Finishing a turn can also remove its background task bar above the reply. Preserve
   // the whole scroll range before paint, unless space was deliberately freed.
   onBeforeUpdate(() => {
     const panel = chatPanel.value

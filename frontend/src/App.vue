@@ -34,7 +34,7 @@ const WorkspaceFiles = defineAsyncComponent(() => import('./components/Workspace
 import GoalCheckEvent from './components/GoalCheckEvent.vue'
 import InputQueue from './components/InputQueue.vue'
 import UiIcon from './components/UiIcon.vue'
-import WorkflowTree from './components/WorkflowTree.vue'
+import BackgroundTaskBar from './components/BackgroundTaskBar.vue'
 import { provideAssistantRealtime, useRealtimeSubscription } from './composables/useAssistantRealtime.js'
 import { apiFetch } from '@/utils/http'
 import { conversationAgentLabel } from './utils/conversationLabels.js'
@@ -954,7 +954,7 @@ onMounted(() => {
                 </div>
               </div>
               </div>
-              <WorkflowTree
+              <BackgroundTaskBar
                 v-if="activeConversation?.agent === 'firefly' && item.type === 'msg' && item.msg.role === 'user' && item.msg.generationJobId"
                 v-memo="[item.msg.generationJobId, item.msg.processingStatus]"
                 :conversation-id="activeConversationId"

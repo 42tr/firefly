@@ -82,7 +82,7 @@ npm --prefix frontend run dev -- --host 127.0.0.1 --port 5199
 ```sh
 FIREFLY_TEST_URL=http://127.0.0.1:5199 python3 frontend/tests/e2e/test_local_login_ui.py
 FIREFLY_TEST_URL=http://127.0.0.1:5199 python3 frontend/tests/e2e/test_conversation_archive_ui.py
-FIREFLY_TEST_URL=http://127.0.0.1:5199 python3 frontend/tests/e2e/test_workflow_ui.py
+FIREFLY_TEST_URL=http://127.0.0.1:5199 python3 frontend/tests/e2e/test_background_task_bar_ui.py
 FIREFLY_TEST_URL=http://127.0.0.1:5199 python3 frontend/tests/e2e/test_streaming_ui.py
 python3 frontend/tests/e2e/test_modules_ui.py
 ```

@@ -1,9 +1,9 @@
 import { onScopeDispose, ref, watch } from 'vue'
 import { apiFetch } from '@/utils/http'
-import { activeTask } from './taskTree.js'
+import { activeTask } from './taskState.js'
 
 // The endpoint returns a whole conversation, so every reply shares its cursor
-// and request. Entries live only while at least one visible tree uses them.
+// and request. Entries live only while at least one visible task bar uses them.
 export function createConversationTasks(fetcher = apiFetch, timers = globalThis) {
   const conversations = new Map()
   const publish = entry => {
