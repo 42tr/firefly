@@ -18,6 +18,55 @@ fn profile() -> Value {
         "ANTHROPIC_DEFAULT_HAIKU_MODEL":"relay-small"}, "permissions":{"deny":["Read(.secret)"]}})
 }
 
+fn kimi_profile() -> crate::agent_settings::ModelProfile {
+    crate::agent_settings::ModelProfile {
+        id: "kimi".into(),
+        name: "Kimi Code".into(),
+        agent: "claude".into(),
+        protocol: "anthropic".into(),
+        base_url: "https://api.kimi.ai/coding/".into(),
+        model: "k3.1-pro".into(),
+        models: vec!["k3.1-pro".into()],
+        reasoning_levels: Vec::new(),
+        model_discovery: "manual".into(),
+        api_key: Some("private-kimi-key".into()),
+        context_tokens: None,
+        _key_configured: false,
+    }
+}
+
+#[test]
+fn kimi_k31_pro_defaults_to_thinking_and_maps_all_claude_model_tiers() {
+    let profile = kimi_profile();
+    let provider = provider_from_model_profile(&profile).unwrap();
+    assert_eq!(provider.default_reasoning_level.as_deref(), Some("high"));
+    assert_eq!(
+        default_reasoning_level_for_model("k3.1-pro[1m]").as_deref(),
+        Some("high")
+    );
+    assert!(default_reasoning_level_for_model("k3").is_none());
+
+    let mut command = Command::new("claude");
+    let file = configure_command(&mut command, Some(&provider), None)
+        .unwrap()
+        .unwrap();
+    let settings: Value = serde_json::from_reader(file.reopen().unwrap()).unwrap();
+    for key in [
+        "ANTHROPIC_MODEL",
+        "ANTHROPIC_DEFAULT_OPUS_MODEL",
+        "ANTHROPIC_DEFAULT_SONNET_MODEL",
+        "ANTHROPIC_DEFAULT_HAIKU_MODEL",
+        "ANTHROPIC_DEFAULT_FABLE_MODEL",
+        "CLAUDE_CODE_SUBAGENT_MODEL",
+    ] {
+        assert_eq!(
+            settings["env"][key], "k3.1-pro",
+            "missing Kimi model alias: {key}"
+        );
+    }
+    assert_eq!(settings["env"]["ANTHROPIC_API_KEY"], "private-kimi-key");
+}
+
 #[test]
 fn discovers_native_profiles_without_dotenv_and_reloads_edits() {
     let root = tempfile::tempdir().unwrap();

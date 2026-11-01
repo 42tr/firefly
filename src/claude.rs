@@ -10,6 +10,7 @@ pub use firefly_claude_transport::{session_id, session_title, text_delta};
 
 mod settings;
 pub use settings::{cli_defaults, effective_model, normalize_provider, normalize_reasoning_level, providers, REASONING_LEVELS};
+pub(crate) use settings::provider_from_model_profile;
 
 // The settings snapshot must outlive the child, including its tool subprocesses.
 pub struct ClaudeTurn {
@@ -68,13 +69,53 @@ fn claude_args(cfg: &config::Config, session_id: Option<&str>, model: &str, reas
 pub async fn start_turn(cwd: &Path, session_id: Option<&str>, provider: Option<&str>, model: Option<&str>, reasoning_level: Option<&str>, prompt: &str) -> anyhow::Result<ClaudeTurn> {
     let cfg = config::get();
     let profile = settings::resolve_provider(provider)?;
-    let model = effective_model(&cfg, profile.as_ref(), model)?;
-    let reasoning_level = normalize_reasoning_level(reasoning_level.map(str::to_owned))?;
+    start_turn_with_provider(&cfg, cwd, session_id, profile.as_ref(), model, reasoning_level, prompt)
+}
+
+/// Start Claude with a Firefly API profile instead of reading a provider file
+/// from the service account's home directory.
+pub async fn start_turn_with_model_profile(
+    cwd: &Path,
+    session_id: Option<&str>,
+    profile: &crate::agent_settings::ModelProfile,
+    model: Option<&str>,
+    reasoning_level: Option<&str>,
+    prompt: &str,
+) -> anyhow::Result<ClaudeTurn> {
+    let cfg = config::get();
+    let profile = settings::provider_from_model_profile(profile)?;
+    start_turn_with_provider(&cfg, cwd, session_id, Some(&profile), model, reasoning_level, prompt)
+}
+
+fn start_turn_with_provider(
+    cfg: &config::Config,
+    cwd: &Path,
+    session_id: Option<&str>,
+    profile: Option<&settings::ClaudeProvider>,
+    model: Option<&str>,
+    reasoning_level: Option<&str>,
+    prompt: &str,
+) -> anyhow::Result<ClaudeTurn> {
+    let model = effective_model(cfg, profile, model)?;
+    // Use the provider default when this conversation has no per-turn
+    // override. Kimi K3.1 Pro rejects requests with thinking disabled, and
+    // older conversations may not have a saved reasoning level yet.
+    let reasoning_level = normalize_reasoning_level(
+        reasoning_level
+            .map(str::to_owned)
+            .or_else(|| profile.and_then(|profile| profile.default_reasoning_level.clone()))
+            .or_else(|| settings::default_reasoning_level_for_model(&model)),
+    )?;
     let mut command = Command::new("claude");
-    let settings_file = settings::configure_command(&mut command, profile.as_ref(), reasoning_level.as_deref())?;
+    let settings_file = settings::configure_command_for_model(
+        &mut command,
+        profile,
+        Some(&model),
+        reasoning_level.as_deref(),
+    )?;
     command
         .current_dir(cwd)
-        .args(claude_args(&cfg, session_id, &model, reasoning_level.as_deref(), prompt));
+        .args(claude_args(cfg, session_id, &model, reasoning_level.as_deref(), prompt));
     spawn_turn(command, settings_file)
 }
 

@@ -4,7 +4,7 @@ use anyhow::anyhow;
 use serde_json::{json, Value};
 
 use crate::config;
-use firefly_codex_transport::app_server;
+use super::app_server;
 
 /// 选择生效模型：对话绑定 > 全局 CODEX_MODEL > 交给 codex 读取 config.toml 默认。
 pub(crate) fn effective_model(conversation_model: Option<&str>) -> Option<String> {
@@ -29,6 +29,24 @@ pub struct ConversationSettings {
 pub async fn resolve_conversation_settings(
     cwd: &Path, provider: Option<&str>, model: Option<&str>, reasoning_level: Option<&str>,
 ) -> anyhow::Result<ConversationSettings> {
+    let app_settings = crate::agent_settings::Settings::load(crate::db::pool()).await?;
+    let profile_id = match provider {
+        Some(value) if value.starts_with("api-") => Some(value.trim_start_matches("api-")),
+        Some(_) => None,
+        None => app_settings.codex_api_profile.as_deref(),
+    };
+    if let Some(profile) = profile_id.and_then(|id| app_settings.profiles.iter().find(|profile| profile.id == id)) {
+        let provider = format!("api-{}", profile.id);
+        let model = model
+            .map(str::trim)
+            .filter(|value| !value.is_empty())
+            .map(ToOwned::to_owned)
+            .or_else(|| (!profile.model.trim().is_empty()).then(|| profile.model.clone()));
+        let effort = reasoning_level
+            .filter(|value| !value.is_empty())
+            .or_else(|| profile.reasoning_levels.first().map(String::as_str));
+        return resolve_settings_from_sources(provider, model, effort, &[]);
+    }
     let client = app_server().await?;
     let defaults = client.request("config/read", json!({"cwd":cwd, "includeLayers":false})).await?;
     let configured = &defaults["config"];

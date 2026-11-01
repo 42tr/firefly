@@ -18,13 +18,13 @@
 
 新对话入口位于对话标题栏，只显示图标；移动端放在展开侧边栏按钮右侧，侧边栏和桌面收起导航不再保留重复入口。
 
-Codex 对话标题栏提供“模型设置”，运行或排队时也可修改 API 平台、模型和推理级别。保存后提交的新消息使用新设置，已运行或已排队的消息保留提交时的配置；任务配置持久化，重试和服务重启恢复也沿用原设置。保留会话 ID、历史和工作目录，刷新或服务重启后仍使用保存的设置。归档对话需先取消归档。平台须已在服务账号的 Codex 配置中配置；模型及推理级别沿用新对话的选择规则，模型目录不可用时可手动输入。`PATCH /api/assistant/conversations/{id}/codex-settings` 使用 `provider`、`model`、`reasoning_level` 整体替换三项设置，空值恢复配置默认；`provider: "openai"` 明确选择官方平台。保存与消息提交使用同一数据库写锁，每条 Codex 消息在提交时保存三项配置快照，保存设置不会中断正在执行的任务。底层配置变化时仅卸载并恢复对应的空闲 Codex 线程，核对平台与模型后才开始下一轮，不重启其他对话使用的连接。
+Codex 对话标题栏提供“模型设置”，运行或排队时也可修改 API 平台、模型和推理级别。保存后提交的新消息使用新设置，已运行或已排队的消息保留提交时的配置；任务配置持久化，重试和服务重启恢复也沿用原设置。保留会话 ID、历史和工作目录，刷新或服务重启后仍使用保存的设置。归档对话需先取消归档。API 配置页中的 Codex Profile 会在 app-server 启动时注入为临时 provider；未配置数据库 Profile 时继续兼容服务账号的 `~/.codex/config.toml`。模型及推理级别沿用新对话的选择规则，模型目录不可用时可手动输入。`PATCH /api/assistant/conversations/{id}/codex-settings` 使用 `provider`、`model`、`reasoning_level` 整体替换三项设置，空值恢复配置默认；`provider: "openai"` 明确选择官方平台。保存与消息提交使用同一数据库写锁，每条 Codex 消息在提交时保存三项配置快照，保存设置不会中断正在执行的任务。API Profile 变化后，后续请求会按新的运行配置重建 app-server。
 
 旧流萤记录作为各自独立的会话显示，不合并历史。旧引用分支继续使用保存的祖先上下文，消息接口的 `source_reply` 返回来源回复预览和可用的会话 ID；原会话删除后仍保留预览与继承上下文。旧 `/api/assistant/firefly/messages` 接口及实时订阅暂时保留，供升级前的客户端兼容使用。
 
 Claude 在新建对话、现有对话标题栏和定时任务中提供 API 平台、模型和推理级别选择。默认平台 `cli` 读取服务运行账户的 `~/.claude/settings.json`，并沿用 Claude CLI 登录和环境；设置了 Claude 原生的 `CLAUDE_CONFIG_DIR` 时，配置目录随之改变。`CLAUDE_MODEL`、`CLAUDE_MODELS` 仅保留为旧部署的可选覆盖，不需要再在 `.env` 登记平台列表或默认推理级别。
 
-额外平台放在 `<Claude 配置目录>/providers/*.json`，文件名就是平台标识，例如 `providers/relay.json` 对应 `relay`。**这个目录的发现规则由 Firefly 约定，文件内容使用 Claude 原生 settings 格式**，也可以直接用 `claude --settings ~/.claude/providers/relay.json` 运行。`cli` 是保留标识。配置按次读取，新增、修改和删除文件无需重启 Firefly；个别文件无效时返回具名提示，其他平台仍可选择。
+API 配置页中的 Claude Profile 会在每轮启动时生成临时原生 settings 和认证环境，不依赖 `~/.claude/providers`。未绑定数据库 Profile 时仍支持额外平台放在 `<Claude 配置目录>/providers/*.json`，文件名就是平台标识，例如 `providers/relay.json` 对应 `relay`。**这个目录的发现规则由 Firefly 约定，文件内容使用 Claude 原生 settings 格式**，也可以直接用 `claude --settings ~/.claude/providers/relay.json` 运行。`cli` 是保留标识。配置按次读取，新增、修改和删除文件无需重启 Firefly；个别文件无效时返回具名提示，其他平台仍可选择。
 
 每个平台文件使用原生 `env.ANTHROPIC_BASE_URL` 指定 Anthropic Messages API 地址，或使用原生 Bedrock、Vertex、Foundry 开关；使用 `model` / `env.ANTHROPIC_MODEL` 设置默认模型，`availableModels` 及模型别名环境变量提供候选模型。`availableModels` 同时是 Claude 原生模型白名单，手动选择也受其约束；不需要限制模型时可省略该字段。平台对应的 Opus、Sonnet、Haiku、Fable 和子 agent 模型映射也在同一个原生文件中管理。示例见 [`examples/claude/providers/gateway.json`](../examples/claude/providers/gateway.json)。复制到用户配置目录后，将示例地址、模型和凭据来源替换为实际配置；凭据文件保持仅当前用户可读，不提交仓库。
 
@@ -84,7 +84,7 @@ Firefly 最终回复持久化并完成必要工具收尾后，提交回合状态
 
 配置持久化到本站 SQLite。首次初始化读取 `OPENAI_*`、`ASSISTANT_SYSTEM_PROMPT`、`ASSISTANT_CONTEXT_TOKENS` 和 `ASSISTANT_RUN_TIMEOUT_SECS`，保留旧实例已启用模块的直接工具；此后页面保存的配置为唯一来源，环境变量不覆盖已保存值。修改主提示词、模型、工具或子 agent 后，无需重启或重新编译；已有对话从下一轮使用新配置，正在执行的回答继续使用开始时的配置快照。缺少模型或工具的子 agent 本轮不注册，主助手会收到具体原因。停用模块仍按模块原有撤销机制处理在途工具调用。
 
-工具列表包含核心工具和已启用的外部 MCP 模块工具；安装、启用新模块后可点击“刷新工具”并分配给不同 agent。页面支持 JSON 导入导出；导入仅更新草稿，保存后生效，导出不含模型 API Key。密钥存于本地数据库，API 读回仅展示是否已配置；同一模型配置和服务来源下留空保存保留原密钥，点击“清除密钥”删除。更换服务的协议、域名或端口时，未重新填写的旧密钥会自动清除，防止配置导入后把密钥发往其他服务。并发修改通过配置版本校验拒绝覆盖。模型服务需支持 Responses API；Codex、Claude 独立会话的 CLI 配置继续由各自管理。
+工具列表包含核心工具和已启用的外部 MCP 模块工具；安装、启用新模块后可点击“刷新工具”并分配给不同 agent。页面支持 JSON 导入导出；导入仅更新草稿，保存后生效，导出不含模型 API Key。密钥存于本地数据库，API 读回仅展示是否已配置；同一模型配置和服务来源下留空保存保留原密钥，点击“清除密钥”删除。更换服务的协议、域名或端口时，未重新填写的旧密钥会自动清除，防止配置导入后把密钥发往其他服务。并发修改通过配置版本校验拒绝覆盖。模型服务需支持对应协议；API Profile 是 Codex、Claude 和 Firefly 的统一配置来源，原生 CLI 文件仅作为兼容回退。
 
 每次子 agent 委派使用独立的持久化任务作用域：结束检查只等待本次委派的任务，退出或失败清理自己的附属任务，已转后台的任务继续执行。主回答停止时清理整个回答的附属任务。作用域保存在任务的 `scope_id`，复用现有任务事件、输出、取消和重启恢复机制。委派本身同步执行；后台命令完成不会自动重新唤醒子 agent 或主模型。
 

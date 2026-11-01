@@ -18,8 +18,21 @@ use crate::{assistant_tasks, config, llm, mcp};
 pub struct ModelProfile {
     pub id: String,
     pub name: String,
+    /// Which runtime consumes this profile. `shared` can be selected by any agent.
+    #[serde(default = "default_profile_agent")]
+    pub agent: String,
+    /// Wire protocol used by the runtime adapter.
+    #[serde(default = "default_profile_protocol")]
+    pub protocol: String,
     pub base_url: String,
     pub model: String,
+    /// Optional model catalog maintained by the UI or a provider discovery adapter.
+    #[serde(default)]
+    pub models: Vec<String>,
+    #[serde(default)]
+    pub reasoning_levels: Vec<String>,
+    #[serde(default)]
+    pub model_discovery: String,
     /// null preserves the key only for the same profile ID and service origin.
     #[serde(default)]
     pub api_key: Option<String>,
@@ -51,7 +64,14 @@ pub struct Settings {
     pub profiles: Vec<ModelProfile>,
     pub firefly: AgentDefinition,
     pub subagents: Vec<AgentDefinition>,
+    #[serde(default)]
+    pub codex_api_profile: Option<String>,
+    #[serde(default)]
+    pub claude_api_profile: Option<String>,
 }
+
+fn default_profile_agent() -> String { "firefly".into() }
+fn default_profile_protocol() -> String { "responses".into() }
 
 #[derive(Serialize)]
 pub struct ToolEntry {
@@ -86,9 +106,14 @@ impl Settings {
             profiles: vec![ModelProfile {
                 id: "default".into(),
                 name: "默认模型".into(),
+                agent: "firefly".into(),
+                protocol: "responses".into(),
                 base_url: std::env::var("OPENAI_BASE_URL")
                     .unwrap_or_else(|_| "https://api.openai.com/v1".into()),
                 model: std::env::var("OPENAI_MODEL").unwrap_or_default(),
+                models: Vec::new(),
+                reasoning_levels: Vec::new(),
+                model_discovery: "auto".into(),
                 api_key: Some(std::env::var("OPENAI_API_KEY").unwrap_or_default()),
                 context_tokens: cfg.as_ref().and_then(|cfg| cfg.assistant_context_tokens),
                 _key_configured: false,
@@ -112,6 +137,8 @@ impl Settings {
             },
             // There are deliberately no built-in child-agent definitions.
             subagents: Vec::new(),
+            codex_api_profile: None,
+            claude_api_profile: None,
         }
     }
 
@@ -185,6 +212,24 @@ impl Settings {
                 !profile.name.trim().is_empty() && profile.name.chars().count() <= 100,
                 "模型配置名称须为 1–100 字"
             );
+            ensure!(
+                matches!(profile.agent.as_str(), "firefly" | "codex" | "claude" | "shared"),
+                "API 配置的 Agent 类型无效"
+            );
+            ensure!(
+                matches!(profile.protocol.as_str(), "responses" | "openai" | "anthropic"),
+                "API 配置的协议无效"
+            );
+            ensure!(
+                matches!(profile.model_discovery.as_str(), "auto" | "manual"),
+                "模型目录模式无效"
+            );
+            ensure!(profile.models.len() <= 256 && profile.models.iter().all(|model| {
+                !model.trim().is_empty() && model.len() <= 256 && !model.chars().any(char::is_whitespace)
+            }), "API 配置包含无效模型名称");
+            ensure!(profile.reasoning_levels.len() <= 16 && profile.reasoning_levels.iter().all(|level| {
+                !level.trim().is_empty() && level.len() <= 64 && !level.chars().any(char::is_whitespace)
+            }), "API 配置包含无效推理级别");
             let url = reqwest::Url::parse(&profile.base_url).context("模型服务地址无效")?;
             ensure!(
                 matches!(url.scheme(), "http" | "https")
@@ -217,6 +262,27 @@ impl Settings {
             self.firefly.model_profile.is_some(),
             "请选择 Firefly 的模型配置"
         );
+        if let Some(id) = &self.firefly.model_profile {
+            let selected = self.profiles.iter().find(|profile| profile.id == *id)
+                .ok_or_else(|| anyhow::anyhow!("Firefly 引用了不存在的 API 配置"))?;
+            ensure!(selected.agent == "firefly" || selected.agent == "shared",
+                "Firefly 不能使用该 API 配置");
+            ensure!(selected.protocol == "responses", "Firefly 需要 Responses API 配置");
+        }
+        for (agent, profile) in [("Codex", &self.codex_api_profile), ("Claude", &self.claude_api_profile)] {
+            if let Some(id) = profile {
+                let selected = self.profiles.iter().find(|profile| profile.id == *id)
+                    .ok_or_else(|| anyhow::anyhow!("{agent} 引用了不存在的 API 配置"))?;
+                ensure!(selected.agent == agent.to_ascii_lowercase() || selected.agent == "shared",
+                    "{agent} 不能使用该 API 配置");
+                let protocol_ok = match agent {
+                    "Codex" => matches!(selected.protocol.as_str(), "responses" | "openai"),
+                    "Claude" => selected.protocol == "anthropic",
+                    _ => true,
+                };
+                ensure!(protocol_ok, "{agent} 的 API 配置协议不匹配");
+            }
+        }
         let mut ids = BTreeSet::new();
         for agent in std::iter::once(&self.firefly).chain(&self.subagents) {
             ensure!(

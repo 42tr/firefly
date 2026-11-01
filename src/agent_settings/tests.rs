@@ -75,6 +75,31 @@ fn no_built_in_children_and_invalid_agent_definitions_are_rejected() {
     assert!(invalid.validate().is_err());
 }
 
+#[test]
+fn database_api_profiles_validate_agent_bindings_and_protocols() {
+    let mut settings = fixture();
+    settings.profiles.push(ModelProfile {
+        id: "kimi".into(),
+        name: "Kimi Code".into(),
+        agent: "claude".into(),
+        protocol: "anthropic".into(),
+        base_url: "https://api.kimi.com/coding/".into(),
+        model: "k3.1-pro".into(),
+        models: vec!["k3.1-pro".into()],
+        reasoning_levels: vec!["max".into()],
+        model_discovery: "manual".into(),
+        api_key: Some("private-kimi-key".into()),
+        context_tokens: None,
+        _key_configured: false,
+    });
+    settings.claude_api_profile = Some("kimi".into());
+    settings.validate().unwrap();
+    assert!(!settings.public().to_string().contains("private-kimi-key"));
+
+    settings.profiles[1].protocol = "responses".into();
+    assert!(settings.validate().is_err());
+}
+
 #[tokio::test]
 async fn saved_revisions_reload_without_restart_and_keys_never_leave_public_views() {
     let pool = crate::db::test_pool().await;

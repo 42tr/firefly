@@ -12,12 +12,17 @@ export function settingsPayload(settings) {
   return {
     revision: settings.revision,
     profiles: settings.profiles.map(profile => ({
-      id: profile.id, name: profile.name, base_url: profile.base_url, model: profile.model,
+      id: profile.id, name: profile.name, agent: profile.agent || 'firefly', protocol: profile.protocol || 'responses',
+      base_url: profile.base_url, model: profile.model, models: Array.isArray(profile.models) ? profile.models : [],
+      reasoning_levels: Array.isArray(profile.reasoning_levels) ? profile.reasoning_levels : [],
+      model_discovery: profile.model_discovery || 'auto',
       context_tokens: profile.context_tokens === '' || profile.context_tokens == null ? null : Number(profile.context_tokens),
       api_key: profile.clear_key ? '' : profile.api_key || null,
     })),
     firefly: { ...settings.firefly, timeout_secs: Number(settings.firefly.timeout_secs) },
     subagents: settings.subagents.map(agent => ({ ...agent, timeout_secs: Number(agent.timeout_secs) })),
+    codex_api_profile: settings.codex_api_profile || null,
+    claude_api_profile: settings.claude_api_profile || null,
   }
 }
 
@@ -78,6 +83,11 @@ export function useAgentSettings(api = request) {
       && typeof item.enabled === 'boolean' && Number.isFinite(Number(item.timeout_secs))
       && (item.model_profile == null || typeof item.model_profile === 'string')
     const profileShape = item => item && ['id', 'name', 'base_url', 'model'].every(key => typeof item[key] === 'string')
+      && (item.agent == null || typeof item.agent === 'string')
+      && (item.protocol == null || typeof item.protocol === 'string')
+      && (item.models == null || Array.isArray(item.models))
+      && (item.reasoning_levels == null || Array.isArray(item.reasoning_levels))
+      && (item.model_discovery == null || typeof item.model_discovery === 'string')
       && (item.api_key == null || typeof item.api_key === 'string')
     if (!agentShape(value.firefly) || !value.subagents.every(agentShape) || !value.profiles.every(profileShape)) {
       throw new Error('配置文件中的 Agent 或模型字段不完整')

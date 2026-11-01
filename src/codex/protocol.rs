@@ -4,8 +4,8 @@ use anyhow::anyhow;
 use serde_json::{json, Value};
 use tokio::sync::broadcast;
 
-use firefly_codex_transport::app_server;
 use super::settings::effective_model;
+use super::app_server;
 
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(60);
 

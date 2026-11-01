@@ -46,10 +46,35 @@ pub async fn codex_providers(_auth_user: Session) -> Json<Value> {
             (Vec::new(), Some("读取模型列表失败，可手动输入模型名称或使用默认模型"))
         }
     };
+    let app_settings = crate::agent_settings::Settings::load(crate::db::pool()).await.ok();
+    if let Some(settings) = &app_settings {
+        for profile in settings.profiles.iter().filter(|profile| matches!(profile.agent.as_str(), "codex" | "shared")) {
+            let name = format!("api-{}", profile.id);
+            if listing.providers.iter().all(|item| item.name != name) {
+                listing.providers.push(codex::ModelProvider {
+                    name,
+                    base_url: Some(profile.base_url.clone()),
+                    env_key: None,
+                    models: profile.models.clone(),
+                    models_error: None,
+                });
+            }
+        }
+    }
+    let bound_profile = app_settings.as_ref().and_then(|settings| {
+        let id = settings.codex_api_profile.as_deref()?;
+        settings.profiles.iter().find(|profile| profile.id == id)
+    });
+    let default_provider = bound_profile.map(|profile| format!("api-{}", profile.id))
+        .or_else(|| listing.default.clone());
+    let default_model = bound_profile.and_then(|profile| (!profile.model.trim().is_empty()).then(|| profile.model.clone()))
+        .or_else(|| listing.default_model.clone());
+    let default_reasoning_level = bound_profile.and_then(|profile| profile.reasoning_levels.first().cloned())
+        .or_else(|| listing.default_reasoning_level.clone());
     Json(json!({
-        "default": listing.default,
-        "default_model": listing.default_model,
-        "default_reasoning_level": listing.default_reasoning_level,
+        "default": default_provider,
+        "default_model": default_model,
+        "default_reasoning_level": default_reasoning_level,
         "providers": listing.providers,
         "official_models": official_models.iter().map(|model| &model.model).collect::<Vec<_>>(),
         "model_reasoning": official_models,
@@ -67,14 +92,31 @@ pub async fn claude_models(_auth_user: Session) -> Result<Json<Value>, AppError>
     })
     .await
     .map_err(|error| AppError::internal_server_error(format!("读取 Claude 配置任务失败: {error}")))?;
-    let listing = listing.map_err(AppError::internal_server_error)?;
+    let mut listing = listing.map_err(AppError::internal_server_error)?;
     let defaults = defaults.map_err(AppError::internal_server_error)?;
+    let app_settings = crate::agent_settings::Settings::load(crate::db::pool())
+        .await
+        .map_err(AppError::internal_server_error)?;
+    for profile in app_settings.profiles.iter().filter(|profile| matches!(profile.agent.as_str(), "claude" | "shared")) {
+        let provider = claude::provider_from_model_profile(profile)
+            .map_err(AppError::bad_request)?;
+        if listing.providers.iter().all(|item| item.name != provider.name) {
+            listing.providers.push(provider);
+        }
+    }
+    let bound_profile = app_settings.claude_api_profile.as_deref()
+        .and_then(|id| app_settings.profiles.iter().find(|profile| profile.id == id));
+    let default_provider = bound_profile.map(|profile| format!("api-{}", profile.id)).unwrap_or_else(|| "cli".into());
+    let default_model = bound_profile.and_then(|profile| (!profile.model.trim().is_empty()).then(|| profile.model.clone()))
+        .unwrap_or_else(|| defaults.model.clone());
+    let default_reasoning_level = bound_profile.and_then(|profile| profile.reasoning_levels.first().cloned())
+        .or_else(|| defaults.reasoning_level.clone());
     Ok(Json(json!({
-        "default": "cli",
+        "default": default_provider,
         "providers": listing.providers,
-        "default_model": defaults.model,
+        "default_model": default_model,
         "cli_default_model": defaults.model,
-        "default_reasoning_level": defaults.reasoning_level,
+        "default_reasoning_level": default_reasoning_level,
         "models": defaults.models,
         "models_error": listing.warnings.join("；"),
         "reasoning_levels": claude::REASONING_LEVELS,

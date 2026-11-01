@@ -4,6 +4,9 @@ mod protocol;
 mod settings;
 mod workspace;
 
+use std::sync::Arc;
+use firefly_codex_transport::{CodexAppServer, RuntimeProvider};
+
 #[allow(unused_imports)]
 pub use models::{
     hydrate_provider_models, list_model_providers, list_official_models, ModelProvider,
@@ -20,6 +23,23 @@ pub use workspace::{
     workspace_root, WorkspaceEntry, WorkspaceListing,
 };
 pub(crate) use workspace::validate_relative_path;
+
+/// Build the Codex app-server from Firefly's database-backed API profiles.
+/// Native ~/.codex/config.toml remains available when no database profiles
+/// are configured, preserving existing installations during migration.
+pub(crate) async fn app_server() -> anyhow::Result<Arc<CodexAppServer>> {
+    let settings = crate::agent_settings::Settings::load(crate::db::pool()).await?;
+    let providers = settings.profiles.iter()
+        .filter(|profile| matches!(profile.agent.as_str(), "codex" | "shared"))
+        .map(|profile| RuntimeProvider {
+            name: format!("api-{}", profile.id),
+            base_url: profile.base_url.clone(),
+            api_key: profile.api_key.clone().unwrap_or_default(),
+            wire_api: "responses".into(),
+        })
+        .collect::<Vec<_>>();
+    firefly_codex_transport::app_server_with_providers(&providers).await
+}
 
 #[cfg(test)]
 mod tests;

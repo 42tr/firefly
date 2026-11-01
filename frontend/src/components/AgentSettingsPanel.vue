@@ -35,6 +35,16 @@ const statusKind = child => {
   return 'success'
 }
 const profileKind = item => item.model?.trim() ? 'success' : 'warning'
+const profileAgentLabel = item => ({ firefly: 'Firefly', codex: 'Codex', claude: 'Claude', shared: '共享' }[item.agent] || 'Firefly')
+const profileModelsText = item => (Array.isArray(item.models) ? item.models : []).join('\n')
+const setProfileModels = (item, value) => {
+  item.models = value.split(/\r?\n|,/).map(model => model.trim()).filter(Boolean)
+}
+const profileLevelsText = item => (Array.isArray(item.reasoning_levels) ? item.reasoning_levels : []).join(', ')
+const setProfileLevels = (item, value) => {
+  item.reasoning_levels = value.split(',').map(level => level.trim()).filter(Boolean)
+}
+const selectableProfiles = agentName => (draft.value?.profiles || []).filter(item => item.agent === agentName || item.agent === 'shared')
 const show = async () => {
   opened.value = true
   await nextTick(); dialog.value?.showModal()
@@ -60,14 +70,16 @@ const removeAgent = () => {
 }
 const addProfile = () => {
   const id = newId('model')
-  draft.value.profiles.push({ id, name: '新模型配置', base_url: 'https://api.openai.com/v1', model: '',
+  draft.value.profiles.push({ id, name: '新 API 配置', agent: 'firefly', protocol: 'responses',
+    base_url: 'https://api.openai.com/v1', model: '', models: [], reasoning_levels: [], model_discovery: 'auto',
     api_key: null, key_configured: false, context_tokens: null })
   selectedProfile.value = id
 }
 const removeProfile = () => {
   const id = selectedProfile.value
-  if (draft.value.firefly.model_profile === id || draft.value.subagents.some(item => item.model_profile === id)) {
-    error.value = '此模型配置仍被 agent 使用，请先更换对应 agent 的模型。'; return
+  if (draft.value.firefly.model_profile === id || draft.value.subagents.some(item => item.model_profile === id)
+    || draft.value.codex_api_profile === id || draft.value.claude_api_profile === id) {
+    error.value = '此 API 配置仍被 Agent 使用，请先更换对应默认绑定。'; return
   }
   draft.value.profiles = draft.value.profiles.filter(item => item.id !== id)
   selectedProfile.value = draft.value.profiles[0]?.id || ''
@@ -110,8 +122,8 @@ onBeforeUnmount(() => dialog.value?.close())
         <div class="header-title">
           <span class="header-icon" aria-hidden="true"><UiIcon name="sliders" /></span>
           <div class="header-text">
-            <h2 id="agent-settings-title">Agent 配置</h2>
-            <p>配置主助手，按需创建子 agent 并分配工具。</p>
+            <h2 id="agent-settings-title">Agent 与 API 配置</h2>
+            <p>管理 API 连接、默认模型，并按需创建子 agent。</p>
           </div>
         </div>
         <button class="button ghost small" type="button" :disabled="saving" @click="close">关闭</button>
@@ -120,7 +132,7 @@ onBeforeUnmount(() => dialog.value?.close())
         <p v-if="loading" role="status">正在读取配置…</p>
         <template v-if="draft">
           <nav class="settings-tabs" aria-label="配置分类">
-            <button v-for="entry in [['firefly', 'Firefly 主 agent'], ['children', '子 agent'], ['models', '模型配置']]" :key="entry[0]" class="tab-button" :class="{ active: tab === entry[0] }" type="button" :aria-pressed="tab === entry[0]" :disabled="busy" @click="tab = entry[0]">{{ entry[1] }}<span v-if="entry[0] === 'children'" class="count">{{ draft.subagents.length }}</span></button>
+            <button v-for="entry in [['firefly', 'Firefly 主 agent'], ['children', '子 agent'], ['models', 'API 配置']]" :key="entry[0]" class="tab-button" :class="{ active: tab === entry[0] }" type="button" :aria-pressed="tab === entry[0]" :disabled="busy" @click="tab = entry[0]">{{ entry[1] }}<span v-if="entry[0] === 'children'" class="count">{{ draft.subagents.length }}</span><span v-if="entry[0] === 'models'" class="count">{{ draft.profiles.length }}</span></button>
           </nav>
           <form id="agent-settings-form" class="settings-form" @submit.prevent="save">
             <fieldset :disabled="busy" class="settings-fields">
@@ -132,7 +144,7 @@ onBeforeUnmount(() => dialog.value?.close())
                 </aside>
                 <aside v-if="tab === 'models'" class="settings-sidebar" aria-label="模型配置列表">
                   <button class="add-entry" type="button" :disabled="draft.profiles.length >= 32" @click="addProfile">＋ 新建模型配置</button>
-                  <button v-for="item in draft.profiles" :key="item.id" class="entry-card" type="button" :aria-pressed="selectedProfile === item.id" @click="selectedProfile = item.id"><strong>{{ item.name }}</strong><span class="entry-status" :data-kind="profileKind(item)"><i aria-hidden="true"></i>{{ item.model || '待配置模型' }}</span></button>
+                  <button v-for="item in draft.profiles" :key="item.id" class="entry-card" type="button" :aria-pressed="selectedProfile === item.id" @click="selectedProfile = item.id"><strong>{{ item.name }}</strong><span class="entry-status" :data-kind="profileKind(item)"><i aria-hidden="true"></i>{{ profileAgentLabel(item) }} · {{ item.model || '待配置模型' }}</span></button>
                 </aside>
                 <section v-if="agent && tab !== 'models'" class="settings-editor" :aria-label="tab === 'firefly' ? 'Firefly 主 agent 设置' : '子 agent 设置'">
                   <div class="editor-heading"><h3>{{ tab === 'firefly' ? 'Firefly 主 agent' : agent.name }}</h3><button v-if="tab === 'children'" class="delete-entry" type="button" @click="removeAgent">删除子 agent</button></div>
@@ -147,7 +159,7 @@ onBeforeUnmount(() => dialog.value?.close())
                   <div class="section-card">
                     <div class="section-title"><h4>模型与执行</h4></div>
                     <div class="field-pair">
-                      <label>使用模型<select v-model="agent.model_profile"><option v-if="tab === 'children'" :value="null">继承 Firefly 的模型</option><option v-for="item in draft.profiles" :key="item.id" :value="item.id">{{ item.name }}{{ item.model ? ' · ' + item.model : ' · 待配置' }}</option></select></label>
+                      <label>使用模型<select v-model="agent.model_profile"><option v-if="tab === 'children'" :value="null">继承 Firefly 的模型</option><option v-for="item in selectableProfiles('firefly')" :key="item.id" :value="item.id">{{ item.name }}{{ item.model ? ' · ' + item.model : ' · 待配置' }}</option></select></label>
                       <label>执行期限（秒）<input v-model.number="agent.timeout_secs" type="number" min="1" max="604800" required /></label>
                     </div>
                   </div>
@@ -164,13 +176,30 @@ onBeforeUnmount(() => dialog.value?.close())
                     </div>
                   </div>
                 </section>
-                <section v-else-if="tab === 'models' && profile" class="settings-editor" aria-label="模型配置设置">
-                  <div class="editor-heading"><h3>{{ profile.name }}</h3><button class="delete-entry" type="button" @click="removeProfile">删除模型配置</button></div>
+                <section v-else-if="tab === 'models' && profile" class="settings-editor" aria-label="API 配置设置">
+                  <div class="editor-heading"><div><h3>{{ profile.name }}</h3><p class="editor-subtitle">{{ profileAgentLabel(profile) }} · {{ profile.protocol }}</p></div><button class="delete-entry" type="button" @click="removeProfile">删除 API 配置</button></div>
+                  <div class="section-card binding-card">
+                    <div class="section-title"><h4>Agent 默认绑定</h4><span class="field-hint">会话未单独覆盖时使用</span></div>
+                    <div class="field-pair">
+                      <label>Codex 默认 API<select v-model="draft.codex_api_profile"><option :value="null">未绑定</option><option v-for="item in selectableProfiles('codex')" :key="item.id" :value="item.id">{{ item.name }}</option></select></label>
+                      <label>Claude 默认 API<select v-model="draft.claude_api_profile"><option :value="null">未绑定</option><option v-for="item in selectableProfiles('claude')" :key="item.id" :value="item.id">{{ item.name }}</option></select></label>
+                    </div>
+                  </div>
                   <div class="section-card">
-                    <div class="section-title"><h4>连接</h4></div>
+                    <div class="section-title"><h4>连接</h4><span class="profile-chip">{{ profileAgentLabel(profile) }}</span></div>
                     <label>配置名称<input v-model="profile.name" maxlength="100" required /></label>
-                    <label>服务地址<input v-model.trim="profile.base_url" aria-label="服务地址" type="url" maxlength="2048" required placeholder="https://api.openai.com/v1" /><small>使用支持 Responses API 的模型服务。</small></label>
-                    <label>模型名称<input v-model.trim="profile.model" maxlength="256" placeholder="填写服务支持的模型名称" /></label>
+                    <div class="field-pair">
+                      <label>服务 Agent<select v-model="profile.agent"><option value="firefly">Firefly</option><option value="codex">Codex</option><option value="claude">Claude</option><option value="shared">共享</option></select></label>
+                      <label>协议<select v-model="profile.protocol"><option value="responses">Responses API</option><option value="openai">OpenAI 兼容</option><option value="anthropic">Anthropic 兼容</option></select></label>
+                    </div>
+                    <label>服务地址<input v-model.trim="profile.base_url" aria-label="服务地址" type="url" maxlength="2048" required placeholder="https://api.openai.com/v1" /><small>只填写不含密钥、查询参数和片段的 HTTP(S) 地址。</small></label>
+                  </div>
+                  <div class="section-card">
+                    <div class="section-title"><h4>模型目录</h4><label class="check inline-check"><input v-model="profile.model_discovery" true-value="auto" false-value="manual" type="checkbox" /><span>允许自动读取</span></label></div>
+                    <label>默认模型<input v-model.trim="profile.model" maxlength="256" placeholder="例如 k3.1-pro" /></label>
+                    <label>可选模型（每行一个）<textarea :value="profileModelsText(profile)" rows="4" placeholder="模型 ID；没有目录接口时可手动填写" @input="setProfileModels(profile, $event.target.value)"></textarea></label>
+                    <label>推理级别（英文逗号分隔）<input :value="profileLevelsText(profile)" placeholder="low, high, max" @input="setProfileLevels(profile, $event.target.value)" /></label>
+                    <p class="field-hint">模型列表用于页面选择；实际可用性仍以服务端权限和响应为准。</p>
                   </div>
                   <div class="section-card">
                     <div class="section-title"><h4>认证</h4></div>
@@ -182,7 +211,7 @@ onBeforeUnmount(() => dialog.value?.close())
                     <label>输入预算<input v-model.number="profile.context_tokens" aria-label="输入预算" type="number" min="1024" max="100000000" placeholder="留空自动查询模型上下文窗口" /><small>查询失败时可填写显式预算作为兜底。</small></label>
                   </div>
                 </section>
-                <section v-else-if="tab === 'children' || tab === 'models'" class="settings-editor"><div class="empty-editor">{{ tab === 'children' ? '从左侧选择一个子 agent，或点击“＋ 新建子 agent”开始配置。' : '从左侧选择一个模型配置，或点击“＋ 新建模型配置”。' }}</div></section>
+                <section v-else-if="tab === 'children' || tab === 'models'" class="settings-editor"><div class="empty-editor">{{ tab === 'children' ? '从左侧选择一个子 agent，或点击“＋ 新建子 agent”开始配置。' : '从左侧选择一个 API 配置，或点击“＋ 新建 API 配置”。' }}</div></section>
               </div>
             </fieldset>
           </form>
@@ -249,11 +278,14 @@ onBeforeUnmount(() => dialog.value?.close())
 .settings-editor { display: flex; flex-direction: column; gap: 16px; min-width: 0; min-height: 0; padding: 0 2px; overflow-y: auto; }
 .editor-heading { position: sticky; top: 0; z-index: 2; display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 4px 2px 10px; background: var(--bg-body); box-shadow: 0 1px 0 var(--border-soft); }
 .editor-heading h3 { margin: 0; font-size: 16px; font-weight: 600; }
+.editor-subtitle { margin: 4px 0 0; color: var(--muted); font-size: 12px; }
 .delete-entry { min-height: 32px; padding: 5px 13px; border: 1px solid transparent; border-radius: 999px; background: transparent; color: var(--danger); font: inherit; font-size: 13px; cursor: pointer; transition: background .18s var(--ease-out), border-color .18s var(--ease-out); }
 .delete-entry:hover { background: rgba(220, 38, 38, .08); border-color: rgba(220, 38, 38, .22); }
 .section-card { display: flex; flex-direction: column; gap: 14px; padding: 18px; border: 1px solid var(--border-soft); border-radius: var(--radius); background: var(--bg-panel); box-shadow: var(--shadow-xs); }
+.binding-card { background: var(--accent-soft); }
 .section-title { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
 .section-title h4, .tools-heading h4 { margin: 0; font-size: 13px; font-weight: 600; color: var(--text-secondary); letter-spacing: .02em; }
+.profile-chip { padding: 3px 9px; border-radius: 999px; background: var(--bg-hover); color: var(--muted); font-size: 11px; }
 .tools-heading { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 10px; }
 .tools-actions { display: flex; align-items: center; gap: 8px; }
 .settings-editor input.tool-filter { width: 150px; padding: 6px 10px; font-size: 12px; }
@@ -273,6 +305,7 @@ textarea { resize: vertical; line-height: 1.65; }
 
 /* 启用开关：保留原生 checkbox 语义，绘制为开关 */
 .settings-editor .check { flex-direction: row; align-items: center; gap: 10px; color: var(--text-primary); cursor: pointer; }
+.settings-editor .inline-check { flex-shrink: 0; font-size: 12px; font-weight: 400; }
 .check input[type="checkbox"] { appearance: none; -webkit-appearance: none; position: relative; width: 38px; height: 22px; margin: 0; flex-shrink: 0; border: 1px solid var(--accent-border); border-radius: 999px; background: var(--bg-hover); cursor: pointer; transition: background .2s var(--ease-out), border-color .2s var(--ease-out); }
 .check input[type="checkbox"]::after { content: ''; position: absolute; top: 2px; left: 2px; width: 16px; height: 16px; border-radius: 50%; background: #fff; box-shadow: var(--shadow-xs); transition: transform .22s var(--ease-spring); }
 .check input[type="checkbox"]:checked { background: var(--accent); border-color: var(--accent); }

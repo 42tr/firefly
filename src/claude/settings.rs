@@ -22,6 +22,15 @@ const MODEL_ENV_KEYS: &[&str] = &[
     "ANTHROPIC_CUSTOM_MODEL_OPTION",
 ];
 
+/// Kimi Code's K3.1 Pro variants reject requests when Claude Code disables
+/// thinking. Keep this model check local to the Claude adapter so API profile
+/// defaults and native provider files get the same behavior.
+pub(crate) fn default_reasoning_level_for_model(model: &str) -> Option<String> {
+    let model = model.trim().to_ascii_lowercase();
+    let model = model.split('[').next().unwrap_or(&model);
+    matches!(model, "k3.1-pro" | "k3.1-pro-highspeed").then(|| "high".into())
+}
+
 /// Native Claude settings are private: only an explicit projection reaches the API.
 #[derive(Clone)]
 pub struct NativeSettings(Value);
@@ -284,7 +293,52 @@ fn read_provider(root: &Path, name: &str) -> anyhow::Result<ClaudeProvider> {
         base_url,
         models: settings.models(),
         default_model: settings.model(None),
-        default_reasoning_level: settings.reasoning_level(),
+        default_reasoning_level: settings.reasoning_level().or_else(|| {
+            settings
+                .model(None)
+                .and_then(|model| default_reasoning_level_for_model(&model))
+        }),
+        settings,
+    })
+}
+
+/// Build a native Claude provider snapshot from Firefly's database-backed API
+/// profile. This keeps the CLI invocation independent from ~/.claude files.
+pub(crate) fn provider_from_model_profile(
+    profile: &crate::agent_settings::ModelProfile,
+) -> anyhow::Result<ClaudeProvider> {
+    let base_url = profile.base_url.trim().to_owned();
+    let url = reqwest::Url::parse(&base_url).map_err(|_| anyhow!("Claude API 地址无效"))?;
+    ensure!(
+        matches!(url.scheme(), "https" | "http")
+            && url.host_str().is_some()
+            && url.username().is_empty()
+            && url.password().is_none()
+            && url.query().is_none()
+            && url.fragment().is_none(),
+        "Claude API 地址须为无凭据的 HTTP(S) 地址"
+    );
+    let mut env = serde_json::Map::new();
+    env.insert("ANTHROPIC_BASE_URL".into(), base_url.clone().into());
+    env.insert(
+        "ANTHROPIC_API_KEY".into(),
+        profile.api_key.clone().unwrap_or_default().into(),
+    );
+    let settings = NativeSettings(serde_json::json!({
+        "model": profile.model,
+        "availableModels": profile.models,
+        "env": env,
+    }));
+    Ok(ClaudeProvider {
+        name: format!("api-{}", profile.id),
+        base_url: Some(base_url),
+        models: profile.models.clone(),
+        default_model: (!profile.model.trim().is_empty()).then(|| profile.model.clone()),
+        default_reasoning_level: profile
+            .reasoning_levels
+            .first()
+            .cloned()
+            .or_else(|| default_reasoning_level_for_model(&profile.model)),
         settings,
     })
 }
@@ -344,7 +398,15 @@ pub fn normalize_provider(provider: Option<String>) -> anyhow::Result<Option<Str
         provider.as_deref().is_none_or(valid_name),
         "Claude 平台名称格式无效"
     );
-    resolve_provider(provider.as_deref())?;
+    // `api-*` names are Firefly database-backed profiles. They are resolved
+    // by the generation layer and intentionally do not require a native
+    // ~/.claude/providers file.
+    if !provider
+        .as_deref()
+        .is_some_and(|name| name.starts_with("api-"))
+    {
+        resolve_provider(provider.as_deref())?;
+    }
     Ok(provider)
 }
 
@@ -385,6 +447,20 @@ pub fn configure_command(
     profile: Option<&ClaudeProvider>,
     reasoning_level: Option<&str>,
 ) -> anyhow::Result<Option<tempfile::NamedTempFile>> {
+    let selected_model = profile.and_then(|profile| profile.default_model.as_deref());
+    configure_command_for_model(command, profile, selected_model, reasoning_level)
+}
+
+/// Compose one native settings snapshot for a turn and fill model aliases
+/// that Claude Code uses for background and sub-agent requests when a
+/// provider does not define them itself. Kimi Code's Anthropic endpoint does
+/// not recognize Claude's default tier model names.
+pub(crate) fn configure_command_for_model(
+    command: &mut Command,
+    profile: Option<&ClaudeProvider>,
+    selected_model: Option<&str>,
+    reasoning_level: Option<&str>,
+) -> anyhow::Result<Option<tempfile::NamedTempFile>> {
     use std::io::Write;
     let mut settings = profile
         .map(|profile| profile.settings.0.clone())
@@ -419,6 +495,30 @@ pub fn configure_command(
         env.insert("CLAUDE_CODE_EFFORT_LEVEL".into(), "".into());
         if let Some(native_env) = profile.settings.0.get("env").and_then(Value::as_object) {
             env.extend(native_env.clone());
+        }
+        if let Some(model) = selected_model
+            .map(str::trim)
+            .filter(|model| !model.is_empty() && *model != "default")
+        {
+            // Preserve explicit native tier mappings. API profiles do not
+            // have a native settings file, so populate every Claude Code
+            // model slot with the selected provider model.
+            for key in [
+                "ANTHROPIC_MODEL",
+                "ANTHROPIC_DEFAULT_OPUS_MODEL",
+                "ANTHROPIC_DEFAULT_SONNET_MODEL",
+                "ANTHROPIC_DEFAULT_HAIKU_MODEL",
+                "ANTHROPIC_DEFAULT_FABLE_MODEL",
+                "CLAUDE_CODE_SUBAGENT_MODEL",
+            ] {
+                if env
+                    .get(key)
+                    .and_then(Value::as_str)
+                    .is_none_or(str::is_empty)
+                {
+                    env.insert(key.into(), model.into());
+                }
+            }
         }
         if settings.get("apiKeyHelper").is_none() {
             settings["apiKeyHelper"] = "".into();

@@ -61,6 +61,9 @@ fn validate_codex_selection(provider: Option<&str>, model: Option<&str>) -> Resu
         return Err(AppError::bad_request("平台或模型名称过长"));
     }
     let Some(provider) = provider.filter(|provider| *provider != "openai") else { return Ok(()) };
+    if provider.starts_with("api-") {
+        return Ok(());
+    }
     let listing = codex::list_model_providers();
     let known = listing.providers.iter().find(|item| item.name == provider)
         .ok_or_else(|| AppError::bad_request(format!("未知的 Codex API 平台: {provider}")))?;
