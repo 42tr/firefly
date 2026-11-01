@@ -150,6 +150,11 @@ impl Settings {
         if let Some((revision, settings)) = row {
             let mut settings: Self = serde_json::from_str(&settings)?;
             settings.revision = revision;
+            // Older releases stored the Kimi Claude profile in the generic
+            // model slot before Claude API profiles had an explicit agent and
+            // protocol. Keep those installations usable after the schema
+            // gained the new fields.
+            settings.migrate_legacy_claude_profiles();
             return Ok(settings);
         }
         let mut defaults = Self::defaults();
@@ -171,7 +176,86 @@ impl Settings {
                 .await?;
         let mut settings: Self = serde_json::from_str(&stored)?;
         settings.revision = revision;
+        settings.migrate_legacy_claude_profiles();
         Ok(settings)
+    }
+
+    /// Upgrade the legacy Kimi Code profile shape in memory. The migration is
+    /// intentionally narrow: only the Kimi coding endpoint with a K3.1 Pro
+    /// model is migrated, so unrelated Responses profiles keep their old
+    /// behavior. A later settings save persists the normalized fields.
+    pub(crate) fn migrate_legacy_claude_profiles(&mut self) -> bool {
+        let legacy_indices: Vec<_> = self
+            .profiles
+            .iter()
+            .enumerate()
+            .filter_map(|(index, profile)| {
+                let base_url = profile.base_url.to_ascii_lowercase();
+                let model = profile.model.trim().to_ascii_lowercase();
+                (profile.agent == "firefly"
+                    && profile.protocol == "responses"
+                    && base_url.contains("kimi")
+                    && base_url.contains("/coding")
+                    && (model == "k3.1-pro" || model == "k3.1-pro-highspeed"))
+                .then_some(index)
+            })
+            .collect();
+        let mut migrated = false;
+        for index in legacy_indices {
+            let original = self.profiles[index].clone();
+            let mut profile = original.clone();
+            profile.agent = "claude".into();
+            profile.protocol = "anthropic".into();
+            if profile.models.is_empty() && !profile.model.trim().is_empty() {
+                profile.models.push(profile.model.trim().into());
+            }
+            if profile.reasoning_levels.is_empty() {
+                profile.reasoning_levels = vec!["low".into(), "high".into(), "max".into()];
+            }
+            if profile.model_discovery.is_empty() {
+                profile.model_discovery = "manual".into();
+            }
+
+            // The old profile may still be selected by Firefly. Keep it as a
+            // Responses profile and create a separate Claude profile rather
+            // than changing the runtime of the existing Firefly agent.
+            let used_by_firefly = self.firefly.model_profile.as_deref() == Some(original.id.as_str())
+                || self
+                    .subagents
+                    .iter()
+                    .any(|agent| agent.model_profile.as_deref() == Some(original.id.as_str()));
+            if used_by_firefly {
+                let mut id = original.name.trim().to_ascii_lowercase();
+                id.retain(|value| {
+                    value.is_ascii_lowercase() || value.is_ascii_digit() || matches!(value, '_' | '-')
+                });
+                if !valid_id(&id) || self.profiles.iter().any(|item| item.id == id) {
+                    id = format!("claude-{}", original.id);
+                }
+                let base_id = id.clone();
+                let mut suffix = 2;
+                while self.profiles.iter().any(|item| item.id == id) {
+                    id = format!("{}-{}", base_id, suffix);
+                    suffix += 1;
+                }
+                profile.id = id;
+                self.profiles.push(profile);
+            } else {
+                self.profiles[index] = profile;
+            }
+            migrated = true;
+        }
+        if self.claude_api_profile.is_none() {
+            if let Some(profile) = self
+                .profiles
+                .iter()
+                .find(|profile| profile.agent == "claude" && profile.protocol == "anthropic")
+            {
+                self.claude_api_profile = Some(profile.id.clone());
+                migrated = true;
+            }
+        }
+        migrated
     }
 
     pub fn public(&self) -> Value {

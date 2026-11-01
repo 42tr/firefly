@@ -103,6 +103,22 @@ pub async fn claude_models(_auth_user: Session) -> Result<Json<Value>, AppError>
         if listing.providers.iter().all(|item| item.name != provider.name) {
             listing.providers.push(provider);
         }
+        // Older Claude conversations stored the profile name (for example
+        // `kimi`) before API profiles received their `api-*` provider ID.
+        // Replace an equally named native entry so those conversations see
+        // the migrated API profile and its complete model catalog.
+        let api_name = format!("api-{}", profile.id);
+        let legacy_name = profile.name.trim();
+        if !legacy_name.is_empty() && legacy_name != api_name {
+            let mut alias = claude::provider_from_model_profile(profile)
+                .map_err(AppError::bad_request)?;
+            alias.name = legacy_name.to_owned();
+            if let Some(existing) = listing.providers.iter_mut().find(|item| item.name == legacy_name) {
+                *existing = alias;
+            } else {
+                listing.providers.push(alias);
+            }
+        }
     }
     let bound_profile = app_settings.claude_api_profile.as_deref()
         .and_then(|id| app_settings.profiles.iter().find(|profile| profile.id == id));

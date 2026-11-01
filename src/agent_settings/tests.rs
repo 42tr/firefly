@@ -100,6 +100,35 @@ fn database_api_profiles_validate_agent_bindings_and_protocols() {
     assert!(settings.validate().is_err());
 }
 
+#[test]
+fn legacy_kimi_profile_is_migrated_to_claude_without_touching_other_profiles() {
+    let mut settings = Settings::defaults();
+    settings.profiles[0].name = "kimi".into();
+    settings.profiles[0].base_url = "https://api.kimi.com/coding/v1".into();
+    settings.profiles[0].model = "k3.1-pro".into();
+    assert!(settings.claude_api_profile.is_none());
+
+    assert!(settings.migrate_legacy_claude_profiles());
+    let profile = settings
+        .profiles
+        .iter()
+        .find(|profile| profile.agent == "claude")
+        .unwrap();
+    assert_eq!(profile.id, "kimi");
+    assert_eq!(profile.protocol, "anthropic");
+    assert_eq!(profile.models, vec!["k3.1-pro"]);
+    assert_eq!(profile.reasoning_levels, vec!["low", "high", "max"]);
+    assert_eq!(settings.profiles[0].agent, "firefly");
+    assert_eq!(settings.claude_api_profile.as_deref(), Some("kimi"));
+
+    let mut unrelated = Settings::defaults();
+    unrelated.profiles[0].base_url = "https://api.example.com/v1".into();
+    unrelated.profiles[0].model = "k3.1-pro".into();
+    assert!(!unrelated.migrate_legacy_claude_profiles());
+    assert_eq!(unrelated.profiles[0].agent, "firefly");
+    assert_eq!(unrelated.profiles[0].protocol, "responses");
+}
+
 #[tokio::test]
 async fn saved_revisions_reload_without_restart_and_keys_never_leave_public_views() {
     let pool = crate::db::test_pool().await;

@@ -35,7 +35,15 @@ pub(in crate::api::assistant) async fn run_claude_turn(
     let settings = agent_settings::Settings::load(crate::db::pool()).await?;
     let profile_id = match record.claude_provider.as_deref() {
         Some(provider) if provider.starts_with("api-") => Some(provider.trim_start_matches("api-")),
-        Some(_) => None,
+        Some(provider) => settings
+            .profiles
+            .iter()
+            .find(|profile| {
+                (profile.id == provider || profile.name == provider)
+                    && profile.agent == "claude"
+                    && profile.protocol == "anthropic"
+            })
+            .map(|profile| profile.id.as_str()),
         None => settings.claude_api_profile.as_deref(),
     };
     let profile = profile_id.and_then(|id| settings.profiles.iter().find(|profile| profile.id == id));
