@@ -1,7 +1,16 @@
+function stripLineSuffix(value) {
+  // Agents commonly cite source files as `path:line` or `path:line:column`.
+  // The file endpoint receives only a path, so keep the location out of the
+  // query instead of treating it as part of the filename.
+  return String(value).replace(/:\d+(?::\d+)?$/, '')
+}
+
 function stripWorkspacePrefix(value) {
-  const match = String(value).match(/(?:^|\/)workspace(?:\/|$)/)
+  const input = stripLineSuffix(value)
+  const matches = [...input.matchAll(/(?:^|\/)workspace(?:\/|$)/g)]
+  const match = matches.at(-1)
   if (!match) return null
-  return String(value).slice(match.index + match[0].length).replace(/^\/+/, '')
+  return input.slice(match.index + match[0].length).replace(/^\/+/, '')
 }
 
 function normalizeWorkspaceEndpoint(path) {
@@ -13,8 +22,9 @@ function normalizeWorkspaceEndpoint(path) {
     url = new URL(path, 'http://workspace.local')
   } catch { return null }
   if (url.pathname !== endpoint) return null
-  const relative = stripWorkspacePrefix(url.searchParams.get('path') || '')
-  if (relative === null || !relative) return null
+  const queryPath = stripLineSuffix(url.searchParams.get('path') || '')
+  const relative = stripWorkspacePrefix(queryPath) ?? queryPath
+  if (!relative) return null
   url.searchParams.set('path', relative)
   return absolute ? url.toString() : `${url.pathname}${url.search}${url.hash}`
 }
@@ -35,6 +45,7 @@ export function workspaceFileUrl(path, { cwd = '' } = {}) {
       decoded = decodeURIComponent(path.replace(/^sandbox:/, ''))
     }
   } catch { return '' }
+  decoded = stripLineSuffix(decoded)
   if (!decoded || decoded.startsWith('//') || /^[a-z][a-z\d+.-]*:/i.test(decoded)) return ''
   // 上传附件由本机保存；UUID 文件没有扩展名。
   const upload = decoded.match(/(?:^|\/)assistant_uploads\/([\da-f]{8}-[\da-f]{4}-[\da-f]{4}-[\da-f]{4}-[\da-f]{12})$/i)

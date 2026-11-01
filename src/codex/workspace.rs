@@ -90,19 +90,38 @@ pub async fn create_workspace_directory(parent: Option<&str>, name: &str) -> any
     Ok(WorkspaceEntry { name: name.to_string(), path: child_path })
 }
 
+fn strip_line_suffix(path: &str) -> &str {
+    let file_start = path.rfind('/').map(|index| index + 1).unwrap_or(0);
+    let mut end = path.len();
+    let mut suffixes = 0;
+    for index in (file_start..path.len()).rev() {
+        if path.as_bytes()[index] != b':' {
+            continue;
+        }
+        let suffix = &path[index + 1..end];
+        if suffix.is_empty() || !suffix.bytes().all(|byte| byte.is_ascii_digit()) {
+            break;
+        }
+        end = index;
+        suffixes += 1;
+        if suffixes == 2 {
+            break;
+        }
+    }
+    if suffixes == 0 { path } else { &path[..end] }
+}
+
 fn strip_workspace_prefix(path: &str) -> Option<&str> {
     let marker = "workspace/";
-    let index = path.find(marker)?;
-    if index > 0 && !path.as_bytes().get(index - 1).is_some_and(|byte| *byte == b'/') {
-        return None;
-    }
+    let (index, _) = path.rmatch_indices(marker)
+        .find(|(index, _)| *index == 0 || path.as_bytes().get(index - 1) == Some(&b'/'))?;
     let relative = &path[index + marker.len()..];
     (!relative.is_empty()).then_some(relative)
 }
 
 pub async fn resolve_workspace_file(path: &str) -> anyhow::Result<(PathBuf, String)> {
     let root = workspace_root().await?;
-    let relative = path.trim();
+    let relative = strip_line_suffix(path.trim());
     if relative.is_empty() {
         return Err(anyhow!("文件路径不能为空"));
     }
@@ -139,12 +158,23 @@ pub async fn resolve_workspace_file(path: &str) -> anyhow::Result<(PathBuf, Stri
 
 #[cfg(test)]
 mod tests {
-    use super::strip_workspace_prefix;
+    use super::{strip_line_suffix, strip_workspace_prefix};
 
     #[test]
     fn strips_repository_workspace_prefix_from_compatibility_paths() {
         assert_eq!(strip_workspace_prefix("firefly/workspace/esp43/esp32-science.html"), Some("esp43/esp32-science.html"));
         assert_eq!(strip_workspace_prefix("workspace/esp43/esp32-science.html"), Some("esp43/esp32-science.html"));
+        assert_eq!(
+            strip_workspace_prefix("firefly/workspace/firefly/workspace/firefly/frontend/src/components/MemoryDialog.vue"),
+            Some("firefly/frontend/src/components/MemoryDialog.vue"),
+        );
         assert_eq!(strip_workspace_prefix("someworkspace/esp43.html"), None);
+    }
+
+    #[test]
+    fn strips_source_location_suffixes() {
+        assert_eq!(strip_line_suffix("frontend/src/App.vue:1"), "frontend/src/App.vue");
+        assert_eq!(strip_line_suffix("frontend/src/App.vue:1:5"), "frontend/src/App.vue");
+        assert_eq!(strip_line_suffix("frontend/src/App.vue"), "frontend/src/App.vue");
     }
 }

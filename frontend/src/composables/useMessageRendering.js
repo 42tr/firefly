@@ -155,7 +155,8 @@ export function useMessageRendering({ activeConversation, isStreaming, imagePrev
       if (!markerMatch) return
       const relativePath = pathname.slice(markerMatch.index + markerMatch[0].length).replace(/^\/+/, '')
       if (!relativePath || relativePath.endsWith('/')) return
-      const rewritten = `/api/assistant/workspace/file?path=${encodeURIComponent(relativePath)}`
+      const rewritten = workspaceUrl(pathname)
+      if (!rewritten) return
       anchor.setAttribute('href', rewritten)
       replaceVideoLink(anchor, rewritten, relativePath)
     })

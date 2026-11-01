@@ -31,6 +31,10 @@ test('workspace images preserve local relative paths', () => {
   assert.equal(params(workspaceFileUrl('/disk/workspace/project/a.png')).get('path'), 'project/a.png')
   assert.equal(params(workspaceFileUrl('firefly/workspace/project/a.png')).get('path'), 'project/a.png')
   assert.equal(params(workspaceFileUrl('workspace/project/a.png')).get('path'), 'project/a.png')
+  assert.equal(
+    params(workspaceFileUrl('firefly/workspace/firefly/workspace/firefly/frontend/src/components/MemoryDialog.vue:1')).get('path'),
+    'firefly/frontend/src/components/MemoryDialog.vue',
+  )
   assert.equal(params(workspaceFileUrl('./output/a.png', { cwd: 'project' })).get('path'), 'project/output/a.png')
   assert.equal(params(workspaceFileUrl('./output/a.png', { cwd: 'firefly/workspace' })).get('path'), 'output/a.png')
 })
@@ -40,6 +44,12 @@ test('workspace download URLs remove repository prefixes from their query path',
   const output = workspaceFileUrl(input)
   assert.equal(params(output).get('path'), 'esp43/esp32-science.html')
   assert.equal(output.startsWith('http://ap.42tr.cn:59008/api/assistant/workspace/file?'), true)
+
+  const cited = 'http://ap.42tr.cn:59008/api/assistant/workspace/file?path=firefly%2Fworkspace%2Ffirefly%2Fworkspace%2Ffirefly%2Ffrontend%2Fsrc%2Fcomponents%2FMemoryDialog.vue%3A1'
+  assert.equal(params(workspaceFileUrl(cited)).get('path'), 'firefly/frontend/src/components/MemoryDialog.vue')
+
+  const citedRelative = '/api/assistant/workspace/file?path=frontend%2Fsrc%2FApp.vue%3A1'
+  assert.equal(params(workspaceFileUrl(citedRelative)).get('path'), 'frontend/src/App.vue')
 })
 
 test('browser URLs are preserved and malformed or unsupported protocols are rejected', () => {
