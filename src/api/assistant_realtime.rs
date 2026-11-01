@@ -24,11 +24,13 @@ enum Topic {
     Firefly,
     ActiveGeneration,
     Process,
+    Memories,
 }
 impl Topic {
     fn domain(&self) -> &'static str {
         match self {
             Self::Conversations | Self::Firefly | Self::ActiveGeneration | Self::Process => "conversations",
+            Self::Memories => "memories",
         }
     }
     fn affected_by(&self, domain: &str) -> bool {
@@ -100,6 +102,7 @@ async fn snapshot(user_id: &str, topic: &Topic, params: Value) -> Result<Value, 
                 .await?
                 .0,
             )?,
+            Topic::Memories => serde_json::to_value(super::assistant::list_memories(user()).await?.0)?,
         })
     }
     .await;
@@ -273,6 +276,8 @@ mod tests {
     fn subscription_protocol_is_bounded_to_supported_read_topics() {
         assert!(serde_json::from_value::<Command>(json!({"type":"subscribe", "id":"a", "topic":"conversations", "params":{}}))
             .is_ok());
+        assert!(serde_json::from_value::<Command>(json!({"type":"subscribe", "id":"a", "topic":"memories", "params":{}}))
+            .is_ok());
         for command in [
             json!({"type":"subscribe", "id":"a", "topic":"actions", "params":{}}),
             json!({"type":"subscribe", "id":"a", "topic":"metrics_traffic", "params":{}}),
@@ -288,6 +293,8 @@ mod tests {
         }
         assert!(Topic::ActiveGeneration.affected_by("conversations"));
         assert!(Topic::Process.affected_by("conversations"));
+        assert!(Topic::Memories.affected_by("memories"));
+        assert!(!Topic::Memories.affected_by("conversations"));
         assert!(!Topic::Process.affected_by("modules"));
         assert!(!assistant_events::Change { user_id: Some("owner".into()), domain: "conversations" }.visible_to("other"));
     }

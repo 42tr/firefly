@@ -74,6 +74,7 @@ const newConversationPreset = ref(null)
 const pendingConversation = ref(null)
 const showScheduleDialog = ref(false)
 const showMemoryDialog = ref(false)
+const pendingMemoryCount = ref(0)
 const showModelSettings = ref(false)
 const closeSidebar = () => { sidebarOpen.value = false }
 const handleSidebarKeydown = (event) => {
@@ -307,6 +308,9 @@ let conversationSelectionToken = 0
 useRealtimeSubscription('conversations', conversationQuery, applyConversations, { enabled: isReady })
 useRealtimeSubscription('conversations', archivedConversationQuery, applyArchivedConversations,
   { enabled: computed(() => isReady.value && showingArchivedConversations.value) })
+useRealtimeSubscription('memories', {}, data => {
+  pendingMemoryCount.value = (data?.pending_memories || []).length
+}, { enabled: isReady })
 
 const {
   messages,
@@ -853,7 +857,7 @@ onMounted(() => {
             <ConversationContext v-else :title="activeConversationTitle" :agent="activeConversation?.agent" :agent-label="activeModelLabel || activeAgentName" :workspace="activeWorkspaceDisplay" :workspace-label="activeWorkspaceLabel" />
             <div class="toolbar-actions">
               <button v-if="!pendingConversation && ['codex', 'claude'].includes(activeConversation?.agent)" class="button ghost icon" data-icon-motion="sliders" type="button" title="模型设置" aria-label="模型设置" :disabled="isArchivedConversation || isSwitchingConversation" @click="showModelSettings = true"><UiIcon name="sliders" /></button>
-              <FireflyMoreMenu @module-open="modulePageOpen = $event" :memory-open="showMemoryDialog" :schedules-open="showScheduleDialog" :files-open="showWorkspaceFiles" :show-files="!pendingConversation && ['codex', 'claude'].includes(activeConversation?.agent)" :files-disabled="activeConversation?.workspace_mode === 'parallel' && activeConversation?.workspace_state !== 'ready'" @open-memory="showMemoryDialog = true" @open-schedules="showScheduleDialog = true" @open-files="showWorkspaceFiles = true">
+              <FireflyMoreMenu @module-open="modulePageOpen = $event" :memory-open="showMemoryDialog" :memory-pending-count="pendingMemoryCount" :schedules-open="showScheduleDialog" :files-open="showWorkspaceFiles" :show-files="!pendingConversation && ['codex', 'claude'].includes(activeConversation?.agent)" :files-disabled="activeConversation?.workspace_mode === 'parallel' && activeConversation?.workspace_state !== 'ready'" @open-memory="showMemoryDialog = true" @open-schedules="showScheduleDialog = true" @open-files="showWorkspaceFiles = true">
               </FireflyMoreMenu>
             </div>
           </div>
@@ -1016,7 +1020,7 @@ onMounted(() => {
         </div>
       </div>
       <ModelSettingsDialog :open="showModelSettings" :conversation="activeConversation" @close="showModelSettings = false" @saved="handleModelSettingsSaved" />
-      <MemoryDialog :open="showMemoryDialog" @close="showMemoryDialog = false" />
+      <MemoryDialog :open="showMemoryDialog" :pending-count="pendingMemoryCount" @pending-count="pendingMemoryCount = $event" @close="showMemoryDialog = false" />
       <ScheduleDialog :open="showScheduleDialog" @close="showScheduleDialog = false" @open-conversation="openScheduledConversation" />
       <ImagePreview ref="imagePreview" />
       <WorkspaceFiles :open="showWorkspaceFiles" :conversation="activeConversation" @close="showWorkspaceFiles = false" />

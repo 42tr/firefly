@@ -1,15 +1,15 @@
-//! 长期记忆：手动维护或由 Firefly 自动补充，按相关性注入 system prompt。
+//! 长期记忆：手动维护或由 Firefly 提议后经用户确认，按相关性注入 system prompt。
 
 use chrono::{DateTime, Utc};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use sqlx::{query, query_as, FromRow};
 
 use crate::db;
 
-#[derive(Debug, Clone, Serialize, FromRow)]
+#[derive(Debug, Clone, Serialize, Deserialize, FromRow)]
 pub struct MemoryRecord {
     pub id: i64,
-    #[serde(skip_serializing)]
+    #[serde(default, skip_serializing)]
     pub user_id: String,
     pub title: String,
     pub content: String,
@@ -28,6 +28,20 @@ pub struct MemoryReviewJob {
     pub user_id: String,
     pub final_message_id: i64,
     pub attempts: i64,
+}
+
+#[derive(Debug, Clone, Serialize, FromRow)]
+pub struct PendingMemoryRecord {
+    pub id: i64,
+    pub generation_job_id: uuid::Uuid,
+    pub memory_id: Option<i64>,
+    pub title: String,
+    pub content: String,
+    pub evidence: String,
+    #[sqlx(try_from = "crate::db::Timestamp")]
+    pub created_at: DateTime<Utc>,
+    #[sqlx(try_from = "crate::db::Timestamp")]
+    pub updated_at: DateTime<Utc>,
 }
 
 // Memory SQL also interpolates only fixed columns, with all values bound separately.
@@ -127,8 +141,29 @@ pub async fn apply_reviewed_memories(
     apply_reviewed_memories_for_turn(user_id, changes, checked, None).await
 }
 
+#[cfg(test)]
 pub async fn apply_reviewed_memories_for_turn(
     user_id: &str, changes: &[ReviewedMemoryChange], checked: &[MemoryRecord],
+    anchor: Option<(uuid::Uuid, i64)>,
+) -> anyhow::Result<Option<Vec<MemoryRecord>>> {
+    let mut tx = db::pool().begin_with("BEGIN IMMEDIATE").await?;
+    let saved = apply_reviewed_memories_tx(&mut *tx, user_id, changes, checked, anchor).await?;
+    if saved.is_some() {
+        tx.commit().await?;
+        if !changes.is_empty() {
+            crate::assistant_events::notify(Some(user_id), "memories");
+        }
+    } else {
+        tx.rollback().await?;
+    }
+    Ok(saved)
+}
+
+async fn apply_reviewed_memories_tx(
+    tx: &mut sqlx::SqliteConnection,
+    user_id: &str,
+    changes: &[ReviewedMemoryChange],
+    checked: &[MemoryRecord],
     anchor: Option<(uuid::Uuid, i64)>,
 ) -> anyhow::Result<Option<Vec<MemoryRecord>>> {
     anyhow::ensure!(
@@ -139,14 +174,13 @@ pub async fn apply_reviewed_memories_for_turn(
         validate_agent_memory(&change.title, &change.content)?;
         anyhow::ensure!(!change.evidence.trim().is_empty(), "missing memory evidence");
     }
-    let mut tx = db::pool().begin_with("BEGIN IMMEDIATE").await?;
     if let Some((job_id, final_message_id)) = anchor {
         let exists: bool = sqlx::query_scalar("SELECT EXISTS(SELECT 1 FROM assistant_memory_jobs p
             JOIN assistant_generation_jobs j ON j.id=p.generation_job_id
             WHERE p.generation_job_id=?1 AND p.final_message_id=?2 AND p.user_id=?3
                 AND p.status='running' AND j.status='completed')")
             .bind(job_id).bind(final_message_id).bind(user_id).fetch_one(&mut *tx).await?;
-        anyhow::ensure!(exists,"记忆后处理所属回合已删除或结束");
+        anyhow::ensure!(exists, "记忆后处理所属回合已删除或结束");
     }
     let sql = format!(
         "SELECT {} FROM assistant_memories WHERE user_id = ?1 ORDER BY updated_at DESC",
@@ -156,20 +190,8 @@ pub async fn apply_reviewed_memories_for_turn(
         .bind(user_id)
         .fetch_all(&mut *tx)
         .await?;
-    let unchanged = current.len() == checked.len()
-        && current.iter().all(|memory| {
-            checked.iter().any(|old| {
-                memory.id == old.id
-                    && memory.user_id == old.user_id
-                    && memory.title == old.title
-                    && memory.content == old.content
-                    && memory.enabled == old.enabled
-                    && memory.source == old.source
-                    && memory.updated_at == old.updated_at
-            })
-        });
+    let unchanged = memory_snapshots_match(&current, checked);
     if !unchanged {
-        tx.rollback().await?;
         return Ok(None);
     }
     let mut ids = std::collections::HashSet::new();
@@ -243,8 +265,21 @@ pub async fn apply_reviewed_memories_for_turn(
             WHERE generation_job_id=?1 AND final_message_id=?2 AND status='running'")
             .bind(job_id).bind(final_message_id).execute(&mut *tx).await?;
     }
-    tx.commit().await?;
     Ok(Some(saved))
+}
+
+fn memory_snapshots_match(current: &[MemoryRecord], checked: &[MemoryRecord]) -> bool {
+    current.len() == checked.len()
+        && current.iter().all(|memory| {
+            checked.iter().any(|old| {
+                memory.id == old.id
+                    && memory.title == old.title
+                    && memory.content == old.content
+                    && memory.enabled == old.enabled
+                    && memory.source == old.source
+                    && memory.updated_at == old.updated_at
+            })
+        })
 }
 
 pub async fn claim_next_memory_review() -> anyhow::Result<Option<MemoryReviewJob>> {
@@ -311,6 +346,255 @@ pub async fn fetch_memory_review_messages(
     Ok(rows)
 }
 
+pub async fn persist_pending_memory_review_for_turn(
+    user_id: &str,
+    job: &MemoryReviewJob,
+    checked: &[MemoryRecord],
+    changes: &[ReviewedMemoryChange],
+) -> anyhow::Result<()> {
+    anyhow::ensure!(changes.len() <= MAX_MEMORY_REVIEW_CHANGES, "too many memory changes");
+    for change in changes {
+        validate_agent_memory(&change.title, &change.content)?;
+        anyhow::ensure!(!change.evidence.trim().is_empty(), "missing memory evidence");
+    }
+    let snapshot = serde_json::to_string(checked)?;
+    let mut tx = db::pool().begin_with("BEGIN IMMEDIATE").await?;
+    let exists: bool = sqlx::query_scalar(
+        "SELECT EXISTS(SELECT 1 FROM assistant_memory_jobs p
+         JOIN assistant_generation_jobs j ON j.id=p.generation_job_id
+         WHERE p.generation_job_id=?1 AND p.final_message_id=?2 AND p.user_id=?3
+           AND p.status='running' AND j.status='completed')",
+    )
+    .bind(job.generation_job_id)
+    .bind(job.final_message_id)
+    .bind(user_id)
+    .fetch_one(&mut *tx)
+    .await?;
+    anyhow::ensure!(exists, "记忆后处理所属回合已删除或结束");
+    query("DELETE FROM assistant_memory_review_candidates WHERE generation_job_id=?1 AND user_id=?2")
+        .bind(job.generation_job_id)
+        .bind(user_id)
+        .execute(&mut *tx)
+        .await?;
+    for change in changes {
+        query(
+            "INSERT INTO assistant_memory_review_candidates
+             (generation_job_id, user_id, memory_id, title, content, evidence)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
+        )
+        .bind(job.generation_job_id)
+        .bind(user_id)
+        .bind(change.id)
+        .bind(&change.title)
+        .bind(&change.content)
+        .bind(&change.evidence)
+        .execute(&mut *tx)
+        .await?;
+    }
+    query(
+        "UPDATE assistant_memory_jobs SET status='completed', memory_snapshot=?3,
+         error_message=NULL, completed_at=CAST(unixepoch('subsec') * 1000000 AS INTEGER),
+         updated_at=CAST(unixepoch('subsec') * 1000000 AS INTEGER)
+         WHERE generation_job_id=?1 AND final_message_id=?2 AND user_id=?4 AND status='running'",
+    )
+    .bind(job.generation_job_id)
+    .bind(job.final_message_id)
+    .bind(snapshot)
+    .bind(user_id)
+    .execute(&mut *tx)
+    .await?;
+    tx.commit().await?;
+    crate::assistant_events::notify(Some(user_id), "memories");
+    Ok(())
+}
+
+pub async fn list_pending_memory_reviews(user_id: &str) -> anyhow::Result<Vec<PendingMemoryRecord>> {
+    Ok(query_as(
+        "SELECT c.id, c.generation_job_id, c.memory_id, c.title, c.content, c.evidence,
+                c.created_at, c.updated_at
+         FROM assistant_memory_review_candidates c
+         JOIN assistant_memory_jobs j ON j.generation_job_id=c.generation_job_id
+         WHERE c.user_id=?1 AND c.status='pending' AND j.status='completed'
+         ORDER BY c.created_at ASC, c.id ASC",
+    )
+    .bind(user_id)
+    .fetch_all(db::pool())
+    .await?)
+}
+
+pub async fn update_pending_memory_review(
+    id: i64,
+    user_id: &str,
+    title: &str,
+    content: &str,
+) -> anyhow::Result<Option<PendingMemoryRecord>> {
+    validate_agent_memory(title, content)?;
+    let record = query_as(
+        "UPDATE assistant_memory_review_candidates
+         SET title=?3, content=?4,
+             updated_at=CAST(unixepoch('subsec') * 1000000 AS INTEGER)
+         WHERE id=?1 AND user_id=?2 AND status='pending'
+           AND EXISTS(SELECT 1 FROM assistant_memory_jobs j
+                      WHERE j.generation_job_id=assistant_memory_review_candidates.generation_job_id
+                        AND j.status='completed')
+         RETURNING id, generation_job_id, memory_id, title, content, evidence, created_at, updated_at",
+    )
+    .bind(id)
+    .bind(user_id)
+    .bind(title.trim())
+    .bind(content.trim())
+    .fetch_optional(db::pool())
+    .await?;
+    if record.is_some() {
+        crate::assistant_events::notify(Some(user_id), "memories");
+    }
+    Ok(record)
+}
+
+pub async fn confirm_pending_memory_reviews(
+    user_id: &str,
+    ids: &[i64],
+) -> anyhow::Result<Vec<MemoryRecord>> {
+    anyhow::ensure!(!ids.is_empty(), "请选择至少一条待确认记忆");
+    let placeholders = (0..ids.len()).map(|index| format!("?{}", index + 2)).collect::<Vec<_>>().join(",");
+    let sql = format!(
+        "SELECT c.id, c.generation_job_id, c.memory_id, c.title, c.content, c.evidence,
+                c.created_at, c.updated_at
+         FROM assistant_memory_review_candidates c
+         JOIN assistant_memory_jobs j ON j.generation_job_id=c.generation_job_id
+         WHERE c.user_id=?1 AND c.status='pending' AND j.status='completed' AND c.id IN ({placeholders})
+         ORDER BY c.id",
+    );
+    let mut tx = db::pool().begin_with("BEGIN IMMEDIATE").await?;
+    let mut candidate_query = query_as::<_, PendingMemoryRecord>(sqlx::AssertSqlSafe(sql)).bind(user_id);
+    for id in ids {
+        candidate_query = candidate_query.bind(id);
+    }
+    let candidates = candidate_query.fetch_all(&mut *tx).await?;
+    anyhow::ensure!(candidates.len() == ids.len(), "待确认记忆已变化，请刷新后重试");
+    let initial_snapshot = list_memories_tx(&mut *tx, user_id).await?;
+    let mut current_snapshot = initial_snapshot.clone();
+    let mut grouped: std::collections::BTreeMap<uuid::Uuid, Vec<PendingMemoryRecord>> = std::collections::BTreeMap::new();
+    for candidate in candidates {
+        grouped.entry(candidate.generation_job_id).or_default().push(candidate);
+    }
+    let mut saved = Vec::new();
+    for (job_id, candidates) in grouped {
+        let snapshot: String = sqlx::query_scalar(
+            "SELECT memory_snapshot FROM assistant_memory_jobs
+             WHERE generation_job_id=?1 AND user_id=?2 AND status='completed'",
+        )
+        .bind(job_id)
+        .bind(user_id)
+        .fetch_one(&mut *tx)
+        .await?;
+        let checked: Vec<MemoryRecord> = serde_json::from_str(&snapshot)?;
+        anyhow::ensure!(memory_snapshots_match(&initial_snapshot, &checked), "待确认记忆关联的长期记忆已发生变化，请刷新后重试");
+        let changes: Vec<_> = candidates
+            .iter()
+            .map(|candidate| ReviewedMemoryChange {
+                id: candidate.memory_id,
+                title: candidate.title.clone(),
+                content: candidate.content.clone(),
+                evidence: candidate.evidence.clone(),
+            })
+            .collect();
+        let applied = apply_reviewed_memories_tx(&mut *tx, user_id, &changes, &current_snapshot, None)
+            .await?
+            .ok_or_else(|| anyhow::anyhow!("待确认记忆关联的长期记忆已发生变化，请刷新后重试"))?;
+        saved.extend(applied);
+        current_snapshot = list_memories_tx(&mut *tx, user_id).await?;
+        let candidate_ids: Vec<_> = candidates.iter().map(|candidate| candidate.id).collect();
+        let placeholders = (0..candidate_ids.len()).map(|index| format!("?{}", index + 2)).collect::<Vec<_>>().join(",");
+        let sql = format!(
+            "UPDATE assistant_memory_review_candidates SET status='completed',
+             updated_at=CAST(unixepoch('subsec') * 1000000 AS INTEGER)
+             WHERE user_id=?1 AND status='pending' AND id IN ({placeholders})",
+        );
+        let mut update = query(sqlx::AssertSqlSafe(sql)).bind(user_id);
+        for id in &candidate_ids {
+            update = update.bind(id);
+        }
+        update.execute(&mut *tx).await?;
+        let remaining: i64 = sqlx::query_scalar(
+            "SELECT count(*) FROM assistant_memory_review_candidates
+             WHERE generation_job_id=?1 AND user_id=?2 AND status='pending'",
+        )
+        .bind(job_id)
+        .bind(user_id)
+        .fetch_one(&mut *tx)
+        .await?;
+        if remaining == 0 {
+            query("UPDATE assistant_memory_jobs SET memory_snapshot=NULL WHERE generation_job_id=?1 AND user_id=?2")
+                .bind(job_id)
+                .bind(user_id)
+                .execute(&mut *tx)
+                .await?;
+        } else {
+            query("UPDATE assistant_memory_jobs SET memory_snapshot=?3 WHERE generation_job_id=?1 AND user_id=?2")
+                .bind(job_id)
+                .bind(user_id)
+                .bind(serde_json::to_string(&current_snapshot)?)
+                .execute(&mut *tx)
+                .await?;
+        }
+    }
+    tx.commit().await?;
+    crate::assistant_events::notify(Some(user_id), "memories");
+    for memory in &saved {
+        crate::assistant_memory::refresh(memory).await;
+    }
+    Ok(saved)
+}
+
+pub async fn dismiss_pending_memory_reviews(
+    user_id: &str,
+    ids: Option<&[i64]>,
+) -> anyhow::Result<u64> {
+    let mut tx = db::pool().begin_with("BEGIN IMMEDIATE").await?;
+    let result = if let Some(ids) = ids.filter(|ids| !ids.is_empty()) {
+        let placeholders = (0..ids.len()).map(|index| format!("?{}", index + 2)).collect::<Vec<_>>().join(",");
+        let sql = format!(
+            "UPDATE assistant_memory_review_candidates SET status='dismissed',
+             updated_at=CAST(unixepoch('subsec') * 1000000 AS INTEGER)
+             WHERE user_id=?1 AND status='pending' AND id IN ({placeholders})",
+        );
+        let mut update = query(sqlx::AssertSqlSafe(sql)).bind(user_id);
+        for id in ids {
+            update = update.bind(id);
+        }
+        update.execute(&mut *tx).await?
+    } else {
+        query(
+            "UPDATE assistant_memory_review_candidates SET status='dismissed',
+             updated_at=CAST(unixepoch('subsec') * 1000000 AS INTEGER)
+             WHERE user_id=?1 AND status='pending'",
+        )
+        .bind(user_id)
+        .execute(&mut *tx)
+        .await?
+    };
+    tx.commit().await?;
+    if result.rows_affected() > 0 {
+        crate::assistant_events::notify(Some(user_id), "memories");
+    }
+    Ok(result.rows_affected())
+}
+
+async fn list_memories_tx(
+    tx: &mut sqlx::SqliteConnection,
+    user_id: &str,
+) -> anyhow::Result<Vec<MemoryRecord>> {
+    let sql = format!(
+        "SELECT {} FROM assistant_memories WHERE user_id = ?1 ORDER BY updated_at DESC",
+        MEMORY_COLUMNS
+    );
+    Ok(query_as::<_, MemoryRecord>(sqlx::AssertSqlSafe(sql))
+        .bind(user_id)
+        .fetch_all(&mut *tx)
+        .await?)
+}
+
 #[cfg(test)]
 pub async fn create_reviewed_memory(
     user_id: &str,
@@ -374,6 +658,7 @@ pub async fn create_memory(
         .fetch_one(&mut *tx)
         .await?;
     tx.commit().await?;
+    crate::assistant_events::notify(Some(user_id), "memories");
     Ok(rec)
 }
 
@@ -406,6 +691,9 @@ pub async fn update_memory(
         .bind(enabled)
         .fetch_optional(db::pool())
         .await?;
+    if rec.is_some() {
+        crate::assistant_events::notify(Some(user_id), "memories");
+    }
     Ok(rec)
 }
 
@@ -415,6 +703,9 @@ pub async fn delete_memory(id: i64, user_id: &str) -> anyhow::Result<bool> {
         .bind(user_id)
         .execute(db::pool())
         .await?;
+    if result.rows_affected() > 0 {
+        crate::assistant_events::notify(Some(user_id), "memories");
+    }
     Ok(result.rows_affected() > 0)
 }
 

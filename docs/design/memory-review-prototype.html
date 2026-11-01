@@ -1,0 +1,144 @@
+<!doctype html>
+<html lang="zh-CN">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Firefly · 长期记忆模块原型</title>
+    <style>
+      :root {
+        --ink: #172033; --text: #1b2233; --secondary: #4a5368; --muted: #5b6478;
+        --bg: #f5f6f9; --panel: #fff; --subtle: #f3f4f8; --hover: #eaecf2;
+        --border: #e4e6ee; --border-strong: #cfd5e2; --glow: #f6b545;
+        --glow-bg: #fff8e9; --success: #15803d; --success-bg: #effaf2;
+        --shadow: 0 24px 64px -18px rgba(23,32,51,.32); --radius-lg: 22px;
+        --font: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", sans-serif;
+      }
+      * { box-sizing: border-box; }
+      html, body { min-height: 100%; }
+      body { margin: 0; color: var(--text); background: radial-gradient(circle at 82% 8%, rgba(246,181,69,.14), transparent 28rem), var(--bg); font: 14px/1.55 var(--font); -webkit-font-smoothing: antialiased; }
+      button, input, textarea { font: inherit; }
+      button { cursor: pointer; }
+      button:focus-visible, input:focus-visible, textarea:focus-visible { outline: 2px solid #8a5600; outline-offset: 2px; }
+      .demo-bar { display: flex; justify-content: space-between; max-width: 980px; margin: 0 auto; padding: 22px 24px 12px; color: var(--muted); font-size: 12px; }
+      .demo-label { display: inline-flex; align-items: center; gap: 8px; }
+      .demo-label::before { content: ""; width: 8px; height: 8px; border-radius: 50%; background: var(--glow); box-shadow: 0 0 0 5px rgba(246,181,69,.16); }
+      .demo-reset { border: 0; padding: 3px 0; color: var(--secondary); background: transparent; text-decoration: underline; text-underline-offset: 3px; }
+      .backdrop { display: grid; place-items: center; min-height: calc(100vh - 58px); padding: 22px; background: rgba(23,32,51,.08); }
+      .memory-dialog { width: min(760px, 100%); max-height: calc(100vh - 100px); overflow: auto; padding: 24px; border: 1px solid rgba(23,32,51,.1); border-radius: var(--radius-lg); background: var(--panel); box-shadow: var(--shadow); }
+      .dialog-header { display: flex; align-items: flex-start; justify-content: space-between; gap: 18px; }
+      .dialog-title { display: flex; align-items: flex-start; gap: 11px; }
+      .memory-icon { display: grid; place-items: center; width: 34px; height: 34px; flex: 0 0 auto; border-radius: 11px; color: #815613; background: var(--glow-bg); }
+      h1 { margin: 0; font-size: 19px; line-height: 1.35; }
+      .dialog-subtitle { margin: 5px 0 0; color: var(--muted); font-size: 12px; }
+      .close-button { display: grid; place-items: center; width: 32px; height: 32px; border: 0; border-radius: 9px; color: var(--muted); background: transparent; }
+      .close-button:hover { background: var(--hover); color: var(--text); }
+      .memory-note { margin: 18px 0 0; padding: 10px 12px; border-radius: 10px; color: #705727; background: #fffbf1; font-size: 12px; }
+      .section { margin-top: 24px; }
+      .section-heading { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-bottom: 10px; }
+      .section-heading h2 { margin: 0; font-size: 14px; }
+      .section-heading p { margin: 2px 0 0; color: var(--muted); font-size: 11px; }
+      .pending-badge { border-radius: 999px; padding: 4px 8px; color: #795515; background: var(--glow-bg); font-size: 11px; }
+      .pending-list, .active-list { display: grid; gap: 9px; }
+      .pending-item, .active-item { border: 1px solid var(--border); border-radius: 12px; background: #fff; }
+      .pending-item { display: grid; grid-template-columns: 22px minmax(0, 1fr) auto; gap: 10px; align-items: start; padding: 13px; transition: border-color .18s ease, background .18s ease; }
+      .pending-item:hover { border-color: var(--border-strong); }
+      .pending-item.off { opacity: .58; background: var(--subtle); }
+      .pending-check { width: 18px; height: 18px; margin-top: 3px; accent-color: #b67810; }
+      .item-main { min-width: 0; }
+      .item-label { display: flex; align-items: center; flex-wrap: wrap; gap: 7px; }
+      .status { display: inline-flex; border-radius: 999px; padding: 2px 7px; color: #795515; background: var(--glow-bg); font-size: 11px; }
+      .status.active { color: #176332; background: var(--success-bg); }
+      .item-title { color: var(--text); font-size: 14px; font-weight: 700; overflow-wrap: anywhere; }
+      .item-content { margin: 4px 0 0; color: var(--secondary); font-size: 13px; line-height: 1.6; overflow-wrap: anywhere; }
+      .item-meta { margin-top: 8px; color: var(--muted); font-size: 11px; }
+      .item-meta summary { cursor: pointer; color: #7e6a3e; text-underline-offset: 3px; }
+      .item-meta blockquote { margin: 6px 0 0; padding: 7px 9px; border-radius: 8px; color: var(--secondary); background: #faf9f5; font-style: normal; }
+      .item-actions { display: flex; gap: 5px; }
+      .quiet-button, .edit-button { border: 0; border-radius: 8px; padding: 6px 8px; color: var(--muted); background: transparent; font-size: 12px; }
+      .quiet-button:hover, .edit-button:hover { color: var(--text); background: var(--hover); }
+      .edit-button { color: var(--ink); }
+      .edit-form { grid-column: 2 / -1; display: grid; gap: 8px; margin-top: 2px; }
+      .edit-form label { display: grid; gap: 4px; color: var(--muted); font-size: 11px; }
+      .edit-form input, .edit-form textarea { width: 100%; border: 1px solid var(--border-strong); border-radius: 8px; padding: 8px 9px; color: var(--text); background: #fff; resize: vertical; }
+      .edit-form textarea { min-height: 70px; line-height: 1.55; }
+      .edit-footer { display: flex; justify-content: flex-end; gap: 7px; }
+      .primary-button, .secondary-button { border-radius: 9px; padding: 8px 13px; font-size: 12px; }
+      .primary-button { border: 1px solid var(--ink); color: #fff; background: var(--ink); box-shadow: 0 7px 16px -10px rgba(23,32,51,.72); }
+      .primary-button:hover { background: #263451; transform: translateY(-1px); }
+      .primary-button:disabled { cursor: not-allowed; color: var(--muted); border-color: var(--border); background: var(--hover); box-shadow: none; transform: none; }
+      .secondary-button { border: 1px solid var(--border); color: var(--secondary); background: #fff; }
+      .secondary-button:hover { background: var(--subtle); }
+      .pending-actions { display: flex; align-items: center; justify-content: space-between; gap: 12px; margin-top: 12px; padding-top: 13px; border-top: 1px solid var(--border); }
+      .pending-actions small { color: var(--muted); font-size: 11px; }
+      .action-buttons { display: flex; gap: 8px; }
+      .empty-state { padding: 16px; border: 1px dashed var(--border-strong); border-radius: 11px; color: var(--muted); background: var(--subtle); font-size: 12px; }
+      .active-item { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 12px; padding: 12px 13px; }
+      .active-item .item-content { font-size: 12px; }
+      .active-item .item-meta { margin-top: 6px; }
+      .toast { position: fixed; right: 24px; bottom: 24px; padding: 10px 14px; border: 1px solid #b7dfc3; border-radius: 10px; color: #176332; background: var(--success-bg); box-shadow: var(--shadow); font-size: 12px; }
+      .hidden { display: none !important; }
+      @media (max-width: 620px) {
+        .demo-bar { padding-inline: 16px; }
+        .backdrop { min-height: calc(100vh - 56px); padding: 0; }
+        .memory-dialog { min-height: calc(100vh - 56px); max-height: none; padding: 20px 16px 24px; border: 0; border-radius: 0; }
+        .pending-item { grid-template-columns: 22px minmax(0, 1fr); }
+        .item-actions { grid-column: 2; }
+        .pending-actions { align-items: stretch; flex-direction: column; }
+        .action-buttons { display: grid; grid-template-columns: 1fr 1.35fr; }
+        .action-buttons button { width: 100%; }
+        .active-item { grid-template-columns: 1fr; }
+        .toast { right: 16px; bottom: 16px; left: 16px; text-align: center; }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="demo-bar"><span class="demo-label">交互原型 · 长期记忆模块</span><button class="demo-reset" type="button" id="resetDemo">重置示例</button></div>
+    <main class="backdrop">
+      <section class="memory-dialog" aria-labelledby="memoryTitle">
+        <header class="dialog-header">
+          <div class="dialog-title"><span class="memory-icon" aria-hidden="true"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v4M5.6 5.6l2.8 2.8M3 12h4M5.6 18.4l2.8-2.8M12 17v4M18.4 18.4l-2.8-2.8M21 12h-4M18.4 5.6l-2.8 2.8"/><circle cx="12" cy="12" r="3"/></svg></span><div><h1 id="memoryTitle">长期记忆</h1><p class="dialog-subtitle">管理 Agent 在后续对话中可以使用的信息</p></div></div>
+          <button class="close-button" type="button" aria-label="关闭"><svg width="17" height="17" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18M6 6l12 12"/></svg></button>
+        </header>
+        <p class="memory-note">Agent 建议保存的内容会先放在“待确认”中，只有你确认后才会生效。</p>
+
+        <section class="section" id="pendingSection" aria-labelledby="pendingTitle">
+          <div class="section-heading"><div><h2 id="pendingTitle">待确认</h2><p>这些内容还没有写入长期记忆</p></div><span class="pending-badge"><span id="pendingCount">2</span> 条</span></div>
+          <div class="pending-list" id="pendingList">
+            <article class="pending-item"><input class="pending-check" type="checkbox" checked aria-label="选择测试环境部署接口" /><div class="item-main"><div class="item-label"><span class="status">待确认</span><span class="item-title">测试环境部署接口</span></div><p class="item-content">测试环境部署使用 POST /api/deploy，并通过 Authorization: Bearer &lt;token&gt; 传递凭证。</p><details class="item-meta"><summary>查看建议原因</summary><blockquote>“测试环境部署使用 POST /api/deploy，并通过 Authorization 请求头传递凭证。”</blockquote></details></div><div class="item-actions"><button class="edit-button" type="button">编辑</button></div></article>
+            <article class="pending-item"><input class="pending-check" type="checkbox" checked aria-label="选择提交前的检查习惯" /><div class="item-main"><div class="item-label"><span class="status">待确认</span><span class="item-title">提交前的检查习惯</span></div><p class="item-content">代码提交前先运行 npm test 和 cargo test，确认前端与 Rust 测试都通过。</p><details class="item-meta"><summary>查看建议原因</summary><blockquote>“提交前先运行 npm test 和 cargo test。”</blockquote></details></div><div class="item-actions"><button class="edit-button" type="button">编辑</button></div></article>
+          </div>
+          <div class="pending-actions" id="pendingActions"><small>可以修改内容，也可以只确认其中一条</small><div class="action-buttons"><button class="secondary-button" type="button" id="dismissButton">暂不保存</button><button class="primary-button" type="button" id="confirmButton">确认保存 2 条</button></div></div>
+        </section>
+
+        <section class="section" aria-labelledby="activeTitle">
+          <div class="section-heading"><div><h2 id="activeTitle">已生效</h2><p>只有这里的内容会参与后续记忆检索</p></div><span class="pending-badge" style="color:#176332;background:var(--success-bg)"><span id="activeCount">2</span> 条</span></div>
+          <div class="active-list" id="activeList">
+            <article class="active-item"><div class="item-main"><div class="item-label"><span class="status active">Agent 添加</span><span class="item-title">偏好的回复方式</span></div><p class="item-content">技术问题优先给出结论，再补充必要的实现细节。</p><p class="item-meta">已启用 · 更新于今天 14:10</p></div><div class="item-actions"><button class="quiet-button" type="button">停用</button><button class="quiet-button" type="button">编辑</button></div></article>
+            <article class="active-item"><div class="item-main"><div class="item-label"><span class="status active">手动添加</span><span class="item-title">默认开发环境</span></div><p class="item-content">本地项目使用 macOS、Node.js 24 和 Rust stable。</p><p class="item-meta">已启用 · 更新于昨天 09:24</p></div><div class="item-actions"><button class="quiet-button" type="button">停用</button><button class="quiet-button" type="button">编辑</button></div></article>
+          </div>
+        </section>
+      </section>
+    </main>
+    <div class="toast hidden" id="toast" role="status"></div>
+    <script>
+      const pendingList = document.querySelector('#pendingList')
+      const pendingActions = document.querySelector('#pendingActions')
+      const pendingCount = document.querySelector('#pendingCount')
+      const activeCount = document.querySelector('#activeCount')
+      const confirmButton = document.querySelector('#confirmButton')
+      const activeList = document.querySelector('#activeList')
+      const toast = document.querySelector('#toast')
+      const items = () => [...pendingList.querySelectorAll('.pending-item')]
+      const selected = () => items().filter(item => item.querySelector('.pending-check').checked)
+      const refreshSelection = () => { const count = selected().length; pendingCount.textContent = items().length; confirmButton.textContent = count ? `确认保存 ${count} 条` : '确认保存'; confirmButton.disabled = count === 0; items().forEach(item => item.classList.toggle('off', !item.querySelector('.pending-check').checked)) }
+      const showToast = message => { toast.textContent = message; toast.classList.remove('hidden'); setTimeout(() => toast.classList.add('hidden'), 2600) }
+      const openEditor = (item, button) => { if (item.querySelector('.edit-form')) return; const title = item.querySelector('.item-title').textContent; const content = item.querySelector('.item-content').textContent; const form = document.createElement('form'); form.className = 'edit-form'; form.innerHTML = `<label>标题<input name="title" maxlength="100" value="${title.replaceAll('"', '&quot;')}"></label><label>内容<textarea name="content" maxlength="200">${content}</textarea></label><div class="edit-footer"><button class="secondary-button" type="button" data-cancel>取消</button><button class="primary-button" type="submit">完成编辑</button></div>`; form.addEventListener('submit', event => { event.preventDefault(); const data = new FormData(form); item.querySelector('.item-title').textContent = String(data.get('title')).trim() || title; item.querySelector('.item-content').textContent = String(data.get('content')).trim() || content; form.remove(); button.textContent = '编辑' }); form.querySelector('[data-cancel]').addEventListener('click', () => { form.remove(); button.textContent = '编辑' }); item.append(form); button.textContent = '收起'; form.querySelector('input').focus() }
+      pendingList.addEventListener('change', event => { if (event.target.matches('.pending-check')) refreshSelection() })
+      pendingList.addEventListener('click', event => { const button = event.target.closest('.edit-button'); const item = event.target.closest('.pending-item'); if (!button || !item) return; const form = item.querySelector('.edit-form'); if (form) { form.remove(); button.textContent = '编辑' } else openEditor(item, button) })
+      confirmButton.addEventListener('click', () => { const picked = selected(); if (!picked.length) return; picked.forEach(item => { const active = document.createElement('article'); active.className = 'active-item'; active.innerHTML = `<div class="item-main"><div class="item-label"><span class="status active">Agent 添加</span><span class="item-title">${item.querySelector('.item-title').textContent}</span></div><p class="item-content">${item.querySelector('.item-content').textContent}</p><p class="item-meta">已启用 · 刚刚保存</p></div><div class="item-actions"><button class="quiet-button" type="button">停用</button><button class="quiet-button" type="button">编辑</button></div>`; activeList.prepend(active); item.remove() }); activeCount.textContent = activeList.querySelectorAll('.active-item').length; refreshSelection(); showToast(`已保存 ${picked.length} 条记忆`) })
+      document.querySelector('#dismissButton').addEventListener('click', () => { items().forEach(item => item.remove()); pendingActions.classList.add('hidden'); pendingCount.textContent = '0'; pendingList.innerHTML = '<div class="empty-state">本次未保存任何记忆。之后仍可手动添加。</div>'; showToast('本次未保存任何记忆') })
+      document.querySelector('#resetDemo').addEventListener('click', () => window.location.reload())
+      refreshSelection()
+    </script>
+  </body>
+</html>

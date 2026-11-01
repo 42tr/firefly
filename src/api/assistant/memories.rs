@@ -28,6 +28,34 @@ impl From<assistant_store::MemoryRecord> for MemoryResponse {
 #[derive(Debug, Serialize)]
 pub struct MemoryListResponse {
     pub memories: Vec<MemoryResponse>,
+    pub pending_memories: Vec<PendingMemoryResponse>,
+}
+
+#[derive(Debug, Serialize)]
+pub struct PendingMemoryResponse {
+    pub id: i64,
+    pub memory_id: Option<i64>,
+    pub title: String,
+    pub content: String,
+    pub evidence: String,
+    pub kind: &'static str,
+    pub created_at: chrono::DateTime<chrono::Utc>,
+    pub updated_at: chrono::DateTime<chrono::Utc>,
+}
+
+impl From<assistant_store::PendingMemoryRecord> for PendingMemoryResponse {
+    fn from(record: assistant_store::PendingMemoryRecord) -> Self {
+        Self {
+            id: record.id,
+            memory_id: record.memory_id,
+            title: record.title,
+            content: record.content,
+            evidence: record.evidence,
+            kind: if record.memory_id.is_some() { "update" } else { "new" },
+            created_at: record.created_at,
+            updated_at: record.updated_at,
+        }
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -44,6 +72,20 @@ pub struct UpdateMemoryRequest {
     pub title: Option<String>,
     pub content: Option<String>,
     pub enabled: Option<bool>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PendingMemoryUpdateRequest {
+    pub title: String,
+    pub content: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct PendingMemorySelectionRequest {
+    #[serde(default)]
+    pub ids: Vec<i64>,
 }
 
 use assistant_store::{MAX_MEMORY_TITLE_LEN, MAX_MEMORY_CONTENT_LEN};
@@ -68,7 +110,75 @@ fn validate_memory_fields(title: &str, content: &str) -> Result<(String, String)
 
 pub async fn list_memories(auth_user: Session) -> Result<Json<MemoryListResponse>, AppError> {
     let records = assistant_store::list_memories(auth_user.storage_scope()).await.map_err(AppError::internal_server_error)?;
-    Ok(Json(MemoryListResponse { memories: records.into_iter().map(MemoryResponse::from).collect() }))
+    let pending = assistant_store::list_pending_memory_reviews(auth_user.storage_scope())
+        .await
+        .map_err(AppError::internal_server_error)?;
+    Ok(Json(MemoryListResponse {
+        memories: records.into_iter().map(MemoryResponse::from).collect(),
+        pending_memories: pending.into_iter().map(PendingMemoryResponse::from).collect(),
+    }))
+}
+
+pub async fn update_pending_memory(
+    auth_user: Session,
+    Path(candidate_id): Path<i64>,
+    Json(payload): Json<PendingMemoryUpdateRequest>,
+) -> Result<Json<PendingMemoryResponse>, AppError> {
+    let (title, content) = validate_memory_fields(&payload.title, &payload.content)?;
+    if title.chars().count() + content.chars().count() > assistant_store::MAX_AGENT_MEMORY_CHARS {
+        return Err(AppError::bad_request("Agent 记忆标题和内容不能超过 200 个字符"));
+    }
+    let record = assistant_store::update_pending_memory_review(
+        candidate_id,
+        auth_user.storage_scope(),
+        &title,
+        &content,
+    )
+    .await
+    .map_err(|error| {
+        if error.to_string().contains("exceeds 200") {
+            AppError::bad_request("Agent 记忆标题和内容不能超过 200 个字符")
+        } else {
+            AppError::internal_server_error(error)
+        }
+    })?
+    .ok_or(AppError::not_found("待确认记忆不存在或已处理"))?;
+    Ok(Json(PendingMemoryResponse::from(record)))
+}
+
+pub async fn confirm_pending_memories(
+    auth_user: Session,
+    Json(payload): Json<PendingMemorySelectionRequest>,
+) -> Result<Json<MemoryListResponse>, AppError> {
+    let records = assistant_store::confirm_pending_memory_reviews(auth_user.storage_scope(), &payload.ids)
+        .await
+        .map_err(|error| {
+            if error.to_string().contains("请选择") || error.to_string().contains("已变化") {
+                AppError::conflict(error.to_string())
+            } else {
+                AppError::internal_server_error(error)
+            }
+        })?;
+    let all = assistant_store::list_memories(auth_user.storage_scope()).await.map_err(AppError::internal_server_error)?;
+    let pending = assistant_store::list_pending_memory_reviews(auth_user.storage_scope()).await.map_err(AppError::internal_server_error)?;
+    debug_assert!(records.iter().all(|record| all.iter().any(|current| current.id == record.id)));
+    Ok(Json(MemoryListResponse {
+        memories: all.into_iter().map(MemoryResponse::from).collect(),
+        pending_memories: pending.into_iter().map(PendingMemoryResponse::from).collect(),
+    }))
+}
+
+pub async fn dismiss_pending_memories(
+    auth_user: Session,
+    Json(payload): Json<PendingMemorySelectionRequest>,
+) -> Result<Json<Value>, AppError> {
+    let dismissed = assistant_store::dismiss_pending_memory_reviews(
+        auth_user.storage_scope(),
+        (!payload.ids.is_empty()).then_some(payload.ids.as_slice()),
+    )
+    .await
+    .map_err(AppError::internal_server_error)?;
+    Ok(Json(json!({ "dismissed": dismissed })))
 }
 
 pub async fn create_memory(

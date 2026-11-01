@@ -32,15 +32,17 @@ pub use types::{
 pub use memories::{
     claim_next_memory_review, create_memory, delete_memory,
     fail_memory_review, fetch_memory_review_messages, list_enabled_memories, list_memories,
-    requeue_interrupted_memory_reviews, apply_reviewed_memories_for_turn, update_memory,
-    MemoryRecord, MemoryReviewJob,
+    requeue_interrupted_memory_reviews, update_memory,
+    persist_pending_memory_review_for_turn, list_pending_memory_reviews, update_pending_memory_review,
+    confirm_pending_memory_reviews, dismiss_pending_memory_reviews,
+    MemoryRecord, PendingMemoryRecord, MemoryReviewJob,
     ReviewedMemoryChange,
     MAX_MEMORY_REVIEW_CHANGES,
     list_all_memories, list_memory_embeddings, save_memory_embedding, MemoryEmbeddingRecord,
     MAX_AGENT_MEMORY_CHARS, MAX_MEMORY_CONTENT_LEN, MAX_MEMORY_TITLE_LEN, memory_comparison_key,
 };
 #[cfg(test)]
-pub use memories::create_reviewed_memory;
+pub use memories::{apply_reviewed_memories_for_turn, create_reviewed_memory};
 
 mod submissions;
 #[allow(unused_imports)]

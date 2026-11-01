@@ -580,16 +580,13 @@ async fn review_turn(job: &assistant_store::MemoryReviewJob) -> anyhow::Result<(
     let mut filtered =
         filter_review_changes(response.changes, &checked, user_message, assistant_message);
     apply_semantic_review(&crate::config::get(), &job.user_id, &mut filtered, &checked).await?;
-    let saved = assistant_store::apply_reviewed_memories_for_turn(
+    assistant_store::persist_pending_memory_review_for_turn(
         &job.user_id,
-        &filtered.changes,
+        job,
         &checked,
-        Some((job.generation_job_id, job.final_message_id)),
+        &filtered.changes,
     )
     .await?;
-    if saved.is_none() {
-        filtered.rejected.snapshot_stale += 1;
-    }
     let selected_ids: Vec<_> = search_result
         .memories
         .iter()
@@ -618,21 +615,6 @@ async fn review_turn(job: &assistant_store::MemoryReviewJob) -> anyhow::Result<(
         semantic_nearest = ?filtered.semantic_nearest,
         "memory review filtered model changes"
     );
-    let saved = match saved {
-        Some(saved) => saved,
-        None => {
-            warn!(
-                job_id = %job.generation_job_id,
-                user_id = %job.user_id,
-                rejected_snapshot_stale = filtered.rejected.snapshot_stale,
-                "memory review snapshot changed; retrying"
-            );
-            return Err(anyhow!("memory review snapshot changed; retrying"));
-        }
-    };
-    for memory in saved {
-        refresh(&memory).await;
-    }
     Ok(())
 }
 

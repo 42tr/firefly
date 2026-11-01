@@ -1,6 +1,9 @@
 pub mod schedules;
 mod memories;
-pub use memories::{create_memory, delete_memory, list_memories, update_memory};
+pub use memories::{
+    confirm_pending_memories, create_memory, delete_memory, dismiss_pending_memories, list_memories,
+    update_memory, update_pending_memory,
+};
 mod conversations;
 use conversations::*;
 pub use conversations::{

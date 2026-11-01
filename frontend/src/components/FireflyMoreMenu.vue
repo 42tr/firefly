@@ -10,6 +10,7 @@ const props = defineProps({
   filesOpen: Boolean,
   showFiles: Boolean,
   filesDisabled: Boolean,
+  memoryPendingCount: { type: Number, default: 0 },
 })
 const emit = defineEmits(['open-memory', 'open-schedules', 'open-files', 'module-open'])
 const open = ref(false), root = ref(null), trigger = ref(null), menu = ref(null)
@@ -72,7 +73,7 @@ onBeforeUnmount(() => {
     </button>
     <div v-show="open" id="firefly-more-menu" ref="menu" class="firefly-more-menu" role="menu" aria-label="更多功能" @click="select" @keydown="navigate">
       <!-- 固定功能放在动态扩展页面前，避免模块较多时被菜单的可视高度推到下面。 -->
-      <button class="button ghost small" type="button" role="menuitem" aria-haspopup="dialog" :aria-expanded="memoryOpen" aria-controls="memory-dialog" @click="emit('open-memory')"><UiIcon name="chat" /><span>长期记忆</span></button>
+      <button class="button ghost small" type="button" role="menuitem" aria-haspopup="dialog" :aria-expanded="memoryOpen" aria-controls="memory-dialog" @click="emit('open-memory')"><UiIcon name="chat" /><span>长期记忆</span><span v-if="memoryPendingCount" class="memory-pending-count" :aria-label="`待确认 ${memoryPendingCount} 条`">{{ memoryPendingCount }}</span></button>
       <button class="button ghost small" type="button" role="menuitem" aria-haspopup="dialog" :aria-expanded="schedulesOpen" aria-controls="schedule-dialog" @click="emit('open-schedules')"><UiIcon name="calendar" /><span>定时任务</span></button>
       <ModulePanel :active="props.active" :show-management="false" @closed="restoreFocus" @page-open="emit('module-open', $event)" />
       <template v-if="showFiles">
@@ -100,6 +101,7 @@ onBeforeUnmount(() => {
 .firefly-more-menu :deep(.button.small) { position: relative; display: flex; align-items: center; gap: 12px; width: 100%; min-width: 0; min-height: 40px; justify-content: flex-start; padding: 8px 12px; border: 0; border-radius: 10px; text-align: left; background: transparent; box-shadow: none; transform: none; font-size: 14px; font-weight: 400; color: var(--text-primary); }
 .firefly-more-menu :deep(.ui-icon) { display: block; width: 18px; height: 18px; flex-shrink: 0; }
 .firefly-more-menu :deep(.button.small:hover:not(:disabled)) { background: var(--bg-hover); box-shadow: none; transform: none; }
+.memory-pending-count { margin-left: auto; min-width: 20px; padding: 2px 6px; border-radius: 999px; color: #795515; background: #fff4d5; font-size: 11px; line-height: 1.3; text-align: center; }
 @media (min-width: 769px) {
   .firefly-more-menu :deep(.button.small:focus-visible) { background: var(--bg-hover); box-shadow: none; transform: none; }
 }

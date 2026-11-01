@@ -115,6 +115,55 @@ async fn completed_firefly_turn_is_queued_for_independent_memory_review() {
 }
 
 #[tokio::test]
+async fn pending_memory_review_requires_confirmation_and_preserves_edits() {
+    let pool = db::test_pool().await;
+    db::set_test_pool(pool.clone());
+    let conversation: i64 = query_scalar(
+        "INSERT INTO assistant_conversations(user_id,system_prompt,agent) VALUES ('owner','', 'firefly') RETURNING id",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    let job_id = uuid::Uuid::new_v4();
+    query_scalar::<_, i64>(
+        "INSERT INTO assistant_generation_jobs(id,conversation_id,user_id,status) VALUES (?1,?2,'owner','completed') RETURNING rowid",
+    )
+    .bind(job_id)
+    .bind(conversation)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    let final_message: i64 = query_scalar(
+        "INSERT INTO assistant_messages(conversation_id,generation_job_id,role,content) VALUES (?1,?2,'assistant','已记录') RETURNING id",
+    )
+    .bind(conversation)
+    .bind(job_id)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    query("INSERT INTO assistant_memory_jobs(generation_job_id,conversation_id,user_id,final_message_id,status) VALUES (?1,?2,'owner',?3,'running')")
+        .bind(job_id).bind(conversation).bind(final_message).execute(&pool).await.unwrap();
+    let job = MemoryReviewJob { generation_job_id: job_id, conversation_id: conversation, user_id: "owner".into(), final_message_id: final_message, attempts: 1 };
+    let checked = list_memories("owner").await.unwrap();
+    persist_pending_memory_review_for_turn("owner", &job, &checked, &[change(None, "原始候选")])
+        .await
+        .unwrap();
+    assert!(list_memories("owner").await.unwrap().is_empty());
+    let pending = list_pending_memory_reviews("owner").await.unwrap();
+    assert_eq!(pending.len(), 1);
+    let updated = update_pending_memory_review(pending[0].id, "owner", "用户修改后的标题", "用户修改后的内容")
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(updated.title, "用户修改后的标题");
+    let saved = confirm_pending_memory_reviews("owner", &[updated.id]).await.unwrap();
+    assert_eq!(saved.len(), 1);
+    assert_eq!(saved[0].title, "用户修改后的标题");
+    assert!(list_pending_memory_reviews("owner").await.unwrap().is_empty());
+    assert_eq!(list_memories("owner").await.unwrap().len(), 1);
+}
+
+#[tokio::test]
 async fn memory_source_migration_protects_legacy_entries_and_rejects_invalid_sources() {
     let pool = sqlx::sqlite::SqlitePoolOptions::new()
         .max_connections(1)
