@@ -509,6 +509,7 @@ pub(crate) fn configure_command_for_model(
                 "ANTHROPIC_DEFAULT_SONNET_MODEL",
                 "ANTHROPIC_DEFAULT_HAIKU_MODEL",
                 "ANTHROPIC_DEFAULT_FABLE_MODEL",
+                "ANTHROPIC_CUSTOM_MODEL_OPTION",
                 "CLAUDE_CODE_SUBAGENT_MODEL",
             ] {
                 if env
@@ -518,6 +519,24 @@ pub(crate) fn configure_command_for_model(
                 {
                     env.insert(key.into(), model.into());
                 }
+            }
+            // Claude Code validates model IDs against its own catalog before
+            // sending a request. Tell it which known Claude model describes
+            // this third-party model while preserving the actual ID on the
+            // wire. This is required for Kimi's `k3.1-pro` on newer Claude
+            // Code versions (2.1.268+).
+            let is_builtin_model = matches!(
+                model,
+                "default" | "sonnet" | "opus" | "haiku" | "fable"
+            ) || model.starts_with("claude-");
+            if !is_builtin_model && settings.get("modelPicker").is_none() {
+                settings["modelPicker"] = serde_json::json!({
+                    "options": [{
+                        "model": model,
+                        "label": model,
+                        "behavesAs": "claude-sonnet-4-6"
+                    }]
+                });
             }
         }
         if settings.get("apiKeyHelper").is_none() {

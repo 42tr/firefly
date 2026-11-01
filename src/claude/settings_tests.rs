@@ -65,6 +65,8 @@ fn kimi_k31_pro_defaults_to_thinking_and_maps_all_claude_model_tiers() {
         );
     }
     assert_eq!(settings["env"]["ANTHROPIC_API_KEY"], "private-kimi-key");
+    assert_eq!(settings["modelPicker"]["options"][0]["model"], "k3.1-pro");
+    assert_eq!(settings["modelPicker"]["options"][0]["behavesAs"], "claude-sonnet-4-6");
 }
 
 #[test]
