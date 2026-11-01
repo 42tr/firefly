@@ -225,6 +225,13 @@ impl Settings {
                     .iter()
                     .any(|agent| agent.model_profile.as_deref() == Some(original.id.as_str()));
             if used_by_firefly {
+                if self.profiles.iter().any(|item| {
+                    item.agent == "claude"
+                        && item.protocol == "anthropic"
+                        && (item.id == original.name || item.name == original.name)
+                }) {
+                    continue;
+                }
                 let mut id = original.name.trim().to_ascii_lowercase();
                 id.retain(|value| {
                     value.is_ascii_lowercase() || value.is_ascii_digit() || matches!(value, '_' | '-')

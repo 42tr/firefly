@@ -120,6 +120,8 @@ fn legacy_kimi_profile_is_migrated_to_claude_without_touching_other_profiles() {
     assert_eq!(profile.reasoning_levels, vec!["low", "high", "max"]);
     assert_eq!(settings.profiles[0].agent, "firefly");
     assert_eq!(settings.claude_api_profile.as_deref(), Some("kimi"));
+    assert!(!settings.migrate_legacy_claude_profiles());
+    assert_eq!(settings.profiles.iter().filter(|item| item.agent == "claude").count(), 1);
 
     let mut unrelated = Settings::defaults();
     unrelated.profiles[0].base_url = "https://api.example.com/v1".into();
