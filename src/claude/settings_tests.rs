@@ -24,7 +24,7 @@ fn kimi_profile() -> crate::agent_settings::ModelProfile {
         name: "Kimi Code".into(),
         agent: "claude".into(),
         protocol: "anthropic".into(),
-        base_url: "https://api.kimi.ai/coding/".into(),
+        base_url: "https://api.kimi.ai/coding/v1".into(),
         model: "k3.1-pro".into(),
         models: vec!["k3.1-pro".into()],
         reasoning_levels: Vec::new(),
@@ -39,6 +39,7 @@ fn kimi_profile() -> crate::agent_settings::ModelProfile {
 fn kimi_k31_pro_defaults_to_thinking_and_maps_all_claude_model_tiers() {
     let profile = kimi_profile();
     let provider = provider_from_model_profile(&profile).unwrap();
+    assert_eq!(provider.base_url.as_deref(), Some("https://api.kimi.ai/coding"));
     assert_eq!(provider.default_reasoning_level.as_deref(), Some("high"));
     assert_eq!(
         default_reasoning_level_for_model("k3.1-pro[1m]").as_deref(),
@@ -67,6 +68,24 @@ fn kimi_k31_pro_defaults_to_thinking_and_maps_all_claude_model_tiers() {
     assert_eq!(settings["env"]["ANTHROPIC_API_KEY"], "private-kimi-key");
     assert_eq!(settings["modelPicker"]["options"][0]["model"], "k3.1-pro");
     assert_eq!(settings["modelPicker"]["options"][0]["behavesAs"], "claude-sonnet-4-6");
+}
+
+#[test]
+fn normalize_claude_base_url_strips_only_terminal_v1_segment() {
+    assert_eq!(
+        normalize_claude_base_url("https://api.example/v1").unwrap(),
+        "https://api.example"
+    );
+    assert_eq!(
+        normalize_claude_base_url("https://api.example/coding/v1/").unwrap(),
+        "https://api.example/coding"
+    );
+    assert_eq!(
+        normalize_claude_base_url("https://api.example/coding").unwrap(),
+        "https://api.example/coding"
+    );
+    assert!(normalize_claude_base_url("https://api.example/v10").is_ok());
+    assert!(normalize_claude_base_url("file:///tmp/api").is_err());
 }
 
 #[test]

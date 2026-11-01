@@ -307,17 +307,7 @@ fn read_provider(root: &Path, name: &str) -> anyhow::Result<ClaudeProvider> {
 pub(crate) fn provider_from_model_profile(
     profile: &crate::agent_settings::ModelProfile,
 ) -> anyhow::Result<ClaudeProvider> {
-    let base_url = profile.base_url.trim().to_owned();
-    let url = reqwest::Url::parse(&base_url).map_err(|_| anyhow!("Claude API 地址无效"))?;
-    ensure!(
-        matches!(url.scheme(), "https" | "http")
-            && url.host_str().is_some()
-            && url.username().is_empty()
-            && url.password().is_none()
-            && url.query().is_none()
-            && url.fragment().is_none(),
-        "Claude API 地址须为无凭据的 HTTP(S) 地址"
-    );
+    let base_url = normalize_claude_base_url(&profile.base_url)?;
     let mut env = serde_json::Map::new();
     env.insert("ANTHROPIC_BASE_URL".into(), base_url.clone().into());
     env.insert(
@@ -341,6 +331,29 @@ pub(crate) fn provider_from_model_profile(
             .or_else(|| default_reasoning_level_for_model(&profile.model)),
         settings,
     })
+}
+
+/// Claude Code appends `/v1/messages` to `ANTHROPIC_BASE_URL`. API profiles
+/// commonly store the full Anthropic endpoint (`.../v1`), so remove that
+/// final version segment before handing the URL to Claude Code. Otherwise a
+/// Kimi profile such as `.../coding/v1` would be requested as
+/// `.../coding/v1/v1/messages` and Kimi returns a misleading model-not-found
+/// 404.
+fn normalize_claude_base_url(raw: &str) -> anyhow::Result<String> {
+    let mut url = reqwest::Url::parse(raw.trim()).map_err(|_| anyhow!("Claude API 地址无效"))?;
+    ensure!(
+        matches!(url.scheme(), "https" | "http")
+            && url.host_str().is_some()
+            && url.username().is_empty()
+            && url.password().is_none()
+            && url.query().is_none()
+            && url.fragment().is_none(),
+        "Claude API 地址须为无凭据的 HTTP(S) 地址"
+    );
+    let path = url.path().trim_end_matches('/');
+    let path = path.strip_suffix("/v1").unwrap_or(path).to_owned();
+    url.set_path(if path.is_empty() { "/" } else { &path });
+    Ok(url.to_string().trim_end_matches('/').to_owned())
 }
 
 fn providers_at(root: Option<&Path>) -> anyhow::Result<ProviderListing> {
