@@ -4,7 +4,7 @@ use serde_json::{json, Value};
 use crate::{agent_settings::{ModelProfile, Settings}, db};
 
 pub const PREFIX: &str = "firefly:";
-pub fn profile_id(provider: &str) -> Option<&str> { provider.strip_prefix(PREFIX) }
+pub fn profile_id(provider: &str) -> Option<&str> { provider.strip_prefix(PREFIX).or_else(|| provider.strip_prefix("api-")) }
 
 pub async fn resolve(provider: Option<&str>) -> anyhow::Result<Option<ModelProfile>> {
     let Some(id) = provider.and_then(profile_id) else { return Ok(None) };
@@ -15,9 +15,10 @@ pub async fn resolve(provider: Option<&str>) -> anyhow::Result<Option<ModelProfi
     Ok(Some(profile))
 }
 
-pub async fn listing() -> anyhow::Result<Vec<Value>> {
-    Ok(Settings::load(db::pool()).await?.profiles.into_iter().filter(|p| p.default_model().is_some())
+pub async fn listing(runtime: &str) -> anyhow::Result<Vec<Value>> {
+    Ok(Settings::load(db::pool()).await?.profiles.into_iter().filter(|p| p.default_model().is_some() && p.supports(runtime))
         .map(|p| json!({"name": format!("{PREFIX}{}", p.id), "display_name": p.name,
+            "aliases": if p.agent == "claude" { vec![format!("api-{}",p.id),p.id.clone(),p.name.clone()] } else { vec![format!("api-{}",p.id)] },
             "source":"ui", "base_url":p.base_url, "models":p.model_ids(),
             "default_model":p.default_model(),
             "default_reasoning_level":p.default_model().and_then(|model| p.reasoning_level(model, None, None)),
@@ -37,8 +38,7 @@ mod tests {
     fn profile() -> ModelProfile { ModelProfile {
         id:"kimi".into(), name:"Kimi".into(), base_url:"https://api.kimi.com/coding/v1/".into(),
         claude_base_url:None, model:"test-model".into(), api_key:Some("private-test-key".into()),
-        models:vec![], context_tokens:Some(32768), _key_configured:false,
-    }}
+        models:vec![], context_tokens:Some(32768), _key_configured:false, ..Default::default() }}
     #[test]
     fn endpoints_are_protocol_specific_and_can_be_overridden() {
         let mut p = profile();
@@ -60,7 +60,7 @@ mod tests {
         ];
         settings.profiles.push(p); settings.firefly.model_profile=Some("kimi".into());
         let saved = settings.save(&pool).await.unwrap().unwrap();
-        let catalog = listing().await.unwrap();
+        let catalog = listing("codex").await.unwrap();
         assert_eq!(catalog[0]["name"], "firefly:kimi");
         assert_eq!(catalog[0]["models"], json!(["test-model", "second-model"]));
         assert_eq!(catalog[0]["model_reasoning"][0]["reasoning_levels"], json!(["low", "high", "max"]));
@@ -71,6 +71,7 @@ mod tests {
         assert_eq!(loaded.profiles[0].models[1].context_length, Some(32768));
         assert!(!serde_json::to_string(&catalog).unwrap().contains("private-test-key"));
         assert_eq!(resolve(Some("firefly:kimi")).await.unwrap().unwrap().api_key.as_deref(), Some("private-test-key"));
+        assert_eq!(resolve(Some("api-kimi")).await.unwrap().unwrap().id, "kimi");
         let mut removed = saved; removed.profiles.clear(); removed.firefly.model_profile=None;
         removed.save(&pool).await.unwrap().unwrap();
         assert!(resolve(Some("firefly:kimi")).await.is_err());

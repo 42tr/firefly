@@ -37,6 +37,8 @@ export function useClaudeModels() {
       if (!response.ok) throw new Error(data.error || '读取 Claude 配置失败')
       if (current !== request) return
       providers.value = Array.isArray(data.providers) ? data.providers : []
+      const canonical = providers.value.find(item => item.aliases?.includes(provider.value))
+      if (canonical) provider.value = canonical.name
       defaultProvider.value = data.default || 'cli'
       cliModels.value = Array.isArray(data.models) ? data.models : []
       cliDefaultModel.value = data.cli_default_model || data.default_model || ''

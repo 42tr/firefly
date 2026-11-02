@@ -88,7 +88,7 @@ onBeforeUnmount(() => {
     <Teleport to="body">
       <div v-if="open" id="sidebar-settings-menu" ref="menu" class="sidebar-settings-menu" :style="menuStyle"
         role="menu" aria-label="设置" @keydown="navigate" @focusout="focusOut">
-        <button type="button" role="menuitem" aria-haspopup="dialog" aria-controls="agent-settings-dialog" @click="openAgents"><UiIcon name="sliders" /><span>Agent 配置</span></button>
+        <button type="button" role="menuitem" aria-haspopup="dialog" aria-controls="agent-settings-dialog" @click="openAgents"><UiIcon name="sliders" /><span>Agent 与 API 配置</span></button>
         <button type="button" role="menuitem" aria-haspopup="dialog" @click="openModules"><UiIcon name="puzzle" /><span>扩展模块</span></button>
         <div class="sidebar-settings-divider" role="separator"></div>
         <button class="sidebar-settings-logout" type="button" role="menuitem" @click="logout"><UiIcon name="logout" /><span>退出登录</span></button>

@@ -14,6 +14,11 @@ const dialog = ref(null), opened = ref(false), tab = ref('firefly'), selectedAge
 const busy = computed(() => loading.value)
 const agent = computed(() => !draft.value ? null : tab.value === 'firefly' ? draft.value.firefly : draft.value.subagents.find(item => item.id === selectedAgent.value))
 const profile = computed(() => draft.value?.profiles.find(item => item.id === selectedProfile.value))
+const selectableProfiles = runtime => (draft.value?.profiles || []).filter(item => {
+  const scope = item.agent || 'shared', protocol = item.protocol || 'responses'
+  return (scope === runtime || scope === 'shared') && (runtime === 'claude'
+    ? protocol === 'anthropic' || scope === 'shared' : runtime === 'firefly' ? protocol === 'responses' : ['responses', 'openai'].includes(protocol))
+})
 const agentProfile = computed(() => draft.value?.profiles.find(item => item.id === (agent.value?.model_profile || draft.value?.firefly.model_profile)))
 const agentModels = computed(() => {
   const values = [...(agentProfile.value?.models || [])]
@@ -147,7 +152,7 @@ const removeAgent = () => {
 }
 const addProfile = () => {
   const id = newId('model')
-  draft.value.profiles.push({ id, name: '新模型配置', base_url: 'https://api.openai.com/v1', model: '',
+  draft.value.profiles.push({ id, name: '新模型配置', agent: 'shared', protocol: 'responses', model_discovery: 'auto', base_url: 'https://api.openai.com/v1', model: '',
     models: [], api_key: null, key_configured: false, context_tokens: null })
   selectedProfile.value = id
   if (!draft.value.firefly.model_profile) draft.value.firefly.model_profile = id
@@ -158,6 +163,8 @@ const removeProfile = () => {
   const affected = draft.value.subagents.filter(item => item.model_profile === id)
   if (rootAffected) { draft.value.firefly.model_profile = null; draft.value.firefly.model = null; draft.value.firefly.reasoning_level = null }
   for (const child of affected) { child.model_profile = null; child.model = null; child.reasoning_level = null }
+  if (draft.value.codex_api_profile === id) draft.value.codex_api_profile = null
+  if (draft.value.claude_api_profile === id) draft.value.claude_api_profile = null
   draft.value.profiles = draft.value.profiles.filter(item => item.id !== id)
   selectedProfile.value = draft.value.profiles[0]?.id || ''
   error.value = ''
@@ -223,7 +230,7 @@ onBeforeUnmount(() => dialog.value?.close())
                   <div class="section-card">
                     <div class="section-title"><h4>模型与执行</h4></div>
                     <div class="field-pair">
-                      <label>模型平台<select v-model="agent.model_profile" @change="agentProfileChanged"><option :value="null">{{ tab === 'children' ? '继承 Firefly 的平台' : '请选择模型平台' }}</option><option v-for="item in draft.profiles" :key="item.id" :value="item.id">{{ item.name }}</option></select></label>
+                      <label>模型平台<select v-model="agent.model_profile" @change="agentProfileChanged"><option :value="null">{{ tab === 'children' ? '继承 Firefly 的平台' : '请选择模型平台' }}</option><option v-for="item in selectableProfiles('firefly')" :key="item.id" :value="item.id">{{ item.name }}</option></select></label>
                       <label>执行期限（秒）<input v-model.number="agent.timeout_secs" type="number" min="1" max="604800" required /></label>
                     </div>
                     <label>使用模型<select v-model="agentModel" aria-label="Agent 使用模型" :disabled="!agentProfile" @change="agentModelChanged"><option v-if="!agentModel" value="" disabled>请选择模型</option><option v-if="agentModel && !agentModels.some(item => item.id === agentModel)" :value="agentModel">{{ agentModel }}</option><option v-for="item in agentModels" :key="item.id" :value="item.id">{{ item.id }}{{ item.context_length ? ' · ' + item.context_length.toLocaleString() + ' tokens' : '' }}</option></select></label>
@@ -263,7 +270,7 @@ onBeforeUnmount(() => dialog.value?.close())
                     <label>默认模型<select v-model="profile.model" aria-label="模型名称" @change="applyModel"><option value="">请选择默认模型</option><option v-if="profile.model && !selectedModel" :value="profile.model">{{ profile.model }} · 已保存</option><option v-for="item in models" :key="item.id" :value="item.id">{{ item.id }} · {{ item.context_length ? item.context_length.toLocaleString() + ' tokens' : '上下文长度未知' }}</option></select></label>
                     <p v-if="selectedModel && !selectedModel.context_length" class="field-hint">服务没有返回此模型的上下文长度。可在下方高级设置填写输入预算，或由运行时继续查询。</p>
                     <p v-else-if="selectedModel?.context_length" class="field-hint">上下文 {{ selectedModel.context_length.toLocaleString() }} tokens<span v-if="selectedModel.input_budget"> · 输入预算 {{ selectedModel.input_budget.toLocaleString() }} tokens（已预留输出空间）</span><span v-else> · 无法计算输入预算，请检查模型信息。</span></p>
-                    <details><summary>高级设置</summary><label>配置名称<input v-model="profile.name" maxlength="100" required /></label><label>Claude 接口地址（可选）<input v-model.trim.lazy="profile.claude_base_url" type="url" placeholder="默认从 Base URL 移除末尾 /v1" /><small>Claude 需要 Anthropic Messages 接口；可填写同一服务下的独立路径。</small></label><label>输入预算<input v-model.number="profile.context_tokens" aria-label="输入预算" type="number" min="1024" max="100000000" placeholder="自动获取；服务未提供时可手动填写" /><small>仅在服务未提供完整信息或需要自定义上限时使用。</small></label><label v-if="!models.length">模型名称<input v-model.trim="profile.model" maxlength="256" placeholder="模型列表不可用时手动填写" /></label></details>
+                    <details><summary>高级设置</summary><label>可用范围<select v-model="profile.agent"><option value="shared">共享</option><option value="firefly">Firefly</option><option value="codex">Codex</option><option value="claude">Claude</option></select></label><label>接口协议<select v-model="profile.protocol"><option value="responses">Responses</option><option value="anthropic">Anthropic Messages</option><option value="openai">OpenAI 兼容</option></select></label><label>Codex 默认平台<select v-model="draft.codex_api_profile"><option :value="null">沿用 CLI 配置</option><option v-for="item in selectableProfiles('codex')" :key="item.id" :value="item.id">{{ item.name }}</option></select></label><label>Claude 默认平台<select v-model="draft.claude_api_profile"><option :value="null">沿用 CLI 配置</option><option v-for="item in selectableProfiles('claude')" :key="item.id" :value="item.id">{{ item.name }}</option></select></label><label>配置名称<input v-model="profile.name" maxlength="100" required /></label><label>Claude 接口地址（可选）<input v-model.trim.lazy="profile.claude_base_url" type="url" placeholder="默认从 Base URL 移除末尾 /v1" /><small>Claude 需要 Anthropic Messages 接口；可填写同一服务下的独立路径。</small></label><label>输入预算<input v-model.number="profile.context_tokens" aria-label="输入预算" type="number" min="1024" max="100000000" placeholder="自动获取；服务未提供时可手动填写" /><small>仅在服务未提供完整信息或需要自定义上限时使用。</small></label><label v-if="!models.length">模型名称<input v-model.trim="profile.model" maxlength="256" placeholder="模型列表不可用时手动填写" /></label></details>
                   </div>
                 </section>
                 <section v-else-if="tab === 'children' || tab === 'models'" class="settings-editor"><div class="empty-editor">{{ tab === 'children' ? '从左侧选择一个子 agent，或点击“＋ 新建子 agent”开始配置。' : '从左侧选择一个模型配置，或点击“＋ 新建模型配置”。' }}</div></section>

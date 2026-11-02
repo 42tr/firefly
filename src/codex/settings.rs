@@ -4,7 +4,7 @@ use anyhow::anyhow;
 use serde_json::{json, Value};
 
 use crate::config;
-use firefly_codex_transport::app_server;
+use super::app_server;
 
 /// 选择生效模型：对话绑定 > 全局 CODEX_MODEL > 交给 codex 读取 config.toml 默认。
 pub(crate) fn effective_model(conversation_model: Option<&str>) -> Option<String> {
@@ -29,7 +29,13 @@ pub struct ConversationSettings {
 pub async fn resolve_conversation_settings(
     cwd: &Path, provider: Option<&str>, model: Option<&str>, reasoning_level: Option<&str>,
 ) -> anyhow::Result<ConversationSettings> {
+    let bound = if provider.is_none() {
+        crate::agent_settings::Settings::load(crate::db::pool()).await?.codex_api_profile
+            .map(|id| format!("{}{}", crate::cli_profiles::PREFIX, id))
+    } else { None };
+    let provider = provider.or(bound.as_deref());
     if let Some(profile) = crate::cli_profiles::resolve(provider).await? {
+        anyhow::ensure!(profile.supports("codex"), "Codex 需要 Responses API 配置");
         let model = model.filter(|m| !m.is_empty()).unwrap_or(&profile.model);
         return Ok(ConversationSettings {
             provider: provider.unwrap().to_owned(),

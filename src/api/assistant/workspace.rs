@@ -47,13 +47,16 @@ pub async fn codex_providers(_auth_user: Session) -> Json<Value> {
         }
     };
     let mut providers = serde_json::to_value(&listing.providers).unwrap_or(json!([]));
-    if let Ok(ui) = crate::cli_profiles::listing().await {
+    if let Ok(ui) = crate::cli_profiles::listing("codex").await {
         providers.as_array_mut().unwrap().extend(ui);
     }
+    let settings = crate::agent_settings::Settings::load(crate::db::pool()).await.ok();
+    let bound = settings.as_ref().and_then(|settings| settings.codex_api_profile.as_deref()
+        .and_then(|id| settings.profiles.iter().find(|p| p.id == id)));
     Json(json!({
-        "default": listing.default,
-        "default_model": listing.default_model,
-        "default_reasoning_level": listing.default_reasoning_level,
+        "default": bound.map(|p| format!("{}{}", crate::cli_profiles::PREFIX, p.id)).or(listing.default),
+        "default_model": bound.and_then(|p| p.default_model().map(str::to_owned)).or(listing.default_model),
+        "default_reasoning_level": bound.and_then(|p| p.default_model().and_then(|model| p.reasoning_level(model, None, None))).or(listing.default_reasoning_level),
         "providers": providers,
         "official_models": official_models.iter().map(|model| &model.model).collect::<Vec<_>>(),
         "model_reasoning": official_models,
@@ -74,13 +77,15 @@ pub async fn claude_models(_auth_user: Session) -> Result<Json<Value>, AppError>
     let listing = listing.map_err(AppError::internal_server_error)?;
     let defaults = defaults.map_err(AppError::internal_server_error)?;
     let mut providers = serde_json::to_value(&listing.providers).map_err(AppError::internal_server_error)?;
-    providers.as_array_mut().unwrap().extend(crate::cli_profiles::listing().await.map_err(AppError::internal_server_error)?);
+    providers.as_array_mut().unwrap().extend(crate::cli_profiles::listing("claude").await.map_err(AppError::internal_server_error)?);
+    let settings = crate::agent_settings::Settings::load(crate::db::pool()).await?;
+    let bound = settings.claude_api_profile.as_deref().and_then(|id| settings.profiles.iter().find(|p| p.id == id));
     Ok(Json(json!({
-        "default": "cli",
+        "default": bound.map(|p| format!("{}{}", crate::cli_profiles::PREFIX, p.id)).unwrap_or_else(|| "cli".into()),
         "providers": providers,
-        "default_model": defaults.model,
+        "default_model": bound.and_then(|p| p.default_model()).unwrap_or(&defaults.model),
         "cli_default_model": defaults.model,
-        "default_reasoning_level": defaults.reasoning_level,
+        "default_reasoning_level": bound.and_then(|p| p.default_model().and_then(|model| p.reasoning_level(model, None, None))).or(defaults.reasoning_level),
         "models": defaults.models,
         "models_error": listing.warnings.join("；"),
         "reasoning_levels": claude::REASONING_LEVELS,

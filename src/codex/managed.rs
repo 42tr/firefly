@@ -84,7 +84,7 @@ mod tests {
         let p = ModelProfile { id:"native-smoke".into(), name:"Native smoke".into(),
             base_url:"http://127.0.0.1:9/v1".into(), claude_base_url:None,
             model:"fixture-model".into(), api_key:Some("fixture-key".into()),
-            models:vec![], context_tokens:None, _key_configured:false };
+            models:vec![], context_tokens:None, _key_configured:false, ..Default::default() };
         let server = CodexAppServer::spawn_command(command(&p), Duration::from_secs(20)).await.unwrap();
         let configuration = server.request("config/read", serde_json::json!({"includeLayers":false})).await.unwrap();
         assert_eq!(configuration["config"]["model_provider"], PROVIDER);
@@ -94,7 +94,7 @@ mod tests {
     #[test]
     fn key_is_only_in_the_child_environment_and_cli_uses_the_selected_endpoint() {
         let p = ModelProfile { id:"local".into(), name:"Local".into(), base_url:"http://127.0.0.1:1234/v1".into(),
-            claude_base_url:None, model:"fixture".into(), api_key:Some("secret-fixture".into()), models:vec![], context_tokens:None, _key_configured:false };
+            claude_base_url:None, model:"fixture".into(), api_key:Some("secret-fixture".into()), models:vec![], context_tokens:None, _key_configured:false, ..Default::default() };
         let command = command(&p); let command = command.as_std();
         let args: Vec<_> = command.get_args().map(|a| a.to_string_lossy().into_owned()).collect();
         assert!(!args.join(" ").contains("secret-fixture"));

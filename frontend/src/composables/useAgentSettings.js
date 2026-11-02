@@ -11,8 +11,11 @@ async function request(path = '', options = {}) {
 export function settingsPayload(settings) {
   return {
     revision: settings.revision,
+    codex_api_profile: settings.codex_api_profile || null, claude_api_profile: settings.claude_api_profile || null,
     profiles: settings.profiles.map(profile => ({
       id: profile.id, name: profile.name, base_url: profile.base_url, model: profile.model,
+      agent: profile.agent || "shared", protocol: profile.protocol || "responses",
+      model_discovery: profile.model_discovery || "auto", reasoning_levels: profile.reasoning_levels || [],
       models: (profile.models || []).map(item => ({ id: item.id, context_length: item.context_length ?? null, input_budget: item.input_budget ?? null,
         reasoning_levels: item.reasoning_levels ?? null, default_reasoning_level: item.default_reasoning_level ?? null })),
       claude_base_url: profile.claude_base_url?.trim() || null,

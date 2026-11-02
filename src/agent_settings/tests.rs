@@ -4,10 +4,9 @@ use std::sync::Mutex;
 fn fixture() -> Settings {
     let mut settings = Settings::defaults();
     settings.profiles.push(ModelProfile {
-        id: "default".into(), name: "测试模型".into(),
+        id: "default".into(), name: "测试模型".into(), agent: "firefly".into(),
         base_url: "http://127.0.0.1:1234/v1".into(), claude_base_url: None, model: "fixture-model".into(),
-        api_key: Some("private-fixture-key".into()), models: vec![], context_tokens: Some(32768), _key_configured: false,
-    });
+        api_key: Some("private-fixture-key".into()), models: vec![], context_tokens: Some(32768), _key_configured:false, ..Default::default() });
     settings.firefly.model_profile = Some("default".into());
     settings
 }
@@ -163,6 +162,87 @@ fn no_built_in_children_and_invalid_agent_definitions_are_rejected() {
     invalid = settings;
     invalid.profiles[0].context_tokens = Some(100);
     assert!(invalid.validate().is_err());
+}
+
+#[test]
+fn database_api_profiles_validate_agent_bindings_and_protocols() {
+    let mut settings = fixture();
+    settings.profiles.push(ModelProfile {
+        id: "kimi".into(),
+        name: "Kimi Code".into(),
+        agent: "claude".into(),
+        protocol: "anthropic".into(),
+        base_url: "https://api.kimi.com/coding/".into(),
+        model: "k3.1-pro".into(),
+        models: vec!["k3.1-pro".into()],
+        reasoning_levels: vec!["max".into()],
+        model_discovery: "manual".into(),
+        api_key: Some("private-kimi-key".into()),
+        context_tokens: None,
+        _key_configured:false, ..Default::default() });
+    settings.claude_api_profile = Some("kimi".into());
+    settings.validate().unwrap();
+    assert!(!settings.public().to_string().contains("private-kimi-key"));
+
+    settings.profiles[1].protocol = "responses".into();
+    assert!(settings.validate().is_err());
+}
+
+#[test]
+fn legacy_kimi_profile_is_migrated_to_claude_without_touching_other_profiles() {
+    let mut settings = fixture();
+    settings.profiles[0].name = "kimi".into();
+    settings.profiles[0].base_url = "https://api.kimi.com/coding/v1".into();
+    settings.profiles[0].model = "k3.1-pro".into();
+    assert!(settings.claude_api_profile.is_none());
+
+    assert!(settings.migrate_legacy_claude_profiles());
+    let profile = settings
+        .profiles
+        .iter()
+        .find(|profile| profile.agent == "claude")
+        .unwrap();
+    assert_eq!(profile.id, "kimi");
+    assert_eq!(profile.protocol, "anthropic");
+    assert_eq!(profile.model_ids(), vec!["k3.1-pro"]);
+    assert_eq!(profile.reasoning_levels, vec!["low", "high", "max"]);
+    assert_eq!(settings.profiles[0].agent, "firefly");
+    assert_eq!(settings.claude_api_profile.as_deref(), Some("kimi"));
+    assert!(!settings.migrate_legacy_claude_profiles());
+    assert_eq!(settings.profiles.iter().filter(|item| item.agent == "claude").count(), 1);
+
+    let mut unrelated = fixture();
+    unrelated.profiles[0].base_url = "https://api.example.com/v1".into();
+    unrelated.profiles[0].model = "k3.1-pro".into();
+    assert!(!unrelated.migrate_legacy_claude_profiles());
+    assert_eq!(unrelated.profiles[0].agent, "firefly");
+    assert_eq!(unrelated.profiles[0].protocol, "responses");
+}
+
+#[tokio::test]
+async fn legacy_string_catalogs_and_runtime_bindings_upgrade_without_losing_model_metadata() {
+    let pool = crate::db::test_pool().await;
+    let settings = Settings::load(&pool).await.unwrap();
+    let mut legacy = serde_json::to_value(fixture()).unwrap();
+    legacy["revision"] = json!(settings.revision);
+    let mut claude = legacy["profiles"][0].clone();
+    claude["id"] = json!("legacy-claude"); claude["agent"] = json!("claude"); claude["protocol"] = json!("anthropic");
+    claude["models"] = json!(["fixture-model", "other-model"]);
+    claude["reasoning_levels"] = json!(["high", "max"]);
+    legacy["profiles"].as_array_mut().unwrap().push(claude);
+    legacy["claude_api_profile"] = json!("legacy-claude");
+    let parsed: Settings = serde_json::from_value(legacy).unwrap();
+    parsed.save(&pool).await.unwrap().unwrap();
+    let loaded = Settings::load(&pool).await.unwrap();
+    let profile = &loaded.profiles[1];
+    assert_eq!(loaded.claude_api_profile.as_deref(), Some("legacy-claude"));
+    assert_eq!(profile.model_ids(), ["fixture-model", "other-model"]);
+    assert_eq!(profile.reasoning_level("other-model", Some("max"), None).as_deref(), Some("max"));
+    assert!(profile.supports("claude"));
+    assert!(!profile.supports("firefly"));
+    loaded.save(&pool).await.unwrap().unwrap();
+    let saved = Settings::load(&pool).await.unwrap();
+    assert_eq!(saved.profiles[1].models[1].reasoning_levels.as_ref().unwrap(), &["high", "max"]);
 }
 
 #[tokio::test]

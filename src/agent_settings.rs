@@ -33,13 +33,23 @@ pub struct ProfileModel {
 pub struct ModelProfile {
     pub id: String,
     pub name: String,
+    /// Which runtime consumes this profile. `shared` can be selected by any agent.
+    #[serde(default = "default_profile_agent")]
+    pub agent: String,
+    /// Wire protocol used by the runtime adapter.
+    #[serde(default = "default_profile_protocol")]
+    pub protocol: String,
     pub base_url: String,
     /// Optional same-origin Anthropic endpoint for Claude Code.
     #[serde(default)]
     pub claude_base_url: Option<String>,
     pub model: String,
-    #[serde(default)]
+    #[serde(default, deserialize_with = "deserialize_models")]
     pub models: Vec<ProfileModel>,
+    #[serde(default)]
+    pub reasoning_levels: Vec<String>,
+    #[serde(default = "default_model_discovery")]
+    pub model_discovery: String,
     /// null preserves the key only for the same profile ID and service origin.
     #[serde(default)]
     pub api_key: Option<String>,
@@ -50,7 +60,22 @@ pub struct ModelProfile {
     pub _key_configured: bool,
 }
 
+impl Default for ModelProfile {
+    fn default() -> Self { Self { id:String::new(), name:String::new(), agent:default_profile_agent(),
+        protocol:default_profile_protocol(), base_url:String::new(), claude_base_url:None, model:String::new(),
+        models:vec![], reasoning_levels:vec![], model_discovery:default_model_discovery(), api_key:None,
+        context_tokens:None, _key_configured:false } }
+}
+
 impl ModelProfile {
+    pub fn supports(&self, runtime: &str) -> bool {
+        (self.agent == runtime || self.agent == "shared") && match runtime {
+            "firefly" => self.protocol == "responses",
+            "codex" => matches!(self.protocol.as_str(), "responses" | "openai"),
+            "claude" => self.protocol == "anthropic" || self.agent == "shared",
+            _ => false,
+        }
+    }
     pub fn model_ids(&self) -> Vec<String> {
         let mut models: Vec<_> = self.models.iter().map(|m| m.id.clone()).collect();
         if !self.model.trim().is_empty() && !models.contains(&self.model) { models.push(self.model.clone()); }
@@ -66,12 +91,13 @@ impl ModelProfile {
     }
     /// Use only advertised levels. Unknown capabilities leave effort to the service.
     pub fn reasoning_level(&self, model: &str, requested: Option<&str>, allowed: Option<&[&str]>) -> Option<String> {
-        let info = self.models.iter().find(|m| m.id == model)?;
-        let levels = info.reasoning_levels.as_ref()?;
+        let info = self.models.iter().find(|m| m.id == model);
+        let levels = info.and_then(|info| info.reasoning_levels.as_ref())
+            .or_else(|| (!self.reasoning_levels.is_empty()).then_some(&self.reasoning_levels))?;
         let supported = |level: &&str| levels.iter().any(|item| item == level)
             && allowed.is_none_or(|allowed| allowed.contains(level));
         requested.filter(supported)
-            .or_else(|| info.default_reasoning_level.as_deref().filter(supported))
+            .or_else(|| info.and_then(|info| info.default_reasoning_level.as_deref()).filter(supported))
             .or_else(|| levels.iter().map(String::as_str).find(supported))
             .map(str::to_owned)
     }
@@ -104,6 +130,29 @@ pub struct Settings {
     pub profiles: Vec<ModelProfile>,
     pub firefly: AgentDefinition,
     pub subagents: Vec<AgentDefinition>,
+    #[serde(default)]
+    pub codex_api_profile: Option<String>,
+    #[serde(default)]
+    pub claude_api_profile: Option<String>,
+}
+
+fn default_profile_agent() -> String { "shared".into() }
+fn default_profile_protocol() -> String { "responses".into() }
+fn default_model_discovery() -> String { "auto".into() }
+
+impl From<String> for ProfileModel {
+    fn from(id: String) -> Self { Self { id, ..Default::default() } }
+}
+impl From<&str> for ProfileModel {
+    fn from(id: &str) -> Self { id.to_owned().into() }
+}
+fn deserialize_models<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<Vec<ProfileModel>, D::Error> {
+    #[derive(Deserialize)]
+    #[serde(untagged)]
+    enum Entry { Id(String), Metadata(ProfileModel) }
+    Ok(Vec::<Entry>::deserialize(deserializer)?.into_iter().map(|entry| match entry {
+        Entry::Id(id) => id.into(), Entry::Metadata(info) => info,
+    }).collect())
 }
 
 #[derive(Serialize)]
@@ -158,6 +207,8 @@ impl Settings {
             },
             // There are deliberately no built-in child-agent definitions.
             subagents: Vec::new(),
+            codex_api_profile: None,
+            claude_api_profile: None,
         }
     }
 
@@ -169,6 +220,12 @@ impl Settings {
         if let Some((revision, settings)) = row {
             let mut settings: Self = serde_json::from_str(&settings)?;
             settings.revision = revision;
+            // Older releases stored the Kimi Claude profile in the generic
+            // model slot before Claude API profiles had an explicit agent and
+            // protocol. Keep those installations usable after the schema
+            // gained the new fields.
+            settings.migrate_legacy_claude_profiles();
+            settings.normalize_catalogs();
             return Ok(settings);
         }
         let mut defaults = Self::defaults();
@@ -190,7 +247,108 @@ impl Settings {
                 .await?;
         let mut settings: Self = serde_json::from_str(&stored)?;
         settings.revision = revision;
+        settings.migrate_legacy_claude_profiles();
+        settings.normalize_catalogs();
         Ok(settings)
+    }
+
+    /// Upgrade the legacy Kimi Code profile shape in memory. The migration is
+    /// intentionally narrow: only the Kimi coding endpoint with a K3.1 Pro
+    /// model is migrated, so unrelated Responses profiles keep their old
+    /// behavior. A later settings save persists the normalized fields.
+    pub(crate) fn migrate_legacy_claude_profiles(&mut self) -> bool {
+        let legacy_indices: Vec<_> = self
+            .profiles
+            .iter()
+            .enumerate()
+            .filter_map(|(index, profile)| {
+                let base_url = profile.base_url.to_ascii_lowercase();
+                let model = profile.model.trim().to_ascii_lowercase();
+                (profile.agent == "firefly"
+                    && profile.protocol == "responses"
+                    && base_url.contains("kimi")
+                    && base_url.contains("/coding")
+                    && (model == "k3.1-pro" || model == "k3.1-pro-highspeed"))
+                .then_some(index)
+            })
+            .collect();
+        let mut migrated = false;
+        for index in legacy_indices {
+            let original = self.profiles[index].clone();
+            let mut profile = original.clone();
+            profile.agent = "claude".into();
+            profile.protocol = "anthropic".into();
+            if profile.models.is_empty() && !profile.model.trim().is_empty() {
+                profile.models.push(profile.model.trim().into());
+            }
+            if profile.reasoning_levels.is_empty() {
+                profile.reasoning_levels = vec!["low".into(), "high".into(), "max".into()];
+            }
+            if profile.model_discovery.is_empty() {
+                profile.model_discovery = "manual".into();
+            }
+
+            // The old profile may still be selected by Firefly. Keep it as a
+            // Responses profile and create a separate Claude profile rather
+            // than changing the runtime of the existing Firefly agent.
+            let used_by_firefly = self.firefly.model_profile.as_deref() == Some(original.id.as_str())
+                || self
+                    .subagents
+                    .iter()
+                    .any(|agent| agent.model_profile.as_deref() == Some(original.id.as_str()));
+            if used_by_firefly {
+                if self.profiles.iter().any(|item| {
+                    item.agent == "claude"
+                        && item.protocol == "anthropic"
+                        && (item.id == original.name || item.name == original.name)
+                }) {
+                    continue;
+                }
+                let mut id = original.name.trim().to_ascii_lowercase();
+                id.retain(|value| {
+                    value.is_ascii_lowercase() || value.is_ascii_digit() || matches!(value, '_' | '-')
+                });
+                if !valid_id(&id) || self.profiles.iter().any(|item| item.id == id) {
+                    id = format!("claude-{}", original.id);
+                }
+                let base_id = id.clone();
+                let mut suffix = 2;
+                while self.profiles.iter().any(|item| item.id == id) {
+                    id = format!("{}-{}", base_id, suffix);
+                    suffix += 1;
+                }
+                profile.id = id;
+                self.profiles.push(profile);
+            } else {
+                self.profiles[index] = profile;
+            }
+            migrated = true;
+        }
+        if self.claude_api_profile.is_none() {
+            if let Some(profile) = self
+                .profiles
+                .iter()
+                .find(|profile| profile.agent == "claude" && profile.protocol == "anthropic")
+            {
+                self.claude_api_profile = Some(profile.id.clone());
+                migrated = true;
+            }
+        }
+        migrated
+    }
+
+    fn normalize_catalogs(&mut self) {
+        for profile in &mut self.profiles {
+            if !profile.model.is_empty() && !profile.models.iter().any(|model| model.id == profile.model) {
+                profile.models.push(profile.model.clone().into());
+            }
+            for model in &mut profile.models {
+                if model.reasoning_levels.is_none() && !profile.reasoning_levels.is_empty() {
+                    model.reasoning_levels = Some(profile.reasoning_levels.clone());
+                    model.default_reasoning_level = profile.reasoning_levels.first().cloned();
+                }
+            }
+        }
     }
 
     pub fn public(&self) -> Value {
@@ -231,6 +389,21 @@ impl Settings {
                 !profile.name.trim().is_empty() && profile.name.chars().count() <= 100,
                 "模型配置名称须为 1–100 字"
             );
+            ensure!(
+                matches!(profile.agent.as_str(), "firefly" | "codex" | "claude" | "shared"),
+                "API 配置的 Agent 类型无效"
+            );
+            ensure!(
+                matches!(profile.protocol.as_str(), "responses" | "openai" | "anthropic"),
+                "API 配置的协议无效"
+            );
+            ensure!(
+                matches!(profile.model_discovery.as_str(), "auto" | "manual"),
+                "模型目录模式无效"
+            );
+            ensure!(profile.reasoning_levels.len() <= 16 && profile.reasoning_levels.iter().all(|level| {
+                !level.trim().is_empty() && level.len() <= 64 && !level.chars().any(char::is_whitespace)
+            }), "API 配置包含无效推理级别");
             let url = reqwest::Url::parse(&profile.base_url).context("模型服务地址无效")?;
             ensure!(
                 matches!(url.scheme(), "http" | "https")
@@ -280,6 +453,12 @@ impl Settings {
                 "输入预算须为 1024–100000000，或留空自动查询"
             );
         }
+        for (runtime, id) in [("codex", &self.codex_api_profile), ("claude", &self.claude_api_profile)] {
+            if let Some(id) = id {
+                ensure!(self.profiles.iter().any(|profile| profile.id == *id && profile.supports(runtime)),
+                    "API 配置不存在或协议与 Agent 不匹配");
+            }
+        }
         let mut ids = BTreeSet::new();
         for agent in std::iter::once(&self.firefly).chain(&self.subagents) {
             ensure!(agent.model.as_deref().is_none_or(|m| !m.trim().is_empty() && m.len() <= 256
@@ -314,6 +493,10 @@ impl Settings {
                     .is_none_or(|id| profiles.contains(id)),
                 "Agent 引用了不存在的模型配置"
             );
+            if let Some(id) = &agent.model_profile {
+                ensure!(self.profiles.iter().any(|profile| profile.id == *id && profile.supports("firefly")),
+                    "Firefly 需要 Responses API 配置");
+            }
             let mut tools = BTreeSet::new();
             ensure!(
                 agent.tools.len() <= 500
@@ -383,6 +566,7 @@ impl Settings {
     pub fn model(&self, agent: &AgentDefinition) -> anyhow::Result<llm::AgentModel> {
         let profile = self.profile(agent)?;
         let name = self.model_name(agent)?;
+        ensure!(profile.supports("firefly"), "Firefly 需要 Responses API 配置");
         let mut model = llm::AgentModel::new(
             llm::normalize_bearer_secret(profile.api_key.as_deref().unwrap_or_default()),
             name,

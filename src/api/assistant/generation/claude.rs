@@ -8,7 +8,7 @@ use crate::{
     api::assistant::{
         persistence::persist_message, tool_details::{save_tool_detail, ToolDetail}, Message, ToolCall,
     },
-    assistant_job, assistant_store, claude, codex,
+    agent_settings, assistant_job, assistant_store, claude, codex,
 };
 
 const CLAUDE_IDLE_TIMEOUT: Duration = Duration::from_secs(30 * 60);
@@ -32,7 +32,39 @@ pub(in crate::api::assistant) async fn run_claude_turn(
     }
 
     if job.cancellation_token().is_cancelled() { return Ok(()); }
-    let mut turn = claude::start_turn(&abs, record.claude_session_id.as_deref(), record.claude_provider.as_deref(), record.claude_model.as_deref(), record.claude_reasoning_level.as_deref(), &prompt).await?;
+    let settings = agent_settings::Settings::load(crate::db::pool()).await?;
+    let profile_id = match record.claude_provider.as_deref() {
+        Some(provider) if provider.starts_with("api-") => Some(provider.trim_start_matches("api-")),
+        Some(provider) => settings
+            .profiles
+            .iter()
+            .find(|profile| {
+                (profile.id == provider || profile.name == provider)
+                    && profile.agent == "claude"
+                    && profile.protocol == "anthropic"
+            })
+            .map(|profile| profile.id.as_str()),
+        None => settings.claude_api_profile.as_deref(),
+    };
+    let profile = profile_id.and_then(|id| settings.profiles.iter().find(|profile| profile.id == id));
+    let mut turn = match profile {
+        Some(profile) => claude::start_turn_with_model_profile(
+            &abs,
+            record.claude_session_id.as_deref(),
+            profile,
+            record.claude_model.as_deref(),
+            record.claude_reasoning_level.as_deref(),
+            &prompt,
+        ).await?,
+        None => claude::start_turn(
+            &abs,
+            record.claude_session_id.as_deref(),
+            record.claude_provider.as_deref(),
+            record.claude_model.as_deref(),
+            record.claude_reasoning_level.as_deref(),
+            &prompt,
+        ).await?,
+    };
     let (_seen_session, result) = run_claude_events(&mut turn, record, user_id, conversation_id, &job).await;
     turn.interrupt().await?;
     result

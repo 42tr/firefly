@@ -14,6 +14,12 @@ pub use settings::{cli_defaults, effective_model, normalize_reasoning_level, pro
 pub async fn normalize_provider(provider: Option<String>) -> anyhow::Result<Option<String>> {
     let provider = provider.map(|p| p.trim().to_owned()).filter(|p| !p.is_empty());
     if crate::cli_profiles::resolve(provider.as_deref()).await?.is_some() { return Ok(provider) }
+    if let Some(name) = provider.as_deref() {
+        if crate::agent_settings::Settings::load(crate::db::pool()).await?.profiles.iter()
+            .any(|profile| profile.agent == "claude" && (profile.id == name || profile.name == name)) {
+            return Ok(provider);
+        }
+    }
     settings::normalize_provider(provider)
 }
 
@@ -72,23 +78,41 @@ fn claude_args(cfg: &config::Config, session_id: Option<&str>, model: &str, reas
 }
 
 pub async fn start_turn(cwd: &Path, session_id: Option<&str>, provider: Option<&str>, model: Option<&str>, reasoning_level: Option<&str>, prompt: &str) -> anyhow::Result<ClaudeTurn> {
+    if let Some(profile) = crate::cli_profiles::resolve(provider).await? {
+        return start_turn_with_model_profile(cwd, session_id, &profile, model, reasoning_level, prompt).await;
+    }
     let cfg = config::get();
-    let mut managed_effort = None;
-    let profile = match crate::cli_profiles::resolve(provider).await? {
-        Some(mut profile) => {
-            if let Some(model) = model.filter(|m| !m.is_empty()) { profile.model = model.to_owned(); }
-            managed_effort = Some(profile.reasoning_level(&profile.model, reasoning_level, Some(REASONING_LEVELS)));
-            Some(settings::managed_provider(&profile))
-        }
-        None => settings::resolve_provider(provider)?,
-    };
+    let profile = settings::resolve_provider(provider)?;
     let model = effective_model(&cfg, profile.as_ref(), model)?;
-    let reasoning_level = normalize_reasoning_level(managed_effort.unwrap_or_else(|| reasoning_level.map(str::to_owned)))?;
+    let effort = reasoning_level.map(str::to_owned)
+        .or_else(|| profile.as_ref().and_then(|profile| profile.default_reasoning_level.clone()))
+        .or_else(|| settings::default_reasoning_level_for_model(&model));
+    spawn_configured(&cfg, cwd, session_id, profile.as_ref(), &model, effort, prompt)
+}
+
+pub async fn start_turn_with_model_profile(
+    cwd: &Path, session_id: Option<&str>, profile: &crate::agent_settings::ModelProfile,
+    model: Option<&str>, reasoning_level: Option<&str>, prompt: &str,
+) -> anyhow::Result<ClaudeTurn> {
+    anyhow::ensure!(profile.supports("claude"), "Claude API 配置协议不匹配");
+    let cfg = config::get();
+    let mut profile = profile.clone();
+    if let Some(model) = model.filter(|model| !model.is_empty()) { profile.model = model.to_owned(); }
+    let native = if profile.protocol == "anthropic" { settings::provider_from_model_profile(&profile)? }
+        else { settings::managed_provider(&profile) };
+    let effort = profile.reasoning_level(&profile.model, reasoning_level, Some(REASONING_LEVELS))
+        .or_else(|| (profile.protocol == "anthropic").then(|| native.default_reasoning_level.clone()).flatten());
+    spawn_configured(&cfg, cwd, session_id, Some(&native), &profile.model, effort, prompt)
+}
+
+fn spawn_configured(
+    cfg: &config::Config, cwd: &Path, session_id: Option<&str>, profile: Option<&settings::ClaudeProvider>,
+    model: &str, effort: Option<String>, prompt: &str,
+) -> anyhow::Result<ClaudeTurn> {
+    let effort = normalize_reasoning_level(effort)?;
     let mut command = Command::new("claude");
-    let settings_file = settings::configure_command(&mut command, profile.as_ref(), reasoning_level.as_deref())?;
-    command
-        .current_dir(cwd)
-        .args(claude_args(&cfg, session_id, &model, reasoning_level.as_deref(), prompt));
+    let settings_file = settings::configure_command_for_model(&mut command, profile, Some(model), effort.as_deref())?;
+    command.current_dir(cwd).args(claude_args(cfg, session_id, model, effort.as_deref(), prompt));
     spawn_turn(command, settings_file)
 }
 

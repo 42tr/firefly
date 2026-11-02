@@ -22,6 +22,11 @@ use tracing::{debug, error, info, trace, warn, Level};
 const REQUEST_TIMEOUT: Duration = Duration::from_secs(60);
 const INTERRUPT_TIMEOUT: Duration = Duration::from_secs(15);
 const NOTIFICATION_CAPACITY: usize = 4096;
+
+fn toml_string(value: &str) -> String {
+    serde_json::to_string(value).expect("JSON strings are valid TOML strings")
+}
+
 pub struct CodexAppServer {
     stdin: AsyncMutex<ChildStdin>,
     // Keeping the child in the manager keeps kill_on_drop effective for the
@@ -34,6 +39,16 @@ pub struct CodexAppServer {
     next_id: AtomicU64,
     // Set by the stdout reader once the process exits, so the next caller respawns it.
     closed: AtomicBool,
+}
+
+/// A database-backed provider definition injected into the Codex app-server
+/// process at startup. The API key never enters the JSON-RPC payload.
+#[derive(Clone, Debug, Hash)]
+pub struct RuntimeProvider {
+    pub name: String,
+    pub base_url: String,
+    pub api_key: String,
+    pub wire_api: String,
 }
 
 struct PendingRequest<'a> {
@@ -82,7 +97,7 @@ impl Drop for TurnStartGuard {
     }
 }
 
-static CLIENT: AsyncMutex<Option<Arc<CodexAppServer>>> = AsyncMutex::const_new(None);
+static CLIENT: AsyncMutex<Option<(u64, Arc<CodexAppServer>)>> = AsyncMutex::const_new(None);
 
 // stderr also carries regular tracing events. Strip terminal formatting before
 // reading the level, and keep unstructured diagnostics visible as warnings.
@@ -190,26 +205,35 @@ fn log_app_server_records(records: Vec<(Level, String)>) {
 }
 
 pub async fn app_server() -> anyhow::Result<Arc<CodexAppServer>> {
-    reuse_or_spawn_client(&CLIENT, CodexAppServer::spawn).await
+    app_server_with_providers(&[]).await
 }
 
-async fn reuse_or_spawn_client<F, Fut>(slot: &AsyncMutex<Option<Arc<CodexAppServer>>>, spawn: F) -> anyhow::Result<Arc<CodexAppServer>>
+pub async fn app_server_with_providers(providers: &[RuntimeProvider]) -> anyhow::Result<Arc<CodexAppServer>> {
+    use std::hash::{Hash, Hasher};
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    providers.hash(&mut hasher);
+    let key = hasher.finish();
+    reuse_or_spawn_client(&CLIENT, key, || CodexAppServer::spawn(providers)).await
+}
+
+async fn reuse_or_spawn_client<F, Fut>(slot: &AsyncMutex<Option<(u64, Arc<CodexAppServer>)>>, key: u64, spawn: F) -> anyhow::Result<Arc<CodexAppServer>>
 where
     F: FnOnce() -> Fut,
     Fut: std::future::Future<Output = anyhow::Result<Arc<CodexAppServer>>>,
 {
     let mut client = slot.lock().await;
-    if let Some(server) = client.as_ref().filter(|server| !server.closed.load(Ordering::Acquire)) {
-        return Ok(server.clone());
+    if let Some((current_key, server)) = client.as_ref().filter(|(_, server)| !server.closed.load(Ordering::Acquire)) {
+        if *current_key == key { return Ok(server.clone()); }
     }
+    if let Some((_, old)) = client.take() { old.shutdown().await; }
     let server = spawn().await?;
-    *client = Some(server.clone());
+    *client = Some((key, server.clone()));
     Ok(server)
 }
 
 impl CodexAppServer {
     pub fn is_closed(&self) -> bool { self.closed.load(Ordering::Acquire) }
-    async fn spawn() -> anyhow::Result<Arc<Self>> {
+    async fn spawn(providers: &[RuntimeProvider]) -> anyhow::Result<Arc<Self>> {
         let mut command = Command::new("codex");
         command.arg("app-server")
             // Settings changes explicitly unsubscribe one idle thread before resuming it.
@@ -220,6 +244,18 @@ impl CodexAppServer {
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped());
+        for provider in providers {
+            let key_name = format!("FIREFLY_CODEX_KEY_{}", provider.name.replace('-', "_").to_ascii_uppercase());
+            command.env(&key_name, &provider.api_key);
+            for (field, value) in [
+                ("base_url", provider.base_url.as_str()),
+                ("wire_api", provider.wire_api.as_str()),
+                ("env_key", key_name.as_str()),
+            ] {
+                command.arg("-c").arg(format!("model_providers.{}.{}={}", provider.name, field, toml_string(value)));
+            }
+            command.arg("-c").arg(format!("model_providers.{}.requires_openai_auth=true", provider.name));
+        }
         Self::spawn_command(command, REQUEST_TIMEOUT).await
     }
 
@@ -531,7 +567,7 @@ pub fn notification_params(message: &Value) -> &Value {
 
 pub async fn interrupt_existing_turn(thread_id:&str, turn_id:&str)->anyhow::Result<()> {
     let client = CLIENT.lock().await.clone();
-    let Some(client) = client else { return Ok(()); };
+    let Some((_, client)) = client else { return Ok(()); };
     if client.closed.load(Ordering::Acquire) {
         client.shutdown().await;
         return Ok(());
@@ -765,14 +801,17 @@ for line in sys.stdin:
     #[tokio::test]
     async fn shared_client_reuses_live_server_and_replaces_closed_server() {
         let first = mock_server().await;
-        let slot = tokio::sync::Mutex::new(Some(first.clone()));
-        let reused = super::reuse_or_spawn_client(&slot, || async { panic!("live client must be reused") }).await.unwrap();
+        let slot = tokio::sync::Mutex::new(Some((1, first.clone())));
+        let reused = super::reuse_or_spawn_client(&slot, 1, || async { panic!("live client must be reused") }).await.unwrap();
         assert!(std::sync::Arc::ptr_eq(&first, &reused));
         first.shutdown().await;
-        let replacement = super::reuse_or_spawn_client(&slot, || async { Ok(mock_server().await) }).await.unwrap();
+        let replacement = super::reuse_or_spawn_client(&slot, 1, || async { Ok(mock_server().await) }).await.unwrap();
         assert!(!std::sync::Arc::ptr_eq(&first, &replacement));
         assert!(!replacement.closed.load(std::sync::atomic::Ordering::Acquire));
-        replacement.shutdown().await;
+        let changed = super::reuse_or_spawn_client(&slot, 2, || async { Ok(mock_server().await) }).await.unwrap();
+        assert!(!std::sync::Arc::ptr_eq(&replacement, &changed));
+        assert!(replacement.closed.load(std::sync::atomic::Ordering::Acquire));
+        changed.shutdown().await;
     }
 
     #[tokio::test]

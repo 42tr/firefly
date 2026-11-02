@@ -18,6 +18,75 @@ fn profile() -> Value {
         "ANTHROPIC_DEFAULT_HAIKU_MODEL":"relay-small"}, "permissions":{"deny":["Read(.secret)"]}})
 }
 
+fn kimi_profile() -> crate::agent_settings::ModelProfile {
+    crate::agent_settings::ModelProfile {
+        id: "kimi".into(),
+        name: "Kimi Code".into(),
+        agent: "claude".into(),
+        protocol: "anthropic".into(),
+        base_url: "https://api.kimi.ai/coding/v1".into(),
+        model: "k3.1-pro".into(),
+        models: vec!["k3.1-pro".into()],
+        reasoning_levels: Vec::new(),
+        model_discovery: "manual".into(),
+        api_key: Some("private-kimi-key".into()),
+        context_tokens: None,
+        _key_configured:false, ..Default::default() }
+}
+
+#[test]
+fn kimi_k31_pro_defaults_to_thinking_and_maps_all_claude_model_tiers() {
+    let profile = kimi_profile();
+    let provider = provider_from_model_profile(&profile).unwrap();
+    assert_eq!(provider.base_url.as_deref(), Some("https://api.kimi.ai/coding"));
+    assert_eq!(provider.default_reasoning_level.as_deref(), Some("high"));
+    assert_eq!(
+        default_reasoning_level_for_model("k3.1-pro[1m]").as_deref(),
+        Some("high")
+    );
+    assert!(default_reasoning_level_for_model("k3").is_none());
+
+    let mut command = Command::new("claude");
+    let file = configure_command(&mut command, Some(&provider), None)
+        .unwrap()
+        .unwrap();
+    let settings: Value = serde_json::from_reader(file.reopen().unwrap()).unwrap();
+    for key in [
+        "ANTHROPIC_MODEL",
+        "ANTHROPIC_DEFAULT_OPUS_MODEL",
+        "ANTHROPIC_DEFAULT_SONNET_MODEL",
+        "ANTHROPIC_DEFAULT_HAIKU_MODEL",
+        "ANTHROPIC_DEFAULT_FABLE_MODEL",
+        "CLAUDE_CODE_SUBAGENT_MODEL",
+    ] {
+        assert_eq!(
+            settings["env"][key], "k3.1-pro",
+            "missing Kimi model alias: {key}"
+        );
+    }
+    assert_eq!(settings["env"]["ANTHROPIC_API_KEY"], "private-kimi-key");
+    assert_eq!(settings["modelPicker"]["options"][0]["model"], "k3.1-pro");
+    assert_eq!(settings["modelPicker"]["options"][0]["behavesAs"], "claude-sonnet-4-6");
+}
+
+#[test]
+fn normalize_claude_base_url_strips_only_terminal_v1_segment() {
+    assert_eq!(
+        normalize_claude_base_url("https://api.example/v1").unwrap(),
+        "https://api.example"
+    );
+    assert_eq!(
+        normalize_claude_base_url("https://api.example/coding/v1/").unwrap(),
+        "https://api.example/coding"
+    );
+    assert_eq!(
+        normalize_claude_base_url("https://api.example/coding").unwrap(),
+        "https://api.example/coding"
+    );
+    assert!(normalize_claude_base_url("https://api.example/v10").is_ok());
+    assert!(normalize_claude_base_url("file:///tmp/api").is_err());
+}
+
 #[test]
 fn discovers_native_profiles_without_dotenv_and_reloads_edits() {
     let root = tempfile::tempdir().unwrap();
@@ -309,7 +378,7 @@ fn native_model_allowlist_does_not_imply_a_default_model() {
 fn managed_profiles_override_native_credentials_and_use_messages_endpoint() {
     let p = crate::agent_settings::ModelProfile { id:"kimi".into(), name:"Kimi".into(),
         base_url:"https://api.kimi.com/coding/v1".into(), claude_base_url:None, model:"fixture-model".into(),
-        api_key:Some("fixture-secret".into()), models:vec![], context_tokens:None, _key_configured:false };
+        api_key:Some("fixture-secret".into()), models:vec![], context_tokens:None, _key_configured:false, ..Default::default() };
     let provider = managed_provider(&p);
     let mut cmd = Command::new("claude");
     let file = configure_command(&mut cmd, Some(&provider), Some("high")).unwrap().unwrap();

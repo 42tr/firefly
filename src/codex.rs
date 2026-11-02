@@ -7,6 +7,9 @@ pub use managed::Binding as ThreadBinding;
 pub(crate) use managed::refresh_profiles;
 mod workspace;
 
+use std::sync::Arc;
+use firefly_codex_transport::CodexAppServer;
+
 #[allow(unused_imports)]
 pub use models::{
     hydrate_provider_models, list_model_providers, list_official_models, ModelProvider,
@@ -23,6 +26,12 @@ pub use workspace::{
     workspace_root, WorkspaceEntry, WorkspaceListing,
 };
 pub(crate) use workspace::validate_relative_path;
+
+/// Native CLI profiles share the ordinary server. Database profiles, including
+/// legacy `api-*` IDs, are routed through managed::client's isolated servers.
+pub(crate) async fn app_server() -> anyhow::Result<Arc<CodexAppServer>> {
+    firefly_codex_transport::app_server().await
+}
 
 #[cfg(test)]
 mod tests;

@@ -28,6 +28,8 @@ export function useCodexModels(agent = ref('codex')) {
       const data = await resp.json()
       if (request !== providerRequest) return
       providers.value = data.providers || []
+      const canonical = providers.value.find(item => item.aliases?.includes(provider.value))
+      if (canonical) provider.value = canonical.name
       officialModels.value = data.official_models || []
       modelReasoning.value = data.model_reasoning || []
       modelsError.value = data.official_models_error || ''
