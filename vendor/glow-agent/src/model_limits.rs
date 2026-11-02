@@ -289,6 +289,16 @@ impl Query {
                     }
                 }
             }
+            let url = qianwen_model_url(&self.model);
+            match get_with_user_agent(&self.client, url.clone(), None, "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/131.0.0.0 Safari/537.36").await {
+                Ok(body) => {
+                    if let Some(limits) = parse_qianwen_model(&String::from_utf8_lossy(&body), &self.model, url.to_string()) {
+                        return Ok(limits);
+                    }
+                    tracing::debug!(model = self.model, "千问模型详情页未提供可解析的上下文字段");
+                }
+                Err(reason) => tracing::debug!(model = self.model, url = %url, %reason, "千问模型详情页查询失败"),
+            }
             return Err("模型服务未返回窗口字段，官方文档未提供匹配模型的上下文限制".into());
         }
         Err("模型信息接口未返回匹配模型的上下文窗口".into())
@@ -338,9 +348,16 @@ fn aliyun_host(host: &str) -> bool {
 }
 
 async fn get(client: &reqwest::Client, url: Url, key: Option<&str>) -> Result<Vec<u8>, String> {
+    get_with_user_agent(client, url, key, "").await
+}
+
+async fn get_with_user_agent(client: &reqwest::Client, url: Url, key: Option<&str>, user_agent: &str) -> Result<Vec<u8>, String> {
     let mut request = client
         .get(url)
         .timeout(Duration::from_secs(8));
+    if !user_agent.is_empty() {
+        request = request.header(reqwest::header::USER_AGENT, user_agent);
+    }
     if let Some(key) = key {
         request = request.bearer_auth(key);
     }
@@ -514,6 +531,52 @@ fn aliyun_doc_urls(model: &str) -> Vec<Url> {
         let slug = name.to_ascii_lowercase().replace(['.', '_'], "-");
         Url::parse(&format!("https://help.aliyun.com/zh/model-studio/{slug}")).unwrap()
     }).collect()
+}
+
+fn qianwen_model_url(model: &str) -> Url {
+    let mut url = Url::parse("https://www.qianwenai.com/models").unwrap();
+    url.path_segments_mut().unwrap().push(model);
+    url
+}
+
+fn parse_qianwen_model(page: &str, model: &str, source: String) -> Option<Limits> {
+    let html = Html::parse_document(page);
+    let selector = |query| Selector::parse(query).unwrap();
+    let canonical = html.select(&selector("link[rel=canonical]"))
+        .find_map(|node| node.value().attr("href"))?;
+    let expected = qianwen_model_url(model);
+    if Url::parse(canonical).ok()?.as_str().trim_end_matches('/') != expected.as_str().trim_end_matches('/') {
+        return None;
+    }
+
+    let mut window = None;
+    let mut input = None;
+    let mut output = None;
+    for row in html.select(&selector("#context ~ ul li")) {
+        let label = row.select(&selector("[class*='itemTitle']")).next()?.text().collect::<String>();
+        let value = row.select(&selector("[class*='itemValue']")).next()?.text().collect::<String>();
+        let slot = match label.trim() {
+            "上下文" => &mut window,
+            "最大输入" | "最大输入（思考模式）" => &mut input,
+            "最大输出" | "最大输出（思考模式）" => &mut output,
+            _ => continue,
+        };
+        if let Some(number) = parse_token_count(value.trim()) {
+            *slot = Some(slot.unwrap_or(usize::MAX).min(number));
+        }
+    }
+    Some(Limits { window: window?, input, output, source })
+}
+
+fn parse_token_count(value: &str) -> Option<usize> {
+    let value = value.trim().replace(',', "");
+    let (number, multiplier) = match value.as_bytes().last().copied()? {
+        b'K' | b'k' => (&value[..value.len() - 1], 1_000.0),
+        b'M' | b'm' => (&value[..value.len() - 1], 1_000_000.0),
+        _ => (value.as_str(), 1.0),
+    };
+    let parsed = number.parse::<f64>().ok()? * multiplier;
+    (parsed.is_finite() && parsed > 0.0 && parsed <= usize::MAX as f64).then_some(parsed.round() as usize)
 }
 
 #[cfg(test)]
