@@ -576,6 +576,8 @@ pub(crate) fn configure_command_for_model(
     if let Some(level) = reasoning_level {
         env.insert("CLAUDE_CODE_EFFORT_LEVEL".into(), level.into());
     }
+    env.insert("CLAUDE_CODE_EMIT_SESSION_STATE_EVENTS".into(), "1".into());
+    env.insert("CLAUDE_CODE_BG_TASKS_REPORT_RUNNING".into(), "1".into());
     if env.is_empty() {
         return Ok(None);
     }

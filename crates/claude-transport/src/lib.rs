@@ -9,14 +9,18 @@ use std::{process::Stdio, time::Duration};
 use anyhow::{anyhow, Context};
 use serde_json::Value;
 use tokio::{
-    io::{AsyncBufReadExt, BufReader, Lines},
-    process::{Child, ChildStdout, Command},
+    io::{AsyncBufReadExt, AsyncWriteExt, BufReader},
+    process::{Child, Command},
+    sync::mpsc,
 };
 use tracing::warn;
 
+mod activity;
+pub use activity::Activity;
+
 pub struct ClaudeTurn {
     child: Child,
-    stdout: Lines<BufReader<ChildStdout>>,
+    events: mpsc::Receiver<anyhow::Result<Value>>,
     process_group: firefly_process_control::ProcessGroup,
     stopped: bool,
 }
@@ -27,8 +31,17 @@ impl ClaudeTurn {
     /// stdout carries JSON events and stderr is drained into tracing warnings.
     /// Interrupting or dropping the turn also stops shell/tool descendants.
     pub fn spawn(mut command: Command) -> anyhow::Result<Self> {
+        Self::spawn_with_input(&mut command, false)
+    }
+
+    /// Keep stdin open so task notifications can trigger later assistant turns.
+    pub fn spawn_streaming(mut command: Command) -> anyhow::Result<Self> {
+        Self::spawn_with_input(&mut command, true)
+    }
+
+    fn spawn_with_input(command: &mut Command, streaming: bool) -> anyhow::Result<Self> {
         let mut child = command
-            .stdin(Stdio::null())
+            .stdin(if streaming { Stdio::piped() } else { Stdio::null() })
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .process_group(0)
@@ -63,9 +76,25 @@ impl ClaudeTurn {
             }
         });
 
+        let (sender, events) = mpsc::channel(256);
+        tokio::spawn(async move {
+            let mut lines = BufReader::new(stdout).lines();
+            loop {
+                let event = match lines.next_line().await {
+                    Ok(Some(line)) if line.trim().is_empty() => continue,
+                    Ok(Some(line)) => serde_json::from_str(&line)
+                        .context("无法解析 Claude CLI JSON 消息"),
+                    Ok(None) => break,
+                    Err(error) => Err(anyhow::Error::new(error).context("Claude 传输中断或消息不是有效 UTF-8")),
+                };
+                let failed = event.is_err();
+                if sender.send(event).await.is_err() || failed { break; }
+            }
+        });
+
         Ok(Self {
             child,
-            stdout: BufReader::new(stdout).lines(),
+            events,
             process_group,
             stopped: false,
         })
@@ -74,20 +103,7 @@ impl ClaudeTurn {
     /// Read the next nonempty JSON line. EOF succeeds only when the CLI exits
     /// successfully. This method can be cancelled without losing a partial line.
     pub async fn next_event(&mut self) -> anyhow::Result<Option<Value>> {
-        while let Some(line) = self.stdout.next_line().await.map_err(|error| {
-            if error.kind() == std::io::ErrorKind::InvalidData {
-                anyhow::Error::new(error).context("Claude CLI 消息不是有效 UTF-8")
-            } else {
-                anyhow::Error::new(error).context("Claude 传输中断")
-            }
-        })? {
-            if line.trim().is_empty() {
-                continue;
-            }
-            return serde_json::from_str(&line)
-                .with_context(|| format!("无法解析 Claude CLI 消息: {}", line))
-                .map(Some);
-        }
+        if let Some(event) = self.events.recv().await { return event.map(Some); }
 
         let status = self
             .child
@@ -103,6 +119,24 @@ impl ClaudeTurn {
         } else {
             Err(anyhow!("Claude CLI 异常退出: {}", status))
         }
+    }
+
+    pub fn is_running(&mut self) -> anyhow::Result<bool> {
+        if self.stopped { return Ok(false); }
+        if self.child.try_wait()?.is_some() {
+            self.process_group.disarm();
+            self.stopped = true;
+            return Ok(false);
+        }
+        Ok(true)
+    }
+
+    pub async fn send(&mut self, message: &Value) -> anyhow::Result<()> {
+        let stdin = self.child.stdin.as_mut().context("Claude 流式输入已关闭")?;
+        let mut line = serde_json::to_vec(message)?;
+        line.push(b'\n');
+        stdin.write_all(&line).await.context("写入 Claude 流式输入失败")?;
+        stdin.flush().await.context("刷新 Claude 流式输入失败")
     }
 
     pub async fn interrupt(&mut self) -> anyhow::Result<()> {

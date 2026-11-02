@@ -67,7 +67,7 @@ async fn invalid_utf8_is_a_protocol_error() {
 async fn malformed_json_is_a_protocol_error() {
     let mut turn = ClaudeTurn::spawn(python("print('not-json')")).unwrap();
     let error = next_event(&mut turn).await.unwrap_err();
-    assert!(format!("{error:#}").contains("无法解析 Claude CLI 消息: not-json"));
+    assert!(format!("{error:#}").contains("无法解析 Claude CLI JSON 消息"));
     turn.interrupt().await.unwrap();
 }
 
@@ -80,6 +80,25 @@ async fn nonzero_exit_is_reported_after_the_last_event() {
     assert!(message.contains("Claude CLI 异常退出"), "{message}");
     assert!(message.contains('7'), "{message}");
     turn.interrupt().await.unwrap();
+}
+
+#[tokio::test]
+async fn streaming_input_survives_a_result_and_accepts_the_next_prompt() {
+    let mut turn = ClaudeTurn::spawn_streaming(python(r#"
+import json,sys
+for line in sys.stdin:
+    user=json.loads(line)
+    print(json.dumps(dict(user,isReplay=True)),flush=True)
+    print(json.dumps({'type':'result','result':user['message']['content']}),flush=True)
+"#)).unwrap();
+    for text in ["--not-a-flag", "second\nmessage"] {
+        turn.send(&json!({"type":"user","message":{"role":"user","content":text}})).await.unwrap();
+        assert_eq!(next_event(&mut turn).await.unwrap().unwrap()["message"]["content"], text);
+        assert_eq!(next_event(&mut turn).await.unwrap().unwrap()["result"], text);
+        assert!(turn.is_running().unwrap());
+    }
+    turn.interrupt().await.unwrap();
+    assert!(!turn.is_running().unwrap());
 }
 
 #[cfg(target_os = "linux")]

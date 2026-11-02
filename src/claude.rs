@@ -9,6 +9,10 @@ use crate::config;
 pub use firefly_claude_transport::{session_id, session_title, text_delta};
 
 mod settings;
+mod sessions;
+pub use sessions::acquire;
+#[cfg(test)]
+pub use sessions::Lease;
 pub use settings::{cli_defaults, effective_model, normalize_reasoning_level, providers, REASONING_LEVELS};
 
 pub async fn normalize_provider(provider: Option<String>) -> anyhow::Result<Option<String>> {
@@ -30,6 +34,7 @@ pub struct ClaudeTurn {
 }
 
 impl ClaudeTurn {
+    pub(crate) fn is_running(&mut self) -> anyhow::Result<bool> { self.transport.is_running() }
     pub async fn next_event(&mut self) -> anyhow::Result<Option<Value>> {
         self.transport.next_event().await
     }
@@ -37,18 +42,30 @@ impl ClaudeTurn {
     pub async fn interrupt(&mut self) -> anyhow::Result<()> {
         self.transport.interrupt().await
     }
+
+    async fn send_prompt(&mut self, prompt: &str) -> anyhow::Result<String> {
+        let id = uuid::Uuid::new_v4().to_string();
+        self.transport.send(&serde_json::json!({
+            "type":"user", "uuid":id, "session_id":"", "parent_tool_use_id":null,
+            "message":{"role":"user","content":prompt},
+        })).await?;
+        Ok(id)
+    }
 }
 
-/// `--print` 单次执行：turn 结束即退出，后台任务被终止、完成通知不会送达，需在提示词中明确告知。
+/// The host keeps streaming input open until all work and its follow-up finish.
 static CLAUDE_APPEND_SYSTEM_PROMPT: &str = include_str!("../prompts/claude.md");
 
 /// 构建 claude CLI 参数。
-fn claude_args(cfg: &config::Config, session_id: Option<&str>, model: &str, reasoning_level: Option<&str>, prompt: &str) -> Vec<String> {
+fn claude_args(cfg: &config::Config, session_id: Option<&str>, model: &str, reasoning_level: Option<&str>) -> Vec<String> {
     let mut args = vec![
         "--print".to_string(),
         "--verbose".to_string(),
         "--output-format".to_string(),
         "stream-json".to_string(),
+        "--input-format".to_string(),
+        "stream-json".to_string(),
+        "--replay-user-messages".to_string(),
         "--include-partial-messages".to_string(),
         "--permission-mode".to_string(),
         cfg.claude_permission_mode.clone(),
@@ -70,16 +87,12 @@ fn claude_args(cfg: &config::Config, session_id: Option<&str>, model: &str, reas
         args.push("--resume".to_string());
         args.push(session_id.to_string());
     }
-    // `--allowedTools` accepts multiple values, so terminate option parsing
-    // explicitly before passing the positional prompt.
-    args.push("--".to_string());
-    args.push(prompt.to_string());
     args
 }
 
-pub async fn start_turn(cwd: &Path, session_id: Option<&str>, provider: Option<&str>, model: Option<&str>, reasoning_level: Option<&str>, prompt: &str) -> anyhow::Result<ClaudeTurn> {
+pub async fn prepare_turn(cwd: &Path, session_id: Option<&str>, provider: Option<&str>, model: Option<&str>, reasoning_level: Option<&str>) -> anyhow::Result<PreparedTurn> {
     if let Some(profile) = crate::cli_profiles::resolve(provider).await? {
-        return start_turn_with_model_profile(cwd, session_id, &profile, model, reasoning_level, prompt).await;
+        return prepare_turn_with_model_profile(cwd, session_id, &profile, model, reasoning_level).await;
     }
     let cfg = config::get();
     let profile = settings::resolve_provider(provider)?;
@@ -87,13 +100,13 @@ pub async fn start_turn(cwd: &Path, session_id: Option<&str>, provider: Option<&
     let effort = reasoning_level.map(str::to_owned)
         .or_else(|| profile.as_ref().and_then(|profile| profile.default_reasoning_level.clone()))
         .or_else(|| settings::default_reasoning_level_for_model(&model));
-    spawn_configured(&cfg, cwd, session_id, profile.as_ref(), &model, effort, prompt)
+    prepare_configured(&cfg, cwd, session_id, profile.as_ref(), &model, effort)
 }
 
-pub async fn start_turn_with_model_profile(
+pub async fn prepare_turn_with_model_profile(
     cwd: &Path, session_id: Option<&str>, profile: &crate::agent_settings::ModelProfile,
-    model: Option<&str>, reasoning_level: Option<&str>, prompt: &str,
-) -> anyhow::Result<ClaudeTurn> {
+    model: Option<&str>, reasoning_level: Option<&str>,
+) -> anyhow::Result<PreparedTurn> {
     anyhow::ensure!(profile.supports("claude"), "Claude API 配置协议不匹配");
     let cfg = config::get();
     let mut profile = profile.clone();
@@ -102,20 +115,69 @@ pub async fn start_turn_with_model_profile(
         else { settings::managed_provider(&profile) };
     let effort = profile.reasoning_level(&profile.model, reasoning_level, Some(REASONING_LEVELS))
         .or_else(|| (profile.protocol == "anthropic").then(|| native.default_reasoning_level.clone()).flatten());
-    spawn_configured(&cfg, cwd, session_id, Some(&native), &profile.model, effort, prompt)
+    prepare_configured(&cfg, cwd, session_id, Some(&native), &profile.model, effort)
 }
 
-fn spawn_configured(
+fn prepare_configured(
     cfg: &config::Config, cwd: &Path, session_id: Option<&str>, profile: Option<&settings::ClaudeProvider>,
-    model: &str, effort: Option<String>, prompt: &str,
-) -> anyhow::Result<ClaudeTurn> {
+    model: &str, effort: Option<String>,
+) -> anyhow::Result<PreparedTurn> {
     let effort = normalize_reasoning_level(effort)?;
     let mut command = Command::new("claude");
     let settings_file = settings::configure_command_for_model(&mut command, profile, Some(model), effort.as_deref())?;
-    command.current_dir(cwd).args(claude_args(cfg, session_id, model, effort.as_deref(), prompt));
-    spawn_turn(command, settings_file)
+    command.current_dir(cwd).args(claude_args(cfg, session_id, model, effort.as_deref()));
+    PreparedTurn::new(command, settings_file)
 }
 
+pub struct PreparedTurn {
+    command: Command,
+    settings_file: Option<tempfile::NamedTempFile>,
+    identity: [u8; 32],
+}
+
+impl PreparedTurn {
+    #[cfg(test)]
+    pub(crate) fn for_test(command: Command) -> Self { Self::new(command, None).unwrap() }
+    fn new(command: Command, settings_file: Option<tempfile::NamedTempFile>) -> anyhow::Result<Self> {
+        use sha2::{Digest, Sha256};
+        let mut hash = Sha256::new();
+        let mut add = |value: &[u8]| { hash.update(value.len().to_le_bytes()); hash.update(value); };
+        let mut skip = false;
+        for arg in command.as_std().get_args() {
+            if skip { skip = false; continue; }
+            if arg == "--settings" || arg == "--resume" { skip = true; continue; }
+            add(arg.to_string_lossy().as_bytes());
+        }
+        if let Some(cwd) = command.as_std().get_current_dir() {
+            add(cwd.to_string_lossy().as_bytes());
+            // A changed local/native setting must take effect on the next job.
+            for parent in cwd.ancestors() {
+                for name in ["settings.json", "settings.local.json"] {
+                    if let Ok(bytes) = std::fs::read(parent.join(".claude").join(name)) { add(&bytes); }
+                }
+            }
+        }
+        let native_dir = std::env::var_os("CLAUDE_CONFIG_DIR").map(std::path::PathBuf::from)
+            .or_else(|| std::env::var_os("HOME").map(|home| std::path::PathBuf::from(home).join(".claude")));
+        if let Some(path) = native_dir {
+            if let Ok(bytes) = std::fs::read(path.join("settings.json")) { add(&bytes); }
+        }
+        for (key, value) in command.as_std().get_envs() {
+            add(key.to_string_lossy().as_bytes());
+            if let Some(value) = value { add(value.to_string_lossy().as_bytes()); }
+        }
+        if let Some(file) = &settings_file { add(&std::fs::read(file.path())?); }
+        Ok(Self { command, settings_file, identity: hash.finalize().into() })
+    }
+
+    fn spawn(self) -> anyhow::Result<ClaudeTurn> {
+        let transport = firefly_claude_transport::ClaudeTurn::spawn_streaming(self.command)
+            .context("启动 Claude CLI 失败，请确认 Claude Code 已安装并完成登录")?;
+        Ok(ClaudeTurn { transport, _settings_file: self.settings_file })
+    }
+}
+
+#[cfg(test)]
 fn spawn_turn(command: Command, settings_file: Option<tempfile::NamedTempFile>) -> anyhow::Result<ClaudeTurn> {
     let transport = firefly_claude_transport::ClaudeTurn::spawn(command)
         .context("启动 Claude CLI 失败，请确认 Claude Code 已安装并完成登录")?;
@@ -179,12 +241,13 @@ print(json.dumps({'effort': settings['env']['CLAUDE_CODE_EFFORT_LEVEL'],
     }
 
     #[test]
-    fn one_shot_prompt_precedes_positional_prompt() {
+    fn persistent_input_has_no_positional_prompt() {
         crate::config::init_test_config();
-        let args = claude_args(&crate::config::get(), Some("session-1"), "default", None, "--not-a-flag");
+        let args = claude_args(&crate::config::get(), Some("session-1"), "default", None);
         let system = args.iter().position(|arg| arg == "--append-system-prompt").unwrap();
-        assert!(args[system + 1].contains("no task-completion notification"));
-        assert_eq!(&args[args.len() - 2..], ["--", "--not-a-flag"]);
+        assert!(args[system + 1].contains("persistent streaming input"));
+        assert!(args.windows(2).any(|pair| pair == ["--input-format", "stream-json"]));
+        assert!(args.iter().any(|arg| arg == "--replay-user-messages"));
     }
 
     #[test]
@@ -195,11 +258,11 @@ print(json.dumps({'effort': settings['env']['CLAUDE_CODE_EFFORT_LEVEL'],
         })).unwrap();
         for session in [None,Some("same-session")] {
             for expected in ["opus","global-model"] {
-                let args = claude_args(&cfg,session,expected,None,"question");
+                let args = claude_args(&cfg,session,expected,None);
                 let model = args.iter().position(|arg| arg == "--model").unwrap();
                 assert_eq!(args[model+1],expected);
                 assert_eq!(args.iter().any(|arg| arg == "--resume"),session.is_some());
-                assert_eq!(args.last().unwrap(),"question");
+                assert!(!args.iter().any(|arg| arg == "question"));
             }
         }
         assert_eq!(super::cli_defaults(&cfg).unwrap().models,["global-model","sonnet","opus","custom-model"]);
@@ -209,10 +272,10 @@ print(json.dumps({'effort': settings['env']['CLAUDE_CODE_EFFORT_LEVEL'],
     fn claude_effort_is_explicit_on_new_and_resumed_turns_and_default_omits_flag() {
         crate::config::init_test_config();
         for session in [None, Some("same-session")] {
-            let args = claude_args(&crate::config::get(), session, "opus", Some("max"), "question");
+            let args = claude_args(&crate::config::get(), session, "opus", Some("max"));
             let effort = args.iter().position(|arg| arg == "--effort").unwrap();
             assert_eq!(args[effort + 1], "max");
-            let defaults = claude_args(&crate::config::get(), session, "default", None, "question");
+            let defaults = claude_args(&crate::config::get(), session, "default", None);
             assert!(!defaults.iter().any(|arg| arg == "--effort"));
         }
     }

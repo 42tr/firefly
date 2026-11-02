@@ -329,18 +329,18 @@ fn invocation_preserves_native_settings_isolates_routing_and_overrides_effort_fo
 }
 
 #[test]
-fn default_cli_does_not_clear_credentials_or_add_settings_unless_effort_is_selected() {
+fn default_cli_preserves_auth_and_enables_session_lifecycle_events() {
     let mut command = Command::new("claude");
-    assert!(configure_command(&mut command, None, None)
-        .unwrap()
-        .is_none());
-    assert_eq!(command.as_std().get_envs().count(), 0);
-    assert_eq!(command.as_std().get_args().count(), 0);
+    let file = configure_command(&mut command, None, None).unwrap().unwrap();
+    let settings: Value = serde_json::from_reader(file.reopen().unwrap()).unwrap();
+    assert_eq!(settings["env"]["CLAUDE_CODE_EMIT_SESSION_STATE_EVENTS"], "1");
+    assert_eq!(settings["env"]["CLAUDE_CODE_BG_TASKS_REPORT_RUNNING"], "1");
+    assert!(settings["env"].get("ANTHROPIC_API_KEY").is_none());
     let file = configure_command(&mut command, None, Some("low"))
         .unwrap()
         .unwrap();
     let value: Value = serde_json::from_reader(file.reopen().unwrap()).unwrap();
-    assert_eq!(value, json!({"env":{"CLAUDE_CODE_EFFORT_LEVEL":"low"}}));
+    assert_eq!(value["env"]["CLAUDE_CODE_EFFORT_LEVEL"], "low");
     for level in REASONING_LEVELS {
         assert_eq!(
             normalize_reasoning_level(Some(format!(" {level} ")))

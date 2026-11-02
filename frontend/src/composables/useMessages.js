@@ -269,6 +269,7 @@ export function useMessages() {
         list[i].jobStartedAt = record.processing_started_at || null
         list[i].jobCompletedAt = record.processing_completed_at || null
         list[i].jobStatus = record.processing_status || (record.role === 'process' ? record.status : null)
+        if (record.role === 'user') list[i].runtimeActivity = record.metadata?.runtime_activity || null
       }
     })
     const jobStates = new Map(records.filter(record => record.generation_job_id && record.processing_status)

@@ -406,6 +406,7 @@ const ensurePendingConversation = async () => {
 
 const {
   input,
+  runtimeActivity,
   sendMessage,
   retryMessage,
   getLocalSubmissions,
@@ -451,6 +452,11 @@ const statusText = computed(() => {
   if (isCreatingConversation.value) return '正在创建对话…'
   if (isLoadingMessages.value) return '历史同步中…'
   if (isStreaming.value) {
+    if (runtimeActivity.value?.phase === 'waiting_background') {
+      return `正在等待 ${runtimeActivity.value.background_count || 1} 个子任务…`
+    }
+    if (runtimeActivity.value?.phase === 'processing_results') return '正在处理子任务结果…'
+    if (runtimeActivity.value?.phase === 'requires_action') return '等待 Claude 权限或输入…'
     // Scan from the end without copying the array twice per delta.
     let runningStep = null
     let lastMessage = null

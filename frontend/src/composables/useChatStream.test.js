@@ -72,6 +72,49 @@ const transformSnapshot = records => records.map(record => ({
   ...record, jobId: record.generation_job_id, generationJobId: record.generation_job_id,
 }))
 
+test('Claude background waits survive stream disconnects and only finish on the job terminal event', async t => {
+  const app = setup({ followQueue: false })
+  t.after(app.abortStream)
+  const requests = []
+  t.mock.method(globalThis, 'fetch', async (url, options) => {
+    requests.push([url, options?.method || 'GET'])
+    return sse([
+      ['assistant_delta', { seq: 1, delta: '等待子任务' }],
+      ['assistant_turn_done', { seq: 2 }],
+      ['runtime_activity', { seq: 3, phase: 'waiting_background', background_count: 2 }],
+    ])
+  })
+  await app.resumeJob('claude-job', 1)
+  assert.equal(app.isStreaming.value, true)
+  assert.equal(app.runtimeActivity.value.phase, 'waiting_background')
+  assert.equal(app.runtimeActivity.value.background_count, 2)
+  assert.equal(requests.some(([, method]) => method === 'DELETE'), false)
+  t.mock.method(globalThis, 'fetch', async () => sse([
+    ['runtime_activity', { seq: 1, phase: 'processing_results', background_count: 0 }],
+    ['assistant_delta', { seq: 2, delta: '汇总完成' }],
+    ['assistant_done', { seq: 3 }],
+  ]))
+  await app.resumeJob('claude-job', 1)
+  assert.equal(app.isStreaming.value, false)
+  assert.equal(app.runtimeActivity.value, null)
+  assert.equal(app.messages.value.at(-1).content, '汇总完成')
+})
+
+test('a background follow-up starts a new reply without completing the generation', async t => {
+  const app = setup({ followQueue: false })
+  t.after(app.abortStream)
+  t.mock.method(globalThis, 'fetch', async () => sse([
+    ['assistant_delta', { seq: 1, delta: '等待子任务' }],
+    ['assistant_turn_done', { seq: 2 }],
+    ['runtime_activity', { seq: 3, phase: 'processing_results', background_count: 0 }],
+    ['assistant_delta', { seq: 4, delta: '汇总完成' }],
+    ['assistant_done', { seq: 5 }],
+  ]))
+  await app.resumeJob('claude-job', 1)
+  assert.deepEqual(app.messages.value.filter(message => message.role === 'assistant').map(message => message.content),
+    ['等待子任务', '汇总完成'])
+})
+
 test('native generated images are visible reply cards even when tools follow them', async t => {
   const app = setup({ followQueue: false, normalizeAttachments: files => files || [] })
   t.after(app.abortStream)
@@ -312,6 +355,7 @@ for (const reason of ['execution_changed', 'execution_recovered', 'log_expired',
       { role: 'user', content: 'next job', generationJobId: 'next' }]
     const records = [snapshotMessage(1, 'user', 'question', 'running'),
       ...Array.from({ length: 130 }, (_, i) => snapshotMessage(i + 2, 'assistant', `saved ${i}`, 'running'))]
+    records[0].metadata = { runtime_activity: { phase: 'waiting_background', background_count: 2 } }
     let snapshots = 0
     const requests = []
     t.mock.method(globalThis, 'fetch', async url => {
@@ -331,6 +375,8 @@ for (const reason of ['execution_changed', 'execution_recovered', 'log_expired',
     assert.equal(app.messages.value.at(-1).content, 'next job')
     assert.equal(app.messages.value.some(message => /stale fragment|must ignore/.test(message.content)), false)
     assert.equal(app.isStreaming.value, true)
+    assert.equal(app.runtimeActivity.value.phase, 'waiting_background')
+    assert.equal(app.runtimeActivity.value.background_count, 2)
     const subscription = app.subscriptions[0]
     assert.equal(subscription.topic, 'process')
     assert.deepEqual(subscription.params, { conversation_id: 1, job_id: 'job-1' })
@@ -340,6 +386,7 @@ for (const reason of ['execution_changed', 'execution_recovered', 'log_expired',
     assert.equal(app.isStreaming.value, true)
     subscription.receive({ messages: records.map(record => ({ ...record, processing_status: 'completed' })) })
     assert.equal(app.isStreaming.value, false)
+    assert.equal(app.runtimeActivity.value, null)
     assert.equal(subscription.stopped, true)
     t.mock.timers.tick(30000)
     assert.equal(snapshots, 1)

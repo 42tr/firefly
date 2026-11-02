@@ -61,6 +61,7 @@ pub struct GenerationJob {
     event_log_bytes: AtomicU64,
     /// 失败原因（仅在 status == STATUS_FAILED 时有效）
     pub error_message: Mutex<Option<String>>,
+    runtime_activity: Mutex<Option<Value>>,
     cancellation: CancellationToken,
     terminal_gate: tokio::sync::Mutex<()>,
 }
@@ -81,6 +82,7 @@ impl GenerationJob {
             event_log: Mutex::new(BTreeMap::new()),
             event_log_bytes: AtomicU64::new(0),
             error_message: Mutex::new(None),
+            runtime_activity: Mutex::new(None),
             cancellation: CancellationToken::new(),
             terminal_gate: tokio::sync::Mutex::new(()),
         }
@@ -152,6 +154,20 @@ impl GenerationJob {
 
     pub fn cancellation_token(&self) -> CancellationToken {
         self.cancellation.clone()
+    }
+
+    pub fn runtime_activity(&self) -> Option<Value> {
+        lock_unpoisoned(&self.runtime_activity).clone()
+    }
+
+    pub async fn set_runtime_activity(&self, activity: Value) -> anyhow::Result<()> {
+        if self.runtime_activity().as_ref() == Some(&activity) { return Ok(()); }
+        sqlx::query("UPDATE assistant_messages SET metadata=json_set(COALESCE(metadata,'{}'),'$.runtime_activity',json(?1)) WHERE generation_job_id=?2 AND conversation_id=?3 AND role='user'")
+            .bind(&activity).bind(self.id).bind(self.conversation_id).execute(crate::db::pool()).await?;
+        *lock_unpoisoned(&self.runtime_activity) = Some(activity.clone());
+        self.emit("runtime_activity", activity);
+        crate::assistant_events::notify(Some(&self.user_id), "conversations");
+        Ok(())
     }
 
     /// The worker retains its database claim until execution and cleanup stop.
@@ -351,6 +367,7 @@ pub fn stream_for_job_from(
                     "job_id": job.id, "conversation_id": job.conversation_id,
                     "execution_id": job.execution_id, "seq": 0,
                     "started_at": job.started_at,
+                    "activity": job.runtime_activity(),
                 })
                 .to_string(),
             )))

@@ -504,6 +504,7 @@ pub async fn get_active_generation(
                 "status": job.status_name(),
                 "last_event_seq": last_seq,
                 "execution_id": job.execution_id,
+                "activity": job.runtime_activity(),
             })));
         }
     }

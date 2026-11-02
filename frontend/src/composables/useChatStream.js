@@ -57,6 +57,7 @@ export function useChatStream({
   followQueue = true,
 }) {
   const input = ref('')
+  const runtimeActivity = ref(null)
   const localSubmissions = new Map()
   // A stream can start or finish before the POST response identifies its user
   // message. Retain those observations until outstanding submissions settle.
@@ -199,6 +200,7 @@ export function useChatStream({
   }
 
   const abortStream = () => {
+    runtimeActivity.value = null
     streamGeneration += 1
     if (activeStream) {
       activeStream.abort()
@@ -336,6 +338,8 @@ export function useChatStream({
       const records = data.messages || []
       const status = records.find(record => record.role === 'user')?.processing_status
         || records.find(record => record.processing_status)?.processing_status
+      runtimeActivity.value = ['running', 'queued', 'cancelling'].includes(status)
+        ? records.find(record => record.role === 'user')?.metadata?.runtime_activity || null : null
       setJobTiming(jobId, { status, error: records.find(record => record.processing_error)?.processing_error })
       const restored = transformServerMessages(records, { preserveRunning: ['running', 'queued', 'cancelling'].includes(status) })
       const belongsToJob = message => message.jobId === jobId || message.generationJobId === jobId
@@ -422,6 +426,7 @@ export function useChatStream({
     }
 
     if (eventType === 'job_started' || eventType === 'stream_started') {
+      if (payload.activity !== undefined) runtimeActivity.value = payload.activity
       if (payload.job_id) {
         currentJobId = payload.job_id
       }
@@ -447,7 +452,12 @@ export function useChatStream({
     currentEventTime = getTimestamp(payload.occurred_at) !== null ? payload.occurred_at : null
     const eventTime = currentEventTime || new Date().toISOString()
 
-    if (eventType === 'handoff_started') {
+    if (eventType === 'runtime_activity') {
+      runtimeActivity.value = payload
+    } else if (eventType === 'assistant_turn_done') {
+      // Background notifications may start another model turn in the same job.
+      context.activeAssistantMessage = null
+    } else if (eventType === 'handoff_started') {
       context.activeAssistantMessage = null
       const existing = findHandoff(payload.id, payload.agent)
       if (existing) {
@@ -615,6 +625,7 @@ export function useChatStream({
         }
       }
     } else if (eventType === 'assistant_done') {
+      runtimeActivity.value = null
       const finishedJobId = currentJobId
       const lastMessage = finishedJobId && [...messages.value].reverse().find(message => message.jobId === finishedJobId
         || message.generationJobId === finishedJobId)
@@ -674,6 +685,7 @@ export function useChatStream({
       fetchConversations()
       resumeNextQueued(streamingConversationId, finishedJobId)
     } else if (eventType === 'error') {
+      runtimeActivity.value = null
       streamDoneReceived = true
       clearReconnect()
       context.activeAssistantMessage = null
@@ -819,6 +831,7 @@ export function useChatStream({
 
   const resumeJob = async (jobId, conversationId) => {
     if (!jobId || !conversationId) return
+    runtimeActivity.value = messages.value.find(message => message.generationJobId === jobId)?.runtimeActivity || null
     stopRecovery()
     if (activeStream) {
       activeStream.abort()
@@ -1046,6 +1059,7 @@ export function useChatStream({
 
   return {
     input,
+    runtimeActivity,
     queuedMessages,
     removeQueuedMessage,
     sendMessage,
