@@ -31,7 +31,7 @@ pub use extensions::{ContextManifest, ExtensionConfig, InvocationScope, ToolOrig
 pub use glow_agent_macros::tool;
 pub use message::{Content, ImageDetail, ImageSource, IntoPrompt, Message, Role};
 #[cfg(feature = "limits")]
-pub use model_limits::ModelBudget;
+pub use model_limits::{ModelBudget, ModelLimits};
 pub use model::{Model, ModelEvent, ModelEventSink, ModelRequest, ModelResponse, Usage};
 pub use policy::{AllowAll, Policy};
 pub use providers::openai::OpenAIModel;

@@ -418,7 +418,7 @@ async fn all_catalog_models_persist_with_independent_agent_selection_and_budgets
     let mut settings = fixture(); settings.revision = initial.revision;
     settings.profiles[0].models = vec![
         ProfileModel { id:"fixture-model".into(), context_length:Some(65536), input_budget:Some(60000),
-            reasoning_levels:Some(vec!["low".into(),"high".into(),"max".into()]), default_reasoning_level:Some("high".into()) },
+            reasoning_levels:Some(vec!["low".into(),"high".into(),"max".into()]), default_reasoning_level:Some("high".into()), ..Default::default() },
         ProfileModel { id:"smaller-model".into(), context_length:Some(16384), input_budget:Some(15000), ..Default::default() },
     ];
     settings.firefly.model = Some("smaller-model".into());

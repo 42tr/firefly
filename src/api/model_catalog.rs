@@ -71,7 +71,20 @@ fn info(id: String, value: &Value) -> ModelInfo {
         (budget >= 1024).then_some(budget)
     });
     let (reasoning_levels, default_reasoning_level) = reasoning(value);
-    ModelInfo { id, context_length, input_budget, reasoning_levels, default_reasoning_level }
+    ModelInfo { id, context_length, input_budget, reasoning_levels, default_reasoning_level, ..Default::default() }
+}
+
+async fn enrich_limits(client: &reqwest::Client, base: &str, key: &str, mut model: ModelInfo) -> ModelInfo {
+    let mut budget = g::ModelBudget::queried(client.clone(), base, key, &model.id, None);
+    if let Some(pool) = db::maybe_pool() { budget = budget.with_limits_cache(pool.clone()); }
+    if let Ok(limits) = budget.limits().await {
+        if let Ok(input_budget) = limits.input_budget() {
+            model.context_length = Some(limits.window);
+            model.input_budget = Some(input_budget);
+            model.context_source = Some(limits.source);
+        }
+    }
+    model
 }
 
 fn reasoning(value: &Value) -> (Option<Vec<String>>, Option<String>) {
@@ -95,6 +108,11 @@ fn reasoning(value: &Value) -> (Option<Vec<String>>, Option<String>) {
     (levels, default)
 }
 async fn fetch_catalog(client: &reqwest::Client, mut base: reqwest::Url, key: &str) -> Result<Vec<ModelInfo>, String> {
+    let service_base = base.to_string();
+    let host = base.host_str().unwrap_or_default();
+    let aliyun = host.ends_with(".maas.aliyuncs.com") || host == "dashscope.aliyuncs.com"
+        || host == "dashscope-intl.aliyuncs.com" || host.ends_with(".dashscope.aliyuncs.com")
+        || host.ends_with(".dashscope-intl.aliyuncs.com");
     base.path_segments_mut().map_err(|_| "模型服务地址无效")?.pop_if_empty().push("models");
     // Some Responses-compatible relays expose the catalog at the origin's
     // /v1/models instead of beneath the configured Responses base path.
@@ -126,10 +144,10 @@ async fn fetch_catalog(client: &reqwest::Client, mut base: reqwest::Url, key: &s
     // Bound optional per-model requests, retaining all list entries and every detail
     // received before the deadline. Providers may have large catalogs.
     let requests = stream::iter(models.clone().into_iter().enumerate().filter(|(_, m)| m.input_budget.is_none() || m.reasoning_levels.is_none()).map(|(index, mut model)| {
-        let client = client.clone(); let key = key.to_owned(); let mut url = base.clone();
+        let client = client.clone(); let key = key.to_owned(); let mut url = base.clone(); let service_base = service_base.clone();
         async move {
             if let Ok(mut path) = url.path_segments_mut() { path.push(&model.id); } else { return (index, model); }
-            let result = match get_json(&client, url, &key).await {
+            let mut result = match get_json(&client, url, &key).await {
                 Ok(detail) if detail.get("id").or_else(|| detail.get("model")).and_then(Value::as_str) == Some(model.id.as_str()) => {
                     let result = info(model.id.clone(), &detail);
                     model.context_length = result.context_length.or(model.context_length);
@@ -143,6 +161,11 @@ async fn fetch_catalog(client: &reqwest::Client, mut base: reqwest::Url, key: &s
                 }
                 _ => model,
             };
+            // Token Plan's compatible catalog only advertises IDs. Reuse the
+            // runtime's native metadata / verified official-doc fallback.
+            if aliyun && result.input_budget.is_none() {
+                result = enrich_limits(&client, &service_base, &key, result).await;
+            }
             (index, result)
         }
     })).buffer_unordered(8);
@@ -184,6 +207,31 @@ mod tests {
         assert_eq!(reasoning(&json!({"think_efforts":{"support":false,"valid_efforts":["high"]}})), (Some(vec![]),None));
         assert_eq!(reasoning(&json!({"supports_reasoning":true})), (None,None));
         assert_eq!(reasoning(&json!({"reasoning_levels":["high"],"default_reasoning_level":"medium"})), (Some(vec!["high".into()]),None));
+    }
+
+    #[tokio::test]
+    async fn discovery_reuses_runtime_limits_with_provenance_and_safe_budget() {
+        let pool = crate::db::test_pool().await;
+        crate::db::set_test_pool(pool.clone());
+        let app = Router::new().route("/v1/models/available", get(|| async {
+            Json(json!({"id":"available", "context_window":1000000, "max_input_tokens":983616, "max_output_tokens":131072}))
+        }));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let base = format!("http://{}/v1", listener.local_addr().unwrap());
+        let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        let client = reqwest::Client::builder().no_proxy().build().unwrap();
+        let model = info("available".into(), &json!({"id":"available"}));
+        let enriched = enrich_limits(&client, &base, "private-fixture", model.clone()).await;
+        assert_eq!(enriched.context_length, Some(1000000));
+        assert_eq!(enriched.input_budget, Some(825482));
+        assert_eq!(enriched.context_source.as_deref(), Some(format!("{base}/models/available").as_str()));
+        let count: i64 = sqlx::query_scalar("SELECT count(*) FROM model_limits_cache").fetch_one(&pool).await.unwrap();
+        assert_eq!(count, 1);
+        server.abort();
+        let cached = enrich_limits(&client, &base, "private-fixture", model).await;
+        assert_eq!(cached.context_length, enriched.context_length);
+        assert_eq!(cached.context_source, enriched.context_source);
+        assert!(g::ModelBudget::fixed(32000).limits().await.is_err());
     }
 
     #[tokio::test]

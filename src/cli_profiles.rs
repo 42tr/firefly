@@ -55,7 +55,7 @@ mod tests {
         let mut p = profile();
         p.models = vec![
             crate::agent_settings::ProfileModel { id:"test-model".into(), context_length:Some(65536), input_budget:Some(60000),
-                reasoning_levels:Some(vec!["low".into(),"high".into(),"max".into()]), default_reasoning_level:Some("high".into()) },
+                reasoning_levels:Some(vec!["low".into(),"high".into(),"max".into()]), default_reasoning_level:Some("high".into()), ..Default::default() },
             crate::agent_settings::ProfileModel { id:"second-model".into(), context_length:Some(32768), input_budget:Some(30000), ..Default::default() },
         ];
         settings.profiles.push(p); settings.firefly.model_profile=Some("kimi".into());

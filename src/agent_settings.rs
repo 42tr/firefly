@@ -20,6 +20,8 @@ pub struct ProfileModel {
     #[serde(default)]
     pub context_length: Option<usize>,
     #[serde(default)]
+    pub context_source: Option<String>,
+    #[serde(default)]
     pub input_budget: Option<usize>,
     /// None means the service did not advertise effort controls; [] explicitly disables them.
     #[serde(default)]
@@ -430,6 +432,9 @@ impl Settings {
                 !m.id.trim().is_empty() && m.id.len() <= 256 && !m.id.chars().any(char::is_control)
                     && model_ids.insert(&m.id)
                     && m.context_length.is_none_or(|n| (1..=100_000_000).contains(&n))
+                    && m.context_source.as_ref().is_none_or(|source| source.len() <= 2048
+                        && reqwest::Url::parse(source).is_ok_and(|url| matches!(url.scheme(), "http" | "https")
+                            && url.host_str().is_some() && url.username().is_empty() && url.password().is_none()))
                     && m.input_budget.is_none_or(|n| (1024..=100_000_000).contains(&n)
                         && m.context_length.is_none_or(|window| n <= window))
                     && m.reasoning_levels.as_ref().is_none_or(|levels| levels.len() <= 32

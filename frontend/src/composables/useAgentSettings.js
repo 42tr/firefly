@@ -16,7 +16,7 @@ export function settingsPayload(settings) {
       id: profile.id, name: profile.name, base_url: profile.base_url, model: profile.model,
       agent: profile.agent || "shared", protocol: profile.protocol || "responses",
       model_discovery: profile.model_discovery || "auto", reasoning_levels: profile.reasoning_levels || [],
-      models: (profile.models || []).map(item => ({ id: item.id, context_length: item.context_length ?? null, input_budget: item.input_budget ?? null,
+      models: (profile.models || []).map(item => ({ id: item.id, context_length: item.context_length ?? null, context_source: item.context_source ?? null, input_budget: item.input_budget ?? null,
         reasoning_levels: item.reasoning_levels ?? null, default_reasoning_level: item.default_reasoning_level ?? null })),
       claude_base_url: profile.claude_base_url?.trim() || null,
       context_tokens: profile.context_tokens === '' || profile.context_tokens == null ? null : Number(profile.context_tokens),

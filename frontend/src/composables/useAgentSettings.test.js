@@ -26,10 +26,11 @@ test('autosave persists discovered effort capabilities with each model', async (
   }, { autoSave: false })
   await state.load()
   state.draft.value.profiles[0].models = [{ id: 'k3.1-pro', context_length: 1048576, input_budget: 996148,
-    reasoning_levels: ['low', 'high', 'max'], default_reasoning_level: 'high' }]
+    reasoning_levels: ['low', 'high', 'max'], default_reasoning_level: 'high', context_source: 'https://help.aliyun.com/zh/model-studio/example' }]
   assert.equal(await state.save(), true)
   assert.deepEqual(submitted.profiles[0].models[0].reasoning_levels, ['low', 'high', 'max'])
   assert.equal(submitted.profiles[0].models[0].default_reasoning_level, 'high')
+  assert.equal(submitted.profiles[0].models[0].context_source, 'https://help.aliyun.com/zh/model-studio/example')
   assert.equal(state.dirty.value, false)
 })
 test('autosave persists independent main and child efforts including restoring inheritance', async () => {

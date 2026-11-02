@@ -8,7 +8,7 @@ use std::{
 use futures_util::StreamExt;
 use crate::ModelError;
 use reqwest::Url;
-use scraper::{Html, Selector};
+use scraper::{ElementRef, Html, Selector};
 use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use sha2::{Digest, Sha256};
@@ -30,11 +30,18 @@ struct Query {
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
-struct Limits {
-    window: usize,
-    input: Option<usize>,
-    output: Option<usize>,
-    source: String,
+pub struct ModelLimits {
+    pub window: usize,
+    pub input: Option<usize>,
+    pub output: Option<usize>,
+    pub source: String,
+}
+type Limits = ModelLimits;
+
+impl ModelLimits {
+    pub fn input_budget(&self) -> Result<usize, ModelError> {
+        input_budget(self, None).map_err(ModelError::new)
+    }
 }
 
 struct Cached {
@@ -98,6 +105,13 @@ impl ModelBudget {
                     "无法查询模型 {} 的上下文限制：{reason}。请检查模型信息接口，或在 Agent 配置中填写输入预算", query.model))),
             },
         }
+    }
+
+    /// Return discovered limits and their provenance, never an explicit fallback cap.
+    /// Uses the same coalesced and persistent metadata cache as runtime budgeting.
+    pub async fn limits(&self) -> Result<ModelLimits, ModelError> {
+        let query = self.source.as_ref().ok_or_else(|| ModelError::new("固定输入预算没有模型窗口元数据"))?;
+        query.cached().await.map_err(ModelError::new)
     }
 }
 
@@ -268,18 +282,14 @@ impl Query {
                 .chars()
                 .all(|ch| ch.is_ascii_alphanumeric() || matches!(ch, '-' | '_' | '.'))
         {
-            let slug = self.model.to_ascii_lowercase().replace(['.', '_'], "-");
-            let url =
-                Url::parse(&format!("https://help.aliyun.com/zh/model-studio/{slug}")).unwrap();
-            let body = get(&self.client, url.clone(), None)
-                .await
-                .map_err(|_| "模型服务未返回窗口字段，官方模型文档查询失败")?;
-            return parse_aliyun_doc(
-                &String::from_utf8_lossy(&body),
-                &self.model,
-                url.to_string(),
-            )
-            .ok_or_else(|| "模型服务未返回窗口字段，官方文档未提供匹配模型的上下文限制".into());
+            for url in aliyun_doc_urls(&self.model) {
+                if let Ok(body) = get(&self.client, url.clone(), None).await {
+                    if let Some(limits) = parse_aliyun_doc(&String::from_utf8_lossy(&body), &self.model, url.to_string()) {
+                        return Ok(limits);
+                    }
+                }
+            }
+            return Err("模型服务未返回窗口字段，官方文档未提供匹配模型的上下文限制".into());
         }
         Err("模型信息接口未返回匹配模型的上下文窗口".into())
     }
@@ -445,10 +455,24 @@ fn parse_aliyun_doc(page: &str, model: &str, source: String) -> Option<Limits> {
     {
         return None;
     }
+    let heading_level = |name: &str| match name.as_bytes() {
+        [b'h', level @ b'1'..=b'6'] => Some(*level), _ => None,
+    };
+    let model_heading = html.select(&selector("h1,h2,h3,h4,h5,h6"))
+        .find(|node| node.text().collect::<String>().trim() == model)
+        .and_then(|node| heading_level(node.value().name()));
+    let mut active = model_heading.is_none();
     let mut window = None;
     let mut input = None;
     let mut output = None;
-    for row in html.select(&selector("tr")) {
+    for row in html.root_element().descendants().filter_map(ElementRef::wrap) {
+        if let Some(level) = heading_level(row.value().name()) {
+            let text = row.text().collect::<String>();
+            if text.trim() == model { active = true; }
+            else if model_heading.is_some_and(|model_level| level <= model_level) { active = false; }
+            else if model_heading.is_none() && text.trim() == "快照版本" { break; }
+        }
+        if row.value().name() != "tr" || !active { continue; }
         let cells: Vec<_> = row
             .select(&selector("td, th"))
             .map(|node| node.text().collect::<String>())
@@ -479,6 +503,19 @@ fn parse_aliyun_doc(page: &str, model: &str, source: String) -> Option<Limits> {
     })
 }
 
+fn aliyun_doc_urls(model: &str) -> Vec<Url> {
+    let mut names = vec![model];
+    if let Some((parent, suffix)) = model.rsplit_once('-') {
+        if matches!(suffix.len(), 4 | 6 | 8) && suffix.bytes().all(|c| c.is_ascii_digit()) {
+            names.push(parent);
+        }
+    }
+    names.into_iter().map(|name| {
+        let slug = name.to_ascii_lowercase().replace(['.', '_'], "-");
+        Url::parse(&format!("https://help.aliyun.com/zh/model-studio/{slug}")).unwrap()
+    }).collect()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -486,6 +523,20 @@ mod tests {
 
     fn test_client() -> reqwest::Client {
         reqwest::Client::builder().no_proxy().build().unwrap()
+    }
+
+    #[test]
+    fn snapshot_limits_stay_with_the_exact_model_section() {
+        let table = |size| format!("<table><tr><td>上下文长度</td><td>{size}</td></tr></table>");
+        let content = format!("<code>sample</code>{}<h2>快照版本</h2><h3>sample-0813</h3><code>sample-0813</code>{}<h3>other-0813</h3><code>other-0813</code>{}", table(32000), table(128000), table(8000));
+        let page = format!("window.__ICE_PAGE_PROPS__={};", json!({"docDetailData":{"storeData":{"data":{"content":content}}}}));
+        assert_eq!(parse_aliyun_doc(&page, "sample", "fixture".into()).unwrap().window, 32000);
+        assert_eq!(parse_aliyun_doc(&page, "sample-0813", "fixture".into()).unwrap().window, 128000);
+        assert!(parse_aliyun_doc(&page, "missing-0813", "fixture".into()).is_none());
+        let urls = aliyun_doc_urls("sample-0813");
+        assert!(urls[0].path().ends_with("/sample-0813"));
+        assert!(urls[1].path().ends_with("/sample"));
+        assert_eq!(aliyun_doc_urls("sample-pro").len(), 1);
     }
 
     async fn test_pool() -> SqlitePool {
