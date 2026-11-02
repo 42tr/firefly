@@ -40,11 +40,11 @@ pub(in crate::api::assistant) async fn prepare_conversation(payload: &CreateConv
         "codex" => {
             let provider = normalize(&payload.provider);
             let model = normalize(&payload.model);
-            validate_codex_selection(provider.as_deref(), model.as_deref())?;
+            validate_codex_selection(provider.as_deref(), model.as_deref()).await?;
             (provider, model, normalize(&payload.reasoning_level))
         }
         "claude" => (
-            claude::normalize_provider(payload.provider.clone()).map_err(AppError::bad_request)?,
+            claude::normalize_provider(payload.provider.clone()).await.map_err(AppError::bad_request)?,
             claude::normalize_model(payload.model.clone()).map_err(AppError::bad_request)?,
             claude::normalize_reasoning_level(payload.reasoning_level.clone()).map_err(AppError::bad_request)?,
         ),
@@ -56,11 +56,12 @@ pub(in crate::api::assistant) async fn prepare_conversation(payload: &CreateConv
     })
 }
 
-fn validate_codex_selection(provider: Option<&str>, model: Option<&str>) -> Result<(), AppError> {
+async fn validate_codex_selection(provider: Option<&str>, model: Option<&str>) -> Result<(), AppError> {
     if provider.is_some_and(|provider| provider.len() > 256) || model.is_some_and(|model| model.len() > 256) {
         return Err(AppError::bad_request("平台或模型名称过长"));
     }
     let Some(provider) = provider.filter(|provider| *provider != "openai") else { return Ok(()) };
+    if crate::cli_profiles::resolve(Some(provider)).await.map_err(AppError::bad_request)?.is_some() { return Ok(()) }
     let listing = codex::list_model_providers();
     let known = listing.providers.iter().find(|item| item.name == provider)
         .ok_or_else(|| AppError::bad_request(format!("未知的 Codex API 平台: {provider}")))?;
@@ -85,7 +86,7 @@ pub async fn update_codex_settings(
     let provider = normalize(payload.provider);
     let model = normalize(payload.model);
     let reasoning_level = normalize(payload.reasoning_level);
-    validate_codex_selection(provider.as_deref(), model.as_deref())?;
+    validate_codex_selection(provider.as_deref(), model.as_deref()).await?;
     // Reasoning effort is an extensible string in the Codex protocol. Don't reject future/custom levels.
     if reasoning_level.as_deref().is_some_and(|level| level.len() > 64 || level.chars().any(char::is_whitespace)) {
         return Err(AppError::bad_request("推理级别格式无效"));
@@ -108,7 +109,7 @@ pub async fn update_claude_settings(
     let user_id = auth_user.storage_scope();
     assistant_store::get_conversation_for_read(conversation_id,user_id).await
         .map_err(AppError::internal_server_error)?.ok_or(AppError::not_found("Conversation not found"))?;
-    let provider = claude::normalize_provider(payload.provider).map_err(AppError::bad_request)?;
+    let provider = claude::normalize_provider(payload.provider).await.map_err(AppError::bad_request)?;
     let model = claude::normalize_model(payload.model).map_err(AppError::bad_request)?;
     let reasoning_level = claude::normalize_reasoning_level(payload.reasoning_level).map_err(AppError::bad_request)?;
     let record = assistant_store::set_claude_settings(conversation_id,user_id,provider.as_deref(),model.as_deref(),reasoning_level.as_deref()).await

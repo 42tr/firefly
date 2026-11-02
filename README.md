@@ -48,11 +48,11 @@ cargo build --release --locked
 
 ## 配置 Agent 与扩展
 
-左下角设置菜单统一提供“Agent 配置”“扩展模块”和“退出登录”。在 Agent 配置中填写支持 Responses API 的模型服务、模型与密钥，分配工具后保存。`OPENAI_*` 仅用于首次初始化，以后以页面保存的配置为准。无需模型密钥即可启动和进入配置页面。
+左下角设置菜单统一提供“Agent 配置”“扩展模块”和“退出登录”。在 Agent 配置中填写支持 Responses API 的模型服务地址和 API Key，系统通过服务的模型接口获取并自动保存完整模型目录及上下文长度，各 Agent 和对话可分别选择目录中的任意模型。部分服务不返回上下文长度；界面会显示未知，可在高级设置中填写输入预算。模型设置以页面保存的配置为准。无需模型密钥即可启动和进入配置页面。
 
-长期记忆可在更多功能菜单中维护。默认使用关键词检索；配置 `EMBEDDING_BASE_URL`、`EMBEDDING_MODEL` 和可选的 `EMBEDDING_API_KEY` 后启用语义检索。embedding 服务使用独立凭据，不会继承 `OPENAI_API_KEY`。
+长期记忆可在更多功能菜单中维护。默认使用关键词检索；配置 `EMBEDDING_BASE_URL`、`EMBEDDING_MODEL` 和可选的 `EMBEDDING_API_KEY` 后启用语义检索。embedding 服务使用独立凭据。
 
-Codex 和 Claude Code 通过运行账户的 `codex`、`claude` CLI 执行，可按需安装并配置登录或 API 凭据。CLI 登录属于该账户，不随 Firefly 二进制分发。Claude 的多平台、模型和推理级别配置见[对话文档](docs/assistant.md)。
+Codex 和 Claude Code 通过运行账户的 `codex`、`claude` CLI 执行。可在它们的 API 平台下拉框中选择 Agent 配置里保存的模型平台；Codex 需要 Responses 接口，Claude 需要 Anthropic Messages 接口。也可继续使用各自的原生登录和 API 平台配置。CLI 登录属于该账户，不随 Firefly 二进制分发。Claude 的多平台、模型和推理级别配置见[对话文档](docs/assistant.md)。
 
 运行配置项说明见 [.env.example](.env.example)。
 

@@ -69,7 +69,7 @@ image = { version = "0.25.10", default-features = false, features = [
     "gif",
 ] }
 serde-inline-default = "1.0.1"
-# Published Glow runtime; retain the g alias for existing imports.
+# Glow runtime; retain the g alias for existing imports (local patch below).
 g = { workspace = true }
 tempfile = "3"
 mimalloc = "0.1.52"
@@ -89,6 +89,7 @@ codegen-units = 16
 
 [workspace]
 resolver = "2"
+exclude = ["vendor/glow-agent"]
 members = [
     "crates/module-sdk",
     "crates/claude-transport",
@@ -146,4 +147,9 @@ sqlx = { version = "0.9", default-features = false, features = ["runtime-tokio",
 uuid = { version = "1.0", features = ["v4", "serde"] }
 tempfile = "3"
 tower = { version = "0.5", features = ["util"] }
+
+# 0.3.4 has no Responses reasoning-effort option. Keep the request change local
+# until that builder is available upstream.
+[patch.crates-io]
+glow-agent = { path = "vendor/glow-agent" }
 

@@ -19,6 +19,65 @@ const listing = {
   ],
 }
 
+test('UI profiles preserve provider IDs and models for both native agents', async t => {
+  const ui = { name: 'firefly:kimi', display_name: 'kimi', source: 'ui', models: ['k3.1-pro'], default_model: 'k3.1-pro' }
+  const { state } = setup(t, { ...listing, providers: [ui] })
+  await state.loadProviders()
+  state.provider.value = 'firefly:kimi'; state.changeProvider()
+  assert.equal(state.model.value, 'k3.1-pro')
+  assert.equal(state.selection.value.provider, 'firefly:kimi')
+  state.changeAgent('claude')
+  await state.loadClaudeModels()
+  state.claudeProvider.value = 'firefly:kimi'; state.changeClaudeProvider()
+  assert.equal(state.claudeModel.value, 'k3.1-pro')
+  assert.equal(state.selection.value.provider, 'firefly:kimi')
+})
+
+test('both agents use the UI model advertised efforts and discard stale unsupported levels', async t => {
+  const ui = { name: 'firefly:kimi', source: 'ui', default_model: 'k3.1-pro', default_reasoning_level: 'high',
+    models: ['kimi-for-coding', 'k3.1-pro', 'kimi-for-coding-highspeed'], model_reasoning: [
+      { model: 'k3.1-pro', reasoning_levels: ['low', 'high', 'max'], default_reasoning_level: 'high' },
+      { model: 'kimi-for-coding', reasoning_levels: ['low', 'high', 'max'], default_reasoning_level: 'max' },
+      { model: 'kimi-for-coding-highspeed', reasoning_levels: null, default_reasoning_level: null },
+    ] }
+  const { state } = setup(t, { ...listing, providers: [ui] })
+  await state.loadProviders()
+  state.provider.value = ui.name; state.changeProvider()
+  assert.equal(state.model.value, 'k3.1-pro')
+  assert.deepEqual(state.reasoningOptions.value, ['low', 'high', 'max'])
+  assert.equal(state.reasoningLevel.value, 'high')
+  state.reasoningLevel.value = 'medium'
+  await state.loadProviders(false)
+  assert.equal(state.reasoningLevel.value, 'high')
+  state.model.value = 'kimi-for-coding-highspeed'; await nextTick()
+  assert.deepEqual(state.reasoningOptions.value, [])
+  assert.equal(state.selection.value.reasoning_level, '')
+  state.model.value = 'kimi-for-coding'; await nextTick()
+  assert.equal(state.reasoningLevel.value, 'max')
+
+  state.changeAgent('claude'); await state.loadClaudeModels()
+  state.claudeProvider.value = ui.name; state.changeClaudeProvider()
+  assert.equal(state.claudeModel.value, 'k3.1-pro')
+  assert.deepEqual(state.claudeReasoningOptions.value, ['low', 'high', 'max'])
+  assert.equal(state.claudeReasoningLevel.value, 'high')
+  state.claudeReasoningLevel.value = 'xhigh'; await state.loadClaudeModels()
+  assert.equal(state.claudeReasoningLevel.value, 'high')
+  state.claudeModel.value = 'kimi-for-coding-highspeed'; await nextTick()
+  assert.deepEqual(state.claudeReasoningOptions.value, [])
+  assert.equal(state.selection.value.reasoning_level, '')
+  state.claudeModel.value = 'kimi-for-coding'; await nextTick()
+  assert.equal(state.claudeReasoningLevel.value, 'max')
+})
+
+test('UI providers never borrow native model efforts when capabilities are unknown', async t => {
+  const ui = { name: 'firefly:custom', source: 'ui', models: ['model-a'], default_model: 'model-a' }
+  const { state } = setup(t, { ...listing, providers: [ui] })
+  await state.loadProviders()
+  state.provider.value = ui.name; state.changeProvider(); await nextTick()
+  assert.deepEqual(state.reasoningOptions.value, [])
+  assert.equal(state.reasoningLevel.value, '')
+})
+
 function setup(t, data = listing, defaultAgent = 'codex') {
   const previousDocument = Object.getOwnPropertyDescriptor(globalThis, 'document')
   Object.defineProperty(globalThis, 'document', { configurable: true, value: { addEventListener() {}, removeEventListener() {} } })

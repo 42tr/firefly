@@ -24,6 +24,7 @@ mod assistant_realtime;
 mod assistant_tasks;
 mod attachment_utils;
 mod auth;
+mod model_catalog;
 pub mod error;
 mod health;
 mod jwt;
@@ -97,6 +98,7 @@ fn routes() -> Router {
         .merge(assistant_routes())
         .merge(modules::routes())
         .merge(agent_settings::routes())
+        .merge(model_catalog::routes())
         .fallback(get(frontend_router))
 }
 
@@ -132,6 +134,7 @@ fn assistant_routes() -> Router {
         .route("/api/assistant/memory-reviews/confirm", post(assistant::confirm_pending_memories))
         .route("/api/assistant/memory-reviews/dismiss", post(assistant::dismiss_pending_memories))
         .route("/api/assistant/chat", post(assistant::chat_stream))
+        .route("/api/assistant/overview", post(assistant::overview::generate))
         .route("/api/assistant/attachments/{id}", get(assistant::download_attachment))
         .route("/api/assistant/attachments/by-file/{file_id}", get(assistant::preview_uploaded_attachment))
         .route("/api/assistant/firefly/messages", get(assistant::firefly::list).post(assistant::firefly::send))

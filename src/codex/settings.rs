@@ -29,6 +29,14 @@ pub struct ConversationSettings {
 pub async fn resolve_conversation_settings(
     cwd: &Path, provider: Option<&str>, model: Option<&str>, reasoning_level: Option<&str>,
 ) -> anyhow::Result<ConversationSettings> {
+    if let Some(profile) = crate::cli_profiles::resolve(provider).await? {
+        let model = model.filter(|m| !m.is_empty()).unwrap_or(&profile.model);
+        return Ok(ConversationSettings {
+            provider: provider.unwrap().to_owned(),
+            model: model.into(),
+            reasoning_level: profile.reasoning_level(model, reasoning_level, None).unwrap_or_default(),
+        });
+    }
     let client = app_server().await?;
     let defaults = client.request("config/read", json!({"cwd":cwd, "includeLayers":false})).await?;
     let configured = &defaults["config"];

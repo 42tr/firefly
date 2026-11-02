@@ -9,7 +9,13 @@ use crate::config;
 pub use firefly_claude_transport::{session_id, session_title, text_delta};
 
 mod settings;
-pub use settings::{cli_defaults, effective_model, normalize_provider, normalize_reasoning_level, providers, REASONING_LEVELS};
+pub use settings::{cli_defaults, effective_model, normalize_reasoning_level, providers, REASONING_LEVELS};
+
+pub async fn normalize_provider(provider: Option<String>) -> anyhow::Result<Option<String>> {
+    let provider = provider.map(|p| p.trim().to_owned()).filter(|p| !p.is_empty());
+    if crate::cli_profiles::resolve(provider.as_deref()).await?.is_some() { return Ok(provider) }
+    settings::normalize_provider(provider)
+}
 
 // The settings snapshot must outlive the child, including its tool subprocesses.
 pub struct ClaudeTurn {
@@ -67,9 +73,17 @@ fn claude_args(cfg: &config::Config, session_id: Option<&str>, model: &str, reas
 
 pub async fn start_turn(cwd: &Path, session_id: Option<&str>, provider: Option<&str>, model: Option<&str>, reasoning_level: Option<&str>, prompt: &str) -> anyhow::Result<ClaudeTurn> {
     let cfg = config::get();
-    let profile = settings::resolve_provider(provider)?;
+    let mut managed_effort = None;
+    let profile = match crate::cli_profiles::resolve(provider).await? {
+        Some(mut profile) => {
+            if let Some(model) = model.filter(|m| !m.is_empty()) { profile.model = model.to_owned(); }
+            managed_effort = Some(profile.reasoning_level(&profile.model, reasoning_level, Some(REASONING_LEVELS)));
+            Some(settings::managed_provider(&profile))
+        }
+        None => settings::resolve_provider(provider)?,
+    };
     let model = effective_model(&cfg, profile.as_ref(), model)?;
-    let reasoning_level = normalize_reasoning_level(reasoning_level.map(str::to_owned))?;
+    let reasoning_level = normalize_reasoning_level(managed_effort.unwrap_or_else(|| reasoning_level.map(str::to_owned)))?;
     let mut command = Command::new("claude");
     let settings_file = settings::configure_command(&mut command, profile.as_ref(), reasoning_level.as_deref())?;
     command

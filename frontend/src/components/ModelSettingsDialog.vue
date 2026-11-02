@@ -134,6 +134,7 @@ const save = async () => {
         <button class="button ghost icon" type="button" aria-label="关闭模型设置" :disabled="saving" @click="close"><UiIcon name="x" /></button>
       </div>
       <p class="settings-hint">保存后发送的新消息使用新设置，运行和排队的消息保持原设置。</p>
+      <p v-if="!isClaude" class="settings-hint">可选择 Agent 配置中保存的平台，Codex 使用该平台的 Responses 接口。</p>
       <form @submit.prevent="save">
         <fieldset :disabled="saving || loading || !!blockedReason">
           <ClaudeSettingsFields v-if="isClaude" v-model="claudeModel" v-model:provider="claudeProvider" v-model:reasoning-level="claudeReasoningLevel" :providers="claudeProviders" :reasoning-levels="claudeReasoningOptions" @change-provider="changeClaudeProvider" :models="claudeModelOptions" :disabled="saving || loading || !!blockedReason" />
@@ -142,7 +143,7 @@ const save = async () => {
           <select :id="providerId" v-model="provider" @change="selectProvider">
             <option value="">openai</option>
             <option v-if="provider && !providers.some(item => item.name === provider)" :value="provider">{{ provider }}</option>
-            <option v-for="item in providers.filter(item => item.name !== 'openai')" :key="item.name" :value="item.name">{{ item.name }}</option>
+            <option v-for="item in providers.filter(item => item.name !== 'openai')" :key="item.name" :value="item.name">{{ item.display_name || item.name }}</option>
           </select>
           <label :for="modelId">模型</label>
           <select v-if="modelOptions.length" :id="modelId" v-model="model">

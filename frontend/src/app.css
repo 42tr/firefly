@@ -433,17 +433,12 @@ button.attachment-item:focus-visible {
 .new-conversation-title { color: var(--text-primary); font-family: var(--font-body); font-size: 16px; font-weight: 600; }
 .new-chat-panel { display: flex; padding: 0 var(--chat-gutter); }
 .new-chat-panel .chat-inner { width: 100%; flex: 1; }
-.new-conversation-empty { margin: auto; text-align: center; }
-.new-conversation-empty h1 { margin: 0 0 10px; color: var(--text-primary); font-family: var(--font-body); font-size: 24px; font-weight: 600; line-height: 1.4; }
-.new-conversation-empty p { margin: 0; color: var(--muted); font-size: 14px; line-height: 1.6; }
 @media (min-width: 769px) {
   .new-conversation-page { --chat-content-width: 760px; }
 }
 @media (max-width: 768px) {
   .conversation-toolbar { min-height: 56px; padding: 6px 16px; column-gap: 8px; }
   .new-chat-panel { padding: 0 16px; }
-  .new-conversation-empty { transform: translateY(-48px); }
-  .new-conversation-empty h1 { font-size: 22px; }
 }
 
 .creation-send-error { margin: 0 0 8px; color: var(--danger); font-size: 13px; overflow-wrap: anywhere; }

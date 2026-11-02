@@ -304,3 +304,21 @@ fn native_model_allowlist_does_not_imply_a_default_model() {
         "default"
     );
 }
+
+#[test]
+fn managed_profiles_override_native_credentials_and_use_messages_endpoint() {
+    let p = crate::agent_settings::ModelProfile { id:"kimi".into(), name:"Kimi".into(),
+        base_url:"https://api.kimi.com/coding/v1".into(), claude_base_url:None, model:"fixture-model".into(),
+        api_key:Some("fixture-secret".into()), models:vec![], context_tokens:None, _key_configured:false };
+    let provider = managed_provider(&p);
+    let mut cmd = Command::new("claude");
+    let file = configure_command(&mut cmd, Some(&provider), Some("high")).unwrap().unwrap();
+    let settings: Value = serde_json::from_slice(&std::fs::read(file.path()).unwrap()).unwrap();
+    assert_eq!(settings["env"]["ANTHROPIC_BASE_URL"], "https://api.kimi.com/coding");
+    assert_eq!(settings["env"]["ANTHROPIC_AUTH_TOKEN"], "fixture-secret");
+    assert_eq!(settings["env"]["ANTHROPIC_API_KEY"], "");
+    assert_eq!(settings["env"]["CLAUDE_CODE_USE_BEDROCK"], "0");
+    assert!(!serde_json::to_string(&provider).unwrap().contains("fixture-secret"));
+    use std::os::unix::fs::PermissionsExt;
+    assert_eq!(std::fs::metadata(file.path()).unwrap().permissions().mode() & 0o777, 0o600);
+}

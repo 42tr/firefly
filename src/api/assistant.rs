@@ -26,6 +26,7 @@ use attachments::*;
 mod goals;
 pub use goals::{create as create_goal, get as get_goal, update as update_goal};
 mod goal_judge;
+pub mod overview;
 mod generation;
 use generation::*;
 mod turn_context;

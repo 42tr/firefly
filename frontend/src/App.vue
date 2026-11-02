@@ -23,6 +23,7 @@ import ConversationSidebar from './components/ConversationSidebar.vue'
 import ConversationContext from './components/ConversationContext.vue'
 import ScrollBottomButton from './components/ScrollBottomButton.vue'
 import ChatInputBar from './components/ChatInputBar.vue'
+import NewConversationOverview from './components/NewConversationOverview.vue'
 // Dialogs are never part of first paint; splitting them out keeps the main
 // chunk small and loads their chunks in parallel after boot.
 const NewConversationDialog = defineAsyncComponent(() => import('./components/NewConversationDialog.vue'))
@@ -870,10 +871,7 @@ onMounted(() => {
           <div class="chat-panel-wrap">
           <div ref="chatPanel" class="chat-panel" :class="{ 'new-chat-panel': pendingConversation && !messages.length }" @click="handleChatPanelClick">
             <div class="chat-inner">
-              <div v-if="pendingConversation && !messages.length" class="new-conversation-empty">
-                <h1>想聊点什么？</h1>
-                <p>选择助手，开始新的对话</p>
-              </div>
+              <NewConversationOverview v-if="pendingConversation && !messages.length" />
               <div v-if="isSwitchingConversation" class="chat-state" role="status">正在加载对话…</div>
               <div v-else-if="messageLoadError" class="chat-state" role="alert">
                 <p>加载对话失败：{{ messageLoadError }}</p>

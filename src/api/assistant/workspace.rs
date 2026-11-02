@@ -46,11 +46,15 @@ pub async fn codex_providers(_auth_user: Session) -> Json<Value> {
             (Vec::new(), Some("读取模型列表失败，可手动输入模型名称或使用默认模型"))
         }
     };
+    let mut providers = serde_json::to_value(&listing.providers).unwrap_or(json!([]));
+    if let Ok(ui) = crate::cli_profiles::listing().await {
+        providers.as_array_mut().unwrap().extend(ui);
+    }
     Json(json!({
         "default": listing.default,
         "default_model": listing.default_model,
         "default_reasoning_level": listing.default_reasoning_level,
-        "providers": listing.providers,
+        "providers": providers,
         "official_models": official_models.iter().map(|model| &model.model).collect::<Vec<_>>(),
         "model_reasoning": official_models,
         "official_models_error": official_models_error,
@@ -69,9 +73,11 @@ pub async fn claude_models(_auth_user: Session) -> Result<Json<Value>, AppError>
     .map_err(|error| AppError::internal_server_error(format!("读取 Claude 配置任务失败: {error}")))?;
     let listing = listing.map_err(AppError::internal_server_error)?;
     let defaults = defaults.map_err(AppError::internal_server_error)?;
+    let mut providers = serde_json::to_value(&listing.providers).map_err(AppError::internal_server_error)?;
+    providers.as_array_mut().unwrap().extend(crate::cli_profiles::listing().await.map_err(AppError::internal_server_error)?);
     Ok(Json(json!({
         "default": "cli",
-        "providers": listing.providers,
+        "providers": providers,
         "default_model": defaults.model,
         "cli_default_model": defaults.model,
         "default_reasoning_level": defaults.reasoning_level,

@@ -112,7 +112,7 @@ impl EmbeddingService {
         });
         let mut request = client.post(self.endpoint.clone()).timeout(self.timeout)
             .json(&serde_json::json!({"model": self.model, "input": inputs, "encoding_format": "float"}));
-        // Never inherit OPENAI_API_KEY: the embedding server has independent credentials.
+        // The embedding server uses independent credentials.
         if !self.api_key.is_empty() {
             request = request.bearer_auth(&self.api_key);
         }

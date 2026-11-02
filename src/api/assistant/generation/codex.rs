@@ -36,6 +36,7 @@ pub(in crate::api::assistant) async fn run_codex_turn(
         assistant_store::set_codex_thread_id(conversation_id, user_id, &thread_id).await?;
         (thread_id, title)
     };
+    let _binding = codex::ThreadBinding(thread_id.clone());
     if let Some(title) = native_title {
         crate::api::assistant::persist_native_conversation_title(conversation_id, user_id, &title, &job).await?;
     }

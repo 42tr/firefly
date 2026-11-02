@@ -28,19 +28,18 @@ const selectProvider = event => {
         <option v-if="!provider" value="" disabled>请选择平台</option>
         <option value="cli">Claude CLI</option>
         <option v-if="provider && provider !== 'cli' && !providers.some(item => item.name === provider)" :value="provider">{{ provider }}</option>
-        <option v-for="item in providers" :key="item.name" :value="item.name">{{ item.name }}</option>
+        <option v-for="item in providers" :key="item.name" :value="item.name">{{ item.display_name || item.name }}</option>
       </select>
     </div>
     <ClaudeModelPicker :key="provider" :model-value="modelValue" :models="models" :disabled="disabled" @update:model-value="emit('update:modelValue', $event)" />
-    <div class="setting-field">
+    <div v-if="reasoningLevels.length" class="setting-field">
       <label :for="reasoningId">推理级别</label>
       <select :id="reasoningId" :value="reasoningLevel" :disabled="disabled" @change="emit('update:reasoningLevel', $event.target.value)">
         <option v-if="!reasoningLevel" value="" disabled>请选择推理级别</option>
-        <option v-if="reasoningLevel && !reasoningLevels.includes(reasoningLevel)" :value="reasoningLevel">{{ reasoningLevel }}</option>
         <option v-for="level in reasoningLevels" :key="level" :value="level">{{ level }}</option>
       </select>
     </div>
-    <p class="effort-hint">可用推理级别取决于模型和 API 平台。</p>
+    <p class="effort-hint">{{ reasoningLevels.length ? '可用推理级别取决于模型和 API 平台。' : '模型未提供可选推理级别，使用服务端默认设置。' }}</p>
   </div>
 </template>
 

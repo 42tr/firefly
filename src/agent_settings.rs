@@ -13,13 +13,33 @@ use sqlx::SqlitePool;
 
 use crate::{assistant_tasks, config, llm, mcp};
 
+#[derive(Clone, Default, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ProfileModel {
+    pub id: String,
+    #[serde(default)]
+    pub context_length: Option<usize>,
+    #[serde(default)]
+    pub input_budget: Option<usize>,
+    /// None means the service did not advertise effort controls; [] explicitly disables them.
+    #[serde(default)]
+    pub reasoning_levels: Option<Vec<String>>,
+    #[serde(default)]
+    pub default_reasoning_level: Option<String>,
+}
+
 #[derive(Clone, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct ModelProfile {
     pub id: String,
     pub name: String,
     pub base_url: String,
+    /// Optional same-origin Anthropic endpoint for Claude Code.
+    #[serde(default)]
+    pub claude_base_url: Option<String>,
     pub model: String,
+    #[serde(default)]
+    pub models: Vec<ProfileModel>,
     /// null preserves the key only for the same profile ID and service origin.
     #[serde(default)]
     pub api_key: Option<String>,
@@ -28,6 +48,33 @@ pub struct ModelProfile {
     /// Accepted for GET/PUT round trips; the server always computes this value.
     #[serde(default, skip_serializing, rename = "key_configured")]
     pub _key_configured: bool,
+}
+
+impl ModelProfile {
+    pub fn model_ids(&self) -> Vec<String> {
+        let mut models: Vec<_> = self.models.iter().map(|m| m.id.clone()).collect();
+        if !self.model.trim().is_empty() && !models.contains(&self.model) { models.push(self.model.clone()); }
+        models
+    }
+    pub fn default_model(&self) -> Option<&str> {
+        (!self.model.trim().is_empty()).then_some(self.model.as_str())
+            .or_else(|| self.models.first().map(|m| m.id.as_str()))
+    }
+    pub fn input_budget(&self, model: &str) -> Option<usize> {
+        if model == self.model && self.context_tokens.is_some() { self.context_tokens }
+        else { self.models.iter().find(|m| m.id == model).and_then(|m| m.input_budget) }
+    }
+    /// Use only advertised levels. Unknown capabilities leave effort to the service.
+    pub fn reasoning_level(&self, model: &str, requested: Option<&str>, allowed: Option<&[&str]>) -> Option<String> {
+        let info = self.models.iter().find(|m| m.id == model)?;
+        let levels = info.reasoning_levels.as_ref()?;
+        let supported = |level: &&str| levels.iter().any(|item| item == level)
+            && allowed.is_none_or(|allowed| allowed.contains(level));
+        requested.filter(supported)
+            .or_else(|| info.default_reasoning_level.as_deref().filter(supported))
+            .or_else(|| levels.iter().map(String::as_str).find(supported))
+            .map(str::to_owned)
+    }
 }
 
 #[derive(Clone, Deserialize, Serialize)]
@@ -39,6 +86,12 @@ pub struct AgentDefinition {
     pub instruction: String,
     #[serde(default)]
     pub model_profile: Option<String>,
+    /// Overrides the selected provider's default model; children may inherit the root model.
+    #[serde(default)]
+    pub model: Option<String>,
+    /// None follows the model default, or the root effort when sharing its model.
+    #[serde(default)]
+    pub reasoning_level: Option<String>,
     pub tools: Vec<String>,
     pub enabled: bool,
     pub timeout_secs: u64,
@@ -83,16 +136,7 @@ impl Settings {
         }
         Self {
             revision: 1,
-            profiles: vec![ModelProfile {
-                id: "default".into(),
-                name: "默认模型".into(),
-                base_url: std::env::var("OPENAI_BASE_URL")
-                    .unwrap_or_else(|_| "https://api.openai.com/v1".into()),
-                model: std::env::var("OPENAI_MODEL").unwrap_or_default(),
-                api_key: Some(std::env::var("OPENAI_API_KEY").unwrap_or_default()),
-                context_tokens: cfg.as_ref().and_then(|cfg| cfg.assistant_context_tokens),
-                _key_configured: false,
-            }],
+            profiles: Vec::new(),
             firefly: AgentDefinition {
                 id: "firefly".into(),
                 name: "Firefly".into(),
@@ -101,7 +145,9 @@ impl Settings {
                     .as_ref()
                     .map(|cfg| cfg.assistant_system_prompt.clone())
                     .unwrap_or_else(|| include_str!("../prompts/assistant.md").into()),
-                model_profile: Some("default".into()),
+                model_profile: None,
+                model: None,
+                reasoning_level: None,
                 tools: tools.into_iter().map(str::to_owned).collect(),
                 enabled: true,
                 timeout_secs: std::env::var("ASSISTANT_RUN_TIMEOUT_SECS")
@@ -163,8 +209,8 @@ impl Settings {
 
     pub fn validate(&self) -> anyhow::Result<()> {
         ensure!(
-            (1..=32).contains(&self.profiles.len()),
-            "需要 1–32 个模型配置"
+            self.profiles.len() <= 32,
+            "最多配置 32 个模型"
         );
         ensure!(self.subagents.len() <= 50, "最多配置 50 个子 agent");
         ensure!(
@@ -195,10 +241,31 @@ impl Settings {
                     && url.fragment().is_none(),
                 "模型服务地址须为不含凭据、查询或片段的 HTTP/HTTPS URL"
             );
+            if let Some(raw) = profile.claude_base_url.as_deref().filter(|v| !v.is_empty()) {
+                let claude = reqwest::Url::parse(raw).context("Claude 接口地址无效")?;
+                ensure!(raw.len() <= 2048 && claude.origin() == url.origin()
+                    && claude.username().is_empty() && claude.password().is_none()
+                    && claude.query().is_none() && claude.fragment().is_none(),
+                    "Claude 接口地址须与模型服务同源且不含凭据、查询或片段");
+            }
             ensure!(
                 profile.model.len() <= 256 && profile.base_url.len() <= 2048,
                 "模型名称或服务地址过长"
             );
+            let mut model_ids = BTreeSet::new();
+            ensure!(profile.models.len() <= 5000 && profile.models.iter().all(|m| {
+                !m.id.trim().is_empty() && m.id.len() <= 256 && !m.id.chars().any(char::is_control)
+                    && model_ids.insert(&m.id)
+                    && m.context_length.is_none_or(|n| (1..=100_000_000).contains(&n))
+                    && m.input_budget.is_none_or(|n| (1024..=100_000_000).contains(&n)
+                        && m.context_length.is_none_or(|window| n <= window))
+                    && m.reasoning_levels.as_ref().is_none_or(|levels| levels.len() <= 32
+                        && levels.iter().all(|level| !level.is_empty() && level.len() <= 64
+                            && level.bytes().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || matches!(c, b'_' | b'-')))
+                        && levels.iter().collect::<BTreeSet<_>>().len() == levels.len())
+                    && m.default_reasoning_level.as_ref().is_none_or(|level|
+                        m.reasoning_levels.as_ref().is_some_and(|levels| levels.contains(level)))
+            }), "模型目录包含无效、重复或过多的模型，或上下文长度无效");
             ensure!(
                 profile
                     .api_key
@@ -213,12 +280,13 @@ impl Settings {
                 "输入预算须为 1024–100000000，或留空自动查询"
             );
         }
-        ensure!(
-            self.firefly.model_profile.is_some(),
-            "请选择 Firefly 的模型配置"
-        );
         let mut ids = BTreeSet::new();
         for agent in std::iter::once(&self.firefly).chain(&self.subagents) {
+            ensure!(agent.model.as_deref().is_none_or(|m| !m.trim().is_empty() && m.len() <= 256
+                && !m.chars().any(char::is_control)), "Agent 模型名称格式无效");
+            ensure!(agent.reasoning_level.as_deref().is_none_or(|level| !level.is_empty() && level.len() <= 64
+                && level.bytes().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || matches!(c, b'_' | b'-'))),
+                "Agent 推理级别格式无效");
             ensure!(
                 valid_id(&agent.id) && ids.insert(&agent.id),
                 "Agent ID 无效或重复"
@@ -232,7 +300,7 @@ impl Settings {
                 "Agent 职责说明或提示词过长"
             );
             ensure!(
-                agent.id == "firefly" || !agent.description.trim().is_empty(),
+                agent.id == "firefly" || !agent.enabled || !agent.description.trim().is_empty(),
                 "子 agent 需要职责说明，供主 agent 选择委派"
             );
             ensure!(
@@ -296,6 +364,7 @@ impl Settings {
             .bind(self.revision).bind(serde_json::to_string(&self)?)
             .bind(chrono::Utc::now().timestamp_millis()).bind(previous.revision)
             .execute(pool).await?.rows_affected();
+        if updated == 1 { crate::codex::refresh_profiles(&self.profiles).await; }
         Ok((updated == 1).then_some(self))
     }
 
@@ -313,21 +382,37 @@ impl Settings {
 
     pub fn model(&self, agent: &AgentDefinition) -> anyhow::Result<llm::AgentModel> {
         let profile = self.profile(agent)?;
-        ensure!(
-            !profile.model.trim().is_empty(),
-            "请在“更多功能 → Agent 配置”中填写模型名称"
-        );
+        let name = self.model_name(agent)?;
         let mut model = llm::AgentModel::new(
             llm::normalize_bearer_secret(profile.api_key.as_deref().unwrap_or_default()),
-            &profile.model,
+            name,
         )
         .with_http_client(crate::http_client::client().clone())
         .with_base_url(&profile.base_url)
-        .with_context_budget(profile.context_tokens);
+        .with_reasoning_effort(self.reasoning_level(agent)?)
+        .with_context_budget(profile.input_budget(name));
         if let Some(pool) = crate::db::maybe_pool() {
             model = model.with_limits_cache(pool.clone());
         }
         Ok(model)
+    }
+
+    pub fn model_name<'a>(&'a self, agent: &'a AgentDefinition) -> anyhow::Result<&'a str> {
+        agent.model.as_deref().or_else(|| {
+            (agent.id != "firefly" && agent.model_profile.is_none()).then_some(self.firefly.model.as_deref()).flatten()
+        }).or_else(|| self.profile(agent).ok().and_then(ModelProfile::default_model))
+            .context("请在 Agent 配置中选择模型")
+    }
+
+    pub fn reasoning_level(&self, agent: &AgentDefinition) -> anyhow::Result<Option<String>> {
+        let profile = self.profile(agent)?;
+        let model = self.model_name(agent)?;
+        let requested = agent.reasoning_level.as_deref().or_else(|| {
+            (agent.id != "firefly" && self.profile(&self.firefly).is_ok_and(|root| root.id == profile.id)
+                && self.model_name(&self.firefly).is_ok_and(|root| root == model))
+                .then_some(self.firefly.reasoning_level.as_deref()).flatten()
+        });
+        Ok(profile.reasoning_level(model, requested, None))
     }
 
     pub fn child_agents(

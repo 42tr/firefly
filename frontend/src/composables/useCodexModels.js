@@ -56,6 +56,7 @@ export function useCodexModels(agent = ref('codex')) {
     }
   }
 
+  const currentProvider = computed(() => providers.value.find(item => item.name === provider.value))
   const modelOptions = computed(() => {
     if (!provider.value) return officialModels.value
     const current = providers.value.find((item) => item.name === provider.value)
@@ -70,17 +71,19 @@ export function useCodexModels(agent = ref('codex')) {
   })
 
   const selectModel = () => {
-    model.value = (provider.value === defaultProvider.value ? defaultModel.value : '')
+    model.value = currentProvider.value?.default_model || (provider.value === defaultProvider.value ? defaultModel.value : '')
       || modelOptions.value[0] || ''
   }
 
   const currentModelReasoning = computed(() => {
     const name = provider.value && model.value.startsWith(`${provider.value}/`)
       ? model.value.slice(provider.value.length + 1) : model.value
-    return modelReasoning.value.find((item) => item.model === model.value || item.model === name)
+    const catalog = currentProvider.value?.source === 'ui' ? currentProvider.value.model_reasoning || [] : modelReasoning.value
+    return catalog.find((item) => item.model === model.value || item.model === name)
   })
   const reasoningOptions = computed(() => {
     if (currentModelReasoning.value?.reasoning_levels) return currentModelReasoning.value.reasoning_levels
+    if (currentProvider.value?.source === 'ui') return []
     // 未返回模型能力时，保留配置或原会话中的级别。
     return [...new Set(['low', 'medium', 'high', 'xhigh', defaultReasoningLevel.value, reasoningLevel.value].filter(Boolean))]
   })
@@ -97,7 +100,7 @@ export function useCodexModels(agent = ref('codex')) {
       .find((level) => options.includes(level)) || options[0]
   }
 
-  watch(model, () => {
+  watch([model, provider], () => {
     if (agent.value === 'codex' && !modelsLoading.value) selectReasoningLevel()
   })
 
@@ -109,7 +112,7 @@ export function useCodexModels(agent = ref('codex')) {
 
   const resolveDefaults = () => {
     if (!model.value) selectModel()
-    if (!reasoningLevel.value) selectReasoningLevel()
+    selectReasoningLevel()
   }
 
   return {

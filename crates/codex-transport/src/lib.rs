@@ -208,6 +208,7 @@ where
 }
 
 impl CodexAppServer {
+    pub fn is_closed(&self) -> bool { self.closed.load(Ordering::Acquire) }
     async fn spawn() -> anyhow::Result<Arc<Self>> {
         let mut command = Command::new("codex");
         command.arg("app-server")
@@ -222,7 +223,7 @@ impl CodexAppServer {
         Self::spawn_command(command, REQUEST_TIMEOUT).await
     }
 
-    async fn spawn_command(mut command: Command, request_timeout: Duration) -> anyhow::Result<Arc<Self>> {
+    pub async fn spawn_command(mut command: Command, request_timeout: Duration) -> anyhow::Result<Arc<Self>> {
         let mut child = command.kill_on_drop(true).process_group(0).spawn()
             .context("启动 codex app-server 失败，请确认 Codex CLI 已安装")?;
         let process_group =
@@ -446,7 +447,7 @@ impl CodexAppServer {
         Ok(result)
     }
 
-    async fn unload_idle_thread(&self, thread_id: &str) -> anyhow::Result<()> {
+    pub async fn unload_idle_thread(&self, thread_id: &str) -> anyhow::Result<()> {
         let mut events = self.subscribe();
         let result = self.request("thread/unsubscribe", json!({ "threadId": thread_id })).await?;
         if result["status"] == "notLoaded" { return Ok(()); }

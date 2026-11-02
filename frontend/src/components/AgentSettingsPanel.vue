@@ -1,19 +1,102 @@
 <script setup>
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 import UiIcon from './UiIcon.vue'
-import { portableSettings, useAgentSettings } from '../composables/useAgentSettings'
+import { useAgentSettings } from '../composables/useAgentSettings'
+import { apiFetch } from '../utils/http'
 
 const props = defineProps({
   active: { type: Boolean, default: true },
   showTrigger: { type: Boolean, default: true },
 })
 const emit = defineEmits(['closed'])
-const { draft, tools, loading, saving, refreshing, error, notice, dirty, load, save, refreshTools, importConfig } = useAgentSettings()
-const dialog = ref(null), opened = ref(false), tab = ref('firefly'), selectedAgent = ref(''), selectedProfile = ref(''), importInput = ref(null)
-const busy = computed(() => loading.value || saving.value)
+const { draft, tools, loading, saving, refreshing, error, notice, dirty, load, save, refreshTools } = useAgentSettings()
+const dialog = ref(null), opened = ref(false), tab = ref('firefly'), selectedAgent = ref(''), selectedProfile = ref('')
+const busy = computed(() => loading.value)
 const agent = computed(() => !draft.value ? null : tab.value === 'firefly' ? draft.value.firefly : draft.value.subagents.find(item => item.id === selectedAgent.value))
 const profile = computed(() => draft.value?.profiles.find(item => item.id === selectedProfile.value))
+const agentProfile = computed(() => draft.value?.profiles.find(item => item.id === (agent.value?.model_profile || draft.value?.firefly.model_profile)))
+const agentModels = computed(() => {
+  const values = [...(agentProfile.value?.models || [])]
+  const fallback = agentProfile.value?.model
+  if (fallback && !values.some(item => item.id === fallback)) values.push({ id: fallback })
+  return values
+})
+const inheritedModel = computed(() => (tab.value === 'children' && !agent.value?.model_profile ? draft.value?.firefly.model : null)
+  || agentProfile.value?.model || agentModels.value[0]?.id || '')
+const agentModel = computed({
+  get: () => agent.value?.model || inheritedModel.value,
+  set: value => { if (agent.value) agent.value.model = value || null },
+})
+const agentModelInfo = computed(() => agentModels.value.find(item => item.id === agentModel.value))
+const agentReasoningLevels = computed(() => agentModelInfo.value?.reasoning_levels || [])
+const inheritsRootReasoning = computed(() => {
+  const root = draft.value?.firefly
+  const rootProfile = draft.value?.profiles.find(item => item.id === root?.model_profile)
+  const rootModel = root?.model || rootProfile?.model || rootProfile?.models?.[0]?.id
+  return tab.value === 'children' && !!agentProfile.value && agentProfile.value.id === rootProfile?.id && agentModel.value === rootModel
+})
+const inheritedReasoningLevel = computed(() => {
+  const levels = agentReasoningLevels.value
+  const inherited = inheritsRootReasoning.value ? draft.value?.firefly.reasoning_level : null
+  return [inherited, agentModelInfo.value?.default_reasoning_level].find(level => levels.includes(level)) || levels[0] || ''
+})
+const agentModelChanged = () => { agent.value.reasoning_level = null }
+const agentProfileChanged = () => { agent.value.model = null; agentModelChanged() }
+watch([agent, agentModel, agentReasoningLevels], () => {
+  if (tab.value !== 'models' && agent.value?.reasoning_level && !agentReasoningLevels.value.includes(agent.value.reasoning_level)) {
+    agent.value.reasoning_level = null
+  }
+})
 const missingTools = computed(() => agent.value?.tools.filter(name => !tools.value.some(tool => tool.name === name)) || [])
+const catalog = ref({}), catalogLoading = ref(false), catalogError = ref('')
+let catalogVersion = 0
+const models = computed(() => catalog.value[selectedProfile.value] || profile.value?.models || [])
+const selectedModel = computed(() => models.value.find(item => item.id === profile.value?.model))
+const applyModel = () => {
+  if (!profile.value) return
+  profile.value.context_tokens = selectedModel.value?.input_budget ?? null
+}
+const discoverModels = async () => {
+  const currentProfile = profile.value
+  if (!currentProfile?.base_url || catalogLoading.value) return
+  const current = ++catalogVersion
+  catalogLoading.value = true; catalogError.value = ''
+  try {
+    const response = await apiFetch('/api/assistant/agent-settings/models', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ base_url: currentProfile.base_url, profile_id: currentProfile.id,
+        api_key: currentProfile.clear_key ? '' : currentProfile.api_key || null }),
+    })
+    const data = await response.json().catch(() => ({}))
+    if (!response.ok) throw new Error(data.error || '无法读取模型列表')
+    if (current !== catalogVersion || profile.value !== currentProfile) return
+    catalog.value = { ...catalog.value, [currentProfile.id]: data.models }
+    currentProfile.models = data.models
+    if (data.models.length && !data.models.some(item => item.id === currentProfile.model)) {
+      currentProfile.model = data.models[0].id
+      applyModel()
+      if (currentProfile.name === '新模型配置') {
+        try { currentProfile.name = new URL(currentProfile.base_url).hostname } catch { /* URL validation happens on save. */ }
+      }
+    } else if (currentProfile.context_tokens == null && selectedModel.value?.input_budget != null) {
+      applyModel()
+    }
+  } catch (failure) { if (current === catalogVersion) catalogError.value = failure.message || '无法读取模型列表' }
+  finally { if (current === catalogVersion) catalogLoading.value = false }
+}
+const connectionChanged = () => {
+  if (!profile.value) return
+  catalogVersion++; catalogLoading.value = false; catalogError.value = ''
+  catalog.value = { ...catalog.value, [profile.value.id]: [] }
+  profile.value.models = []
+  profile.value.context_tokens = null
+  if (profile.value.base_url) void discoverModels()
+}
+watch([tab, selectedProfile, opened], () => {
+  catalogVersion++; catalogLoading.value = false; catalogError.value = ''
+  if (opened.value && tab.value === 'models' && profile.value && !catalog.value[profile.value.id]
+      && (profile.value.key_configured || profile.value.model)) void discoverModels()
+})
 const toolQuery = ref('')
 const filteredTools = computed(() => {
   const query = toolQuery.value.trim().toLowerCase()
@@ -23,19 +106,22 @@ const newId = prefix => prefix + '-' + Date.now().toString(36) + Math.random().t
 const status = child => {
   if (!child.enabled) return '已停用'
   const modelId = child.model_profile || draft.value?.firefly.model_profile
-  if (!draft.value?.profiles.find(item => item.id === modelId)?.model?.trim()) return '待配置模型'
+  if (!child.model && !draft.value?.profiles.find(item => item.id === modelId)?.model?.trim()
+      && !draft.value?.profiles.find(item => item.id === modelId)?.models?.length) return '待配置模型'
   if (child.tools.some(name => !tools.value.some(tool => tool.name === name))) return '工具不可用'
   return '已启用'
 }
 const statusKind = child => {
   if (!child.enabled) return 'idle'
   const modelId = child.model_profile || draft.value?.firefly.model_profile
-  if (!draft.value?.profiles.find(item => item.id === modelId)?.model?.trim()) return 'warning'
+  if (!child.model && !draft.value?.profiles.find(item => item.id === modelId)?.model?.trim()
+      && !draft.value?.profiles.find(item => item.id === modelId)?.models?.length) return 'warning'
   if (child.tools.some(name => !tools.value.some(tool => tool.name === name))) return 'error'
   return 'success'
 }
-const profileKind = item => item.model?.trim() ? 'success' : 'warning'
+const profileKind = item => item.model?.trim() || item.models?.length ? 'success' : 'warning'
 const show = async () => {
+  catalog.value = {}; catalogError.value = ''
   opened.value = true
   await nextTick(); dialog.value?.showModal()
   if (await load()) {
@@ -44,13 +130,14 @@ const show = async () => {
   }
 }
 defineExpose({ show })
-const close = () => {
-  if (saving.value) return
+const close = async () => {
+  if (dialog.value?.contains(document.activeElement)) document.activeElement?.blur()
+  if (!await save()) return
   dialog.value?.close(); opened.value = false; emit('closed')
 }
 const addAgent = () => {
   const id = newId('agent')
-  draft.value.subagents.push({ id, name: '新子 agent', description: '', instruction: '', model_profile: null,
+  draft.value.subagents.push({ id, name: '新子 agent', description: '', instruction: '', model_profile: null, model: null, reasoning_level: null,
     tools: [], enabled: false, timeout_secs: 1800 })
   selectedAgent.value = id
 }
@@ -61,33 +148,22 @@ const removeAgent = () => {
 const addProfile = () => {
   const id = newId('model')
   draft.value.profiles.push({ id, name: '新模型配置', base_url: 'https://api.openai.com/v1', model: '',
-    api_key: null, key_configured: false, context_tokens: null })
+    models: [], api_key: null, key_configured: false, context_tokens: null })
   selectedProfile.value = id
+  if (!draft.value.firefly.model_profile) draft.value.firefly.model_profile = id
 }
 const removeProfile = () => {
   const id = selectedProfile.value
-  if (draft.value.firefly.model_profile === id || draft.value.subagents.some(item => item.model_profile === id)) {
-    error.value = '此模型配置仍被 agent 使用，请先更换对应 agent 的模型。'; return
-  }
+  const rootAffected = draft.value.firefly.model_profile === id
+  const affected = draft.value.subagents.filter(item => item.model_profile === id)
+  if (rootAffected) { draft.value.firefly.model_profile = null; draft.value.firefly.model = null; draft.value.firefly.reasoning_level = null }
+  for (const child of affected) { child.model_profile = null; child.model = null; child.reasoning_level = null }
   draft.value.profiles = draft.value.profiles.filter(item => item.id !== id)
   selectedProfile.value = draft.value.profiles[0]?.id || ''
-}
-const exportConfig = () => {
-  const url = URL.createObjectURL(new Blob([JSON.stringify(portableSettings(draft.value), null, 2)], { type: 'application/json' }))
-  const link = document.createElement('a')
-  link.href = url; link.download = 'firefly-agents.json'; link.click()
-  setTimeout(() => URL.revokeObjectURL(url), 1000)
-}
-const importFile = async event => {
-  const file = event.target.files?.[0]
-  try {
-    if (!file) return
-    if (file.size > 1024 * 1024) throw new Error('配置文件不能超过 1 MiB')
-    importConfig(JSON.parse(await file.text()))
-    selectedAgent.value = draft.value.subagents[0]?.id || ''
-    selectedProfile.value = draft.value.profiles[0]?.id || ''
-  } catch (failure) { error.value = failure.message }
-  finally { event.target.value = '' }
+  error.value = ''
+  notice.value = rootAffected || affected.length
+    ? '已移除模型配置：受影响的子 agent 将继承主模型；如主 agent 使用此配置，请重新选择模型。'
+    : '已移除模型配置。'
 }
 const renameAgentId = event => {
   if (event.target.value === 'firefly' || draft.value.subagents.some(item => item !== agent.value && item.id === event.target.value)) {
@@ -114,7 +190,7 @@ onBeforeUnmount(() => dialog.value?.close())
             <p>配置主助手，按需创建子 agent 并分配工具。</p>
           </div>
         </div>
-        <button class="button ghost small" type="button" :disabled="saving" @click="close">关闭</button>
+        <div class="header-actions"><span class="save-status" role="status">{{ saving ? '正在保存…' : error && dirty ? '保存失败' : dirty ? '等待自动保存' : notice || '自动保存已开启' }}</span><button class="button ghost small" type="button" @click="close">关闭</button></div>
       </header>
       <div class="settings-content">
         <p v-if="loading" role="status">正在读取配置…</p>
@@ -122,7 +198,7 @@ onBeforeUnmount(() => dialog.value?.close())
           <nav class="settings-tabs" aria-label="配置分类">
             <button v-for="entry in [['firefly', 'Firefly 主 agent'], ['children', '子 agent'], ['models', '模型配置']]" :key="entry[0]" class="tab-button" :class="{ active: tab === entry[0] }" type="button" :aria-pressed="tab === entry[0]" :disabled="busy" @click="tab = entry[0]">{{ entry[1] }}<span v-if="entry[0] === 'children'" class="count">{{ draft.subagents.length }}</span></button>
           </nav>
-          <form id="agent-settings-form" class="settings-form" @submit.prevent="save">
+          <form class="settings-form" @submit.prevent>
             <fieldset :disabled="busy" class="settings-fields">
               <div class="settings-layout" :class="{ 'root-layout': tab === 'firefly' }">
                 <aside v-if="tab === 'children'" class="settings-sidebar" aria-label="子 agent 列表">
@@ -142,14 +218,19 @@ onBeforeUnmount(() => dialog.value?.close())
                       <label>名称<input v-model="agent.name" maxlength="100" required /></label>
                       <label v-if="tab === 'children'">标识<input :value="agent.id" aria-label="标识" maxlength="40" pattern="[a-z0-9_-]+" required @input="renameAgentId" /><small>小写字母、数字、下划线或连字符。</small></label>
                     </div>
-                    <label v-if="tab === 'children'">职责说明<textarea v-model="agent.description" rows="2" maxlength="4096" required placeholder="主助手根据这段说明选择何时委派任务。"></textarea></label>
+                    <label v-if="tab === 'children'">职责说明<textarea v-model="agent.description" rows="2" maxlength="4096" :required="agent.enabled" placeholder="主助手根据这段说明选择何时委派任务。"></textarea></label>
                   </div>
                   <div class="section-card">
                     <div class="section-title"><h4>模型与执行</h4></div>
                     <div class="field-pair">
-                      <label>使用模型<select v-model="agent.model_profile"><option v-if="tab === 'children'" :value="null">继承 Firefly 的模型</option><option v-for="item in draft.profiles" :key="item.id" :value="item.id">{{ item.name }}{{ item.model ? ' · ' + item.model : ' · 待配置' }}</option></select></label>
+                      <label>模型平台<select v-model="agent.model_profile" @change="agentProfileChanged"><option :value="null">{{ tab === 'children' ? '继承 Firefly 的平台' : '请选择模型平台' }}</option><option v-for="item in draft.profiles" :key="item.id" :value="item.id">{{ item.name }}</option></select></label>
                       <label>执行期限（秒）<input v-model.number="agent.timeout_secs" type="number" min="1" max="604800" required /></label>
                     </div>
+                    <label>使用模型<select v-model="agentModel" aria-label="Agent 使用模型" :disabled="!agentProfile" @change="agentModelChanged"><option v-if="!agentModel" value="" disabled>请选择模型</option><option v-if="agentModel && !agentModels.some(item => item.id === agentModel)" :value="agentModel">{{ agentModel }}</option><option v-for="item in agentModels" :key="item.id" :value="item.id">{{ item.id }}{{ item.context_length ? ' · ' + item.context_length.toLocaleString() + ' tokens' : '' }}</option></select></label>
+                    <label>推理级别<select v-model="agent.reasoning_level" aria-label="Agent 推理级别" :disabled="!agentReasoningLevels.length">
+                      <option :value="null">{{ !agentReasoningLevels.length ? '使用服务默认设置' : inheritsRootReasoning ? '继承主 Agent' : '使用模型默认级别' }}{{ inheritedReasoningLevel ? ' · ' + inheritedReasoningLevel : '' }}</option>
+                      <option v-for="level in agentReasoningLevels" :key="level" :value="level">{{ level }}</option>
+                    </select><small>{{ agentReasoningLevels.length ? '可选级别由模型服务提供，修改后自动保存，从下一次运行开始使用。' : '模型接口未提供可选推理级别，使用服务端默认设置。' }}</small></label>
                   </div>
                   <div class="section-card">
                     <label class="prompt-label">系统提示词<textarea v-model="agent.instruction" class="prompt-input" rows="8" maxlength="131072" placeholder="填写角色、工作流程、约束和返回要求。"></textarea></label>
@@ -168,18 +249,21 @@ onBeforeUnmount(() => dialog.value?.close())
                   <div class="editor-heading"><h3>{{ profile.name }}</h3><button class="delete-entry" type="button" @click="removeProfile">删除模型配置</button></div>
                   <div class="section-card">
                     <div class="section-title"><h4>连接</h4></div>
-                    <label>配置名称<input v-model="profile.name" maxlength="100" required /></label>
-                    <label>服务地址<input v-model.trim="profile.base_url" aria-label="服务地址" type="url" maxlength="2048" required placeholder="https://api.openai.com/v1" /><small>使用支持 Responses API 的模型服务。</small></label>
-                    <label>模型名称<input v-model.trim="profile.model" maxlength="256" placeholder="填写服务支持的模型名称" /></label>
+                    <label>Base URL<input v-model.trim.lazy="profile.base_url" aria-label="服务地址" type="url" maxlength="2048" required placeholder="https://api.openai.com/v1" @change="connectionChanged" /><small>使用支持 Responses API 的模型服务。模型列表会先查询此地址下的 /models，再尝试同一服务的 /v1/models。</small></label>
                   </div>
                   <div class="section-card">
                     <div class="section-title"><h4>认证</h4></div>
-                    <label>API Key<input v-model="profile.api_key" aria-label="API Key" type="password" maxlength="16384" autocomplete="new-password" :placeholder="profile.key_configured ? '已保存，同一服务下留空保留' : '填写密钥；无认证服务可留空'" @input="profile.clear_key = false" /><small>更换协议、域名或端口后，留空保存会清除原密钥。</small></label>
-                    <div class="key-controls"><span>{{ profile.clear_key ? '保存后清除密钥' : profile.key_configured ? '已有密钥' : '尚未保存密钥' }}</span><button class="button ghost small" type="button" @click="profile.api_key = null; profile.clear_key = !profile.clear_key">{{ profile.clear_key ? '保留原密钥' : '清除密钥' }}</button></div>
+                    <label>API Key<input v-model.lazy="profile.api_key" aria-label="API Key" type="password" maxlength="16384" autocomplete="new-password" :placeholder="profile.key_configured ? '已保存，同一服务下留空保留' : '填写密钥；无认证服务可留空'" @change="profile.clear_key = false; connectionChanged()" /><small>更换协议、域名或端口后，留空保存会清除原密钥。</small></label>
+                    <div class="key-controls"><span>{{ profile.clear_key ? '正在清除密钥' : profile.key_configured ? '已有密钥' : '尚未保存密钥' }}</span><button class="button ghost small" type="button" @click="profile.api_key = null; profile.clear_key = !profile.clear_key; connectionChanged()">{{ profile.clear_key ? '保留原密钥' : '清除密钥' }}</button></div>
                   </div>
                   <div class="section-card">
-                    <div class="section-title"><h4>上下文</h4></div>
-                    <label>输入预算<input v-model.number="profile.context_tokens" aria-label="输入预算" type="number" min="1024" max="100000000" placeholder="留空自动查询模型上下文窗口" /><small>查询失败时可填写显式预算作为兜底。</small></label>
+                    <div class="section-title"><h4>可用模型</h4><button class="button ghost small" type="button" :disabled="catalogLoading || !profile.base_url" @click="discoverModels">{{ catalogLoading ? '正在获取…' : '获取模型' }}</button></div>
+                    <p class="field-hint">获取到的全部模型会自动保存，供各 Agent 和对话分别选择。这里选择平台默认模型。</p>
+                    <p v-if="catalogError" class="settings-error" role="alert">{{ catalogError }}</p>
+                    <label>默认模型<select v-model="profile.model" aria-label="模型名称" @change="applyModel"><option value="">请选择默认模型</option><option v-if="profile.model && !selectedModel" :value="profile.model">{{ profile.model }} · 已保存</option><option v-for="item in models" :key="item.id" :value="item.id">{{ item.id }} · {{ item.context_length ? item.context_length.toLocaleString() + ' tokens' : '上下文长度未知' }}</option></select></label>
+                    <p v-if="selectedModel && !selectedModel.context_length" class="field-hint">服务没有返回此模型的上下文长度。可在下方高级设置填写输入预算，或由运行时继续查询。</p>
+                    <p v-else-if="selectedModel?.context_length" class="field-hint">上下文 {{ selectedModel.context_length.toLocaleString() }} tokens<span v-if="selectedModel.input_budget"> · 输入预算 {{ selectedModel.input_budget.toLocaleString() }} tokens（已预留输出空间）</span><span v-else> · 无法计算输入预算，请检查模型信息。</span></p>
+                    <details><summary>高级设置</summary><label>配置名称<input v-model="profile.name" maxlength="100" required /></label><label>Claude 接口地址（可选）<input v-model.trim.lazy="profile.claude_base_url" type="url" placeholder="默认从 Base URL 移除末尾 /v1" /><small>Claude 需要 Anthropic Messages 接口；可填写同一服务下的独立路径。</small></label><label>输入预算<input v-model.number="profile.context_tokens" aria-label="输入预算" type="number" min="1024" max="100000000" placeholder="自动获取；服务未提供时可手动填写" /><small>仅在服务未提供完整信息或需要自定义上限时使用。</small></label><label v-if="!models.length">模型名称<input v-model.trim="profile.model" maxlength="256" placeholder="模型列表不可用时手动填写" /></label></details>
                   </div>
                 </section>
                 <section v-else-if="tab === 'children' || tab === 'models'" class="settings-editor"><div class="empty-editor">{{ tab === 'children' ? '从左侧选择一个子 agent，或点击“＋ 新建子 agent”开始配置。' : '从左侧选择一个模型配置，或点击“＋ 新建模型配置”。' }}</div></section>
@@ -187,13 +271,9 @@ onBeforeUnmount(() => dialog.value?.close())
             </fieldset>
           </form>
         </template>
-        <p v-if="error" class="settings-error" role="alert">{{ error }}<button v-if="!draft" class="button ghost small" type="button" :disabled="loading" @click="show">重新读取</button></p>
-        <p v-if="notice" class="settings-notice" role="status">{{ notice }}</p>
+        <p v-if="error" class="settings-error" role="alert">{{ error }}<button v-if="!draft" class="button ghost small" type="button" :disabled="loading" @click="show">重新读取</button><button v-else-if="error.includes('其他页面修改')" class="button ghost small" type="button" :disabled="saving" @click="load({ discardChanges: true })">放弃本地修改并重新读取</button><button v-else class="button ghost small" type="button" :disabled="saving" @click="save">重试</button></p>
       </div>
-      <footer class="settings-footer">
-        <div class="transfer-actions"><button class="button ghost small" type="button" :disabled="!draft || busy" @click="importInput.click()">导入配置</button><button class="button ghost small" type="button" :disabled="!draft || busy" @click="exportConfig">导出配置</button><input ref="importInput" type="file" accept="application/json,.json" hidden aria-label="导入 Agent 配置文件" @change="importFile" /><small>导出文件不包含 API Key。</small></div>
-        <div class="save-actions"><span v-if="dirty" class="dirty-hint">有未保存的修改</span><button class="button primary small" type="submit" form="agent-settings-form" :disabled="!draft || busy">{{ saving ? '保存中…' : '保存配置' }}</button></div>
-      </footer>
+
     </dialog>
   </Teleport>
 </template>
@@ -208,6 +288,7 @@ onBeforeUnmount(() => dialog.value?.close())
 .header-icon { display: grid; place-items: center; width: 40px; height: 40px; flex-shrink: 0; border-radius: 12px; background: var(--ink-gradient); color: var(--glow); box-shadow: 0 6px 16px -6px rgba(23, 32, 51, .5); }
 .settings-header h2 { margin: 0; font-size: 17px; font-weight: 600; }
 .settings-header p { margin: 3px 0 0; color: var(--muted); font-size: 12px; line-height: 1.5; }
+.header-actions { display: flex; align-items: center; gap: 12px; }.save-status { color: var(--muted); font-size: 12px; }
 
 .settings-content { display: flex; flex: 1; flex-direction: column; padding: 20px 24px 24px; overflow-y: auto; min-height: 0; background: var(--bg-body); }
 
@@ -293,21 +374,12 @@ textarea { resize: vertical; line-height: 1.65; }
 
 /* ---------- 密钥与状态横幅 ---------- */
 .key-controls { display: flex; align-items: center; justify-content: space-between; gap: 10px; padding: 9px 12px; border: 1px solid var(--border-soft); border-radius: var(--radius-sm); background: var(--bg-subtle); color: var(--muted); font-size: 12px; }
-.settings-error, .settings-notice { display: flex; flex-shrink: 0; align-items: center; flex-wrap: wrap; gap: 10px; margin: 14px 0 0; padding: 10px 14px; border-radius: var(--radius-sm); font-size: 13px; line-height: 1.6; overflow-wrap: anywhere; }
-.settings-error::before, .settings-notice::before { content: ''; width: 7px; height: 7px; flex-shrink: 0; border-radius: 50%; background: currentColor; }
+.settings-error { display: flex; flex-shrink: 0; align-items: center; flex-wrap: wrap; gap: 10px; margin: 14px 0 0; padding: 10px 14px; border-radius: var(--radius-sm); font-size: 13px; line-height: 1.6; overflow-wrap: anywhere; }
+.settings-error::before { content: ''; width: 7px; height: 7px; flex-shrink: 0; border-radius: 50%; background: currentColor; }
 .settings-error { color: var(--error-text); background: rgba(220, 38, 38, .06); border: 1px solid rgba(220, 38, 38, .18); }
-.settings-notice { color: var(--success-text); background: rgba(21, 128, 61, .07); border: 1px solid rgba(21, 128, 61, .2); }
-
-/* ---------- 底部操作 ---------- */
-.settings-footer { display: flex; align-items: center; justify-content: space-between; gap: 16px; flex-shrink: 0; padding: 14px 24px; border-top: 1px solid var(--border-soft); }
-.transfer-actions, .save-actions { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
-.settings-footer small, .save-actions span { font-size: 12px; color: var(--muted); }
-.dirty-hint { display: inline-flex; align-items: center; gap: 7px; }
-.dirty-hint::before { content: ''; width: 7px; height: 7px; border-radius: 50%; background: var(--glow); box-shadow: 0 0 6px rgba(246, 181, 69, .8); }
 
 @media (max-width: 640px) {
   .agent-settings-dialog { width: calc(100vw - 16px); height: calc(100dvh - 20px); border-radius: 16px; }
-  .settings-header, .settings-content, .settings-footer { padding: 14px 16px; }
   .header-icon { width: 36px; height: 36px; border-radius: 10px; }
   .settings-header p { display: none; }
   .settings-tabs { width: 100%; overflow-x: auto; }
@@ -317,8 +389,6 @@ textarea { resize: vertical; line-height: 1.65; }
   .settings-sidebar { flex-direction: row; overflow-x: auto; overflow-y: hidden; }
   .settings-sidebar > button { flex-shrink: 0; width: 160px; }
   .settings-editor input.tool-filter { flex: 1; width: auto; min-width: 120px; font-size: 16px; }
-  .settings-footer { flex-direction: column; align-items: stretch; }
-  .save-actions { justify-content: flex-end; }
   .button.small { min-height: 40px; }
   .delete-entry { min-height: 40px; }
 }

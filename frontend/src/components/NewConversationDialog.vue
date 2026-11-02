@@ -289,7 +289,7 @@ onBeforeUnmount(() => {
         <label class="field-label" :for="providerSelectId">API 平台</label>
         <select :id="providerSelectId" v-model="provider" class="provider-select" :disabled="modelsLoading" @change="changeProvider">
           <option value="">openai</option>
-          <option v-for="item in providers" :key="item.name" :value="item.name">{{ item.name }}{{ item.name === defaultProvider ? '（默认）' : '' }}</option>
+          <option v-for="item in providers" :key="item.name" :value="item.name">{{ item.display_name || item.name }}</option>
         </select>
       </div>
       <div class="provider-picker">
@@ -308,6 +308,7 @@ onBeforeUnmount(() => {
           <option v-for="level in reasoningOptions" :key="level" :value="level">{{ level }}</option>
         </select>
       </div>
+      <p class="models-note">可选择 Agent 配置中保存的平台，Codex 使用该平台的 Responses 接口。</p>
       <p v-if="modelsError || providerModelsError" class="models-note" role="status">{{ modelsError || providerModelsError }}</p>
     </div>
 

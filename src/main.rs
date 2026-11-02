@@ -30,6 +30,7 @@ mod assistant_store;
 mod assistant_tasks;
 mod assistant_workspace;
 mod claude;
+mod cli_profiles;
 mod codex;
 mod config;
 mod db;

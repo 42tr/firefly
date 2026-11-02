@@ -3,10 +3,12 @@ use std::sync::Mutex;
 
 fn fixture() -> Settings {
     let mut settings = Settings::defaults();
-    settings.profiles[0].base_url = "http://127.0.0.1:1234/v1".into();
-    settings.profiles[0].model = "fixture-model".into();
-    settings.profiles[0].api_key = Some("private-fixture-key".into());
-    settings.profiles[0].context_tokens = Some(32768);
+    settings.profiles.push(ModelProfile {
+        id: "default".into(), name: "测试模型".into(),
+        base_url: "http://127.0.0.1:1234/v1".into(), claude_base_url: None, model: "fixture-model".into(),
+        api_key: Some("private-fixture-key".into()), models: vec![], context_tokens: Some(32768), _key_configured: false,
+    });
+    settings.firefly.model_profile = Some("default".into());
     settings
 }
 
@@ -17,10 +19,98 @@ fn child(id: &str) -> AgentDefinition {
         description: "整理指定信息".into(),
         instruction: "CUSTOM_CHILD_INSTRUCTION".into(),
         model_profile: None,
+        model: None,
+        reasoning_level: None,
         tools: vec!["fetch_activity_records".into()],
         enabled: true,
         timeout_secs: 60,
     }
+}
+
+fn effort_settings() -> Settings {
+    let mut settings = fixture();
+    settings.profiles[0].models = vec![
+        ProfileModel { id:"fixture-model".into(), reasoning_levels:Some(vec!["low".into(),"high".into(),"max".into()]),
+            default_reasoning_level:Some("high".into()), ..Default::default() },
+        ProfileModel { id:"other-model".into(), reasoning_levels:Some(vec!["low".into(),"high".into()]),
+            default_reasoning_level:Some("low".into()), ..Default::default() },
+    ];
+    settings.subagents.push(child("helper"));
+    settings
+}
+
+#[tokio::test]
+async fn agent_effort_defaults_inherits_overrides_and_survives_reload() {
+    let pool = crate::db::test_pool().await;
+    let initial = Settings::load(&pool).await.unwrap();
+    let mut settings = effort_settings(); settings.revision = initial.revision;
+    assert_eq!(settings.reasoning_level(&settings.firefly).unwrap().as_deref(), Some("high"));
+    settings.firefly.reasoning_level = Some("max".into());
+    assert_eq!(settings.reasoning_level(&settings.subagents[0]).unwrap().as_deref(), Some("max"));
+    settings.subagents[0].reasoning_level = Some("low".into());
+    settings.save(&pool).await.unwrap().unwrap();
+    let mut loaded = Settings::load(&pool).await.unwrap();
+    assert_eq!(loaded.firefly.reasoning_level.as_deref(), Some("max"));
+    assert_eq!(loaded.reasoning_level(&loaded.subagents[0]).unwrap().as_deref(), Some("low"));
+    loaded.subagents[0].reasoning_level = None;
+    loaded.subagents[0].model = Some("other-model".into());
+    assert_eq!(loaded.reasoning_level(&loaded.subagents[0]).unwrap().as_deref(), Some("low"));
+    loaded.subagents[0].model_profile = Some("separate".into());
+    loaded.subagents[0].model = None;
+    let mut profile = loaded.profiles[0].clone(); profile.id = "separate".into(); loaded.profiles.push(profile);
+    assert_eq!(loaded.reasoning_level(&loaded.subagents[0]).unwrap().as_deref(), Some("high"));
+    loaded.firefly.reasoning_level = Some("medium".into());
+    assert_eq!(loaded.reasoning_level(&loaded.firefly).unwrap().as_deref(), Some("high"));
+    loaded.firefly.reasoning_level = Some("high\ninvalid".into());
+    assert!(loaded.validate().is_err());
+    let mut legacy = serde_json::to_value(effort_settings()).unwrap();
+    legacy["firefly"].as_object_mut().unwrap().remove("reasoning_level");
+    let legacy: Settings = serde_json::from_value(legacy).unwrap();
+    assert!(legacy.firefly.reasoning_level.is_none());
+}
+
+#[tokio::test]
+async fn configured_effort_reaches_actual_responses_requests_including_streams_and_children() {
+    use axum::{body::Body, extract::State, response::Response, routing::{get, post}, Json, Router};
+    let captured = Arc::new(Mutex::new(Vec::<Value>::new()));
+    let app = Router::new()
+        .route("/models/{id}", get(|| async { Json(json!({"context_window":32000})) }))
+        .route("/responses", post(|State(captured): State<Arc<Mutex<Vec<Value>>>>, Json(body): Json<Value>| async move {
+            captured.lock().unwrap().push(body.clone());
+            let response = json!({"status":"completed","output":[{"type":"message","content":[{"type":"output_text","text":"ok"}]}]});
+            if body["stream"] == true {
+                let event = json!({"type":"response.completed","response":response});
+                Response::builder().header("content-type", "text/event-stream").body(Body::from(format!("data: {event}\n\n"))).unwrap()
+            } else {
+                Response::builder().header("content-type", "application/json").body(Body::from(response.to_string())).unwrap()
+            }
+        })).with_state(captured.clone());
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let mut settings = effort_settings();
+    settings.profiles[0].base_url = format!("http://{}", listener.local_addr().unwrap());
+    let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+    let request = || g::ModelRequest::new(vec![g::Message::user("hello")], vec![]);
+    settings.model(&settings.firefly).unwrap().generate(request()).await.unwrap();
+    settings.firefly.reasoning_level = Some("max".into());
+    struct Sink;
+    #[async_trait::async_trait]
+    impl g::ModelEventSink for Sink { async fn emit(&self, _: g::ModelEvent) {} }
+    settings.model(&settings.firefly).unwrap().generate_stream(request(), &Sink).await.unwrap();
+    settings.model(&settings.subagents[0]).unwrap().with_context_compaction().generate(request()).await.unwrap();
+    settings.subagents[0].reasoning_level = Some("low".into());
+    settings.model(&settings.subagents[0]).unwrap().generate(request()).await.unwrap();
+    settings.subagents[0].reasoning_level = None;
+    settings.subagents[0].model = Some("other-model".into());
+    settings.model(&settings.subagents[0]).unwrap().generate(request()).await.unwrap();
+    settings.profiles[0].models.clear();
+    settings.model(&settings.firefly).unwrap().generate(request()).await.unwrap();
+    let requests = captured.lock().unwrap();
+    let efforts: Vec<_> = requests.iter().map(|r| r.pointer("/reasoning/effort").and_then(Value::as_str)).collect();
+    assert_eq!(efforts, [Some("high"),Some("max"),Some("max"),Some("low"),Some("low"),None]);
+    assert_eq!(requests[4]["model"], "other-model");
+    assert!(requests[5].get("reasoning").is_none());
+    assert!(requests.iter().all(|r| r.get("max_output_tokens").is_none()));
+    server.abort();
 }
 
 #[tokio::test]
@@ -192,4 +282,85 @@ async fn dynamic_children_receive_only_their_selected_tools_and_instruction() {
     assert_eq!(names, ["handoff_to_helper"]);
     assert!(!routing_instruction(&[]).contains("handoff_to_programmer"));
     assert!(!routing_instruction(&[]).contains("handoff_to_chandao"));
+}
+
+#[test]
+fn initial_model_profile_ignores_openai_environment() {
+    const CHILD: &str = "FIREFLY_TEST_MODEL_ENV_CHILD";
+    if std::env::var_os(CHILD).is_some() {
+        let settings = Settings::defaults();
+        assert!(settings.profiles.is_empty());
+        assert!(settings.firefly.model_profile.is_none());
+        settings.validate().unwrap();
+        return;
+    }
+    let status = std::process::Command::new(std::env::current_exe().unwrap())
+        .arg("--exact").arg("agent_settings::tests::initial_model_profile_ignores_openai_environment")
+        .env(CHILD, "1")
+        .env("OPENAI_BASE_URL", "https://environment.invalid/v1")
+        .env("OPENAI_MODEL", "environment-model")
+        .env("OPENAI_API_KEY", "environment-key")
+        .status().unwrap();
+    assert!(status.success());
+}
+
+#[tokio::test]
+async fn empty_model_configuration_can_be_saved_and_reloaded() {
+    let pool = crate::db::test_pool().await;
+    let mut initial = Settings::load(&pool).await.unwrap();
+    assert!(initial.profiles.is_empty());
+    assert!(initial.firefly.model_profile.is_none());
+    assert!(initial.model(&initial.firefly).is_err());
+    initial.firefly.instruction = "saved without a model".into();
+    initial.save(&pool).await.unwrap().unwrap();
+    let loaded = Settings::load(&pool).await.unwrap();
+    assert!(loaded.profiles.is_empty());
+    assert!(loaded.firefly.model_profile.is_none());
+    assert_eq!(loaded.firefly.instruction, "saved without a model");
+}
+
+#[test]
+fn disabled_new_agent_can_be_saved_before_its_description_is_written() {
+    let mut settings = fixture();
+    let mut draft = child("new-agent");
+    draft.description.clear();
+    draft.enabled = false;
+    settings.subagents.push(draft);
+    assert!(settings.validate().is_ok());
+    settings.subagents[0].enabled = true;
+    assert!(settings.validate().is_err());
+}
+
+#[tokio::test]
+async fn all_catalog_models_persist_with_independent_agent_selection_and_budgets() {
+    let pool = crate::db::test_pool().await;
+    let initial = Settings::load(&pool).await.unwrap();
+    let mut settings = fixture(); settings.revision = initial.revision;
+    settings.profiles[0].models = vec![
+        ProfileModel { id:"fixture-model".into(), context_length:Some(65536), input_budget:Some(60000),
+            reasoning_levels:Some(vec!["low".into(),"high".into(),"max".into()]), default_reasoning_level:Some("high".into()) },
+        ProfileModel { id:"smaller-model".into(), context_length:Some(16384), input_budget:Some(15000), ..Default::default() },
+    ];
+    settings.firefly.model = Some("smaller-model".into());
+    settings.subagents.push(child("helper"));
+    settings.validate().unwrap();
+    settings.save(&pool).await.unwrap().unwrap();
+    let mut loaded = Settings::load(&pool).await.unwrap();
+    assert_eq!(loaded.profiles[0].model_ids(), ["fixture-model", "smaller-model"]);
+    assert_eq!(loaded.model_name(&loaded.firefly).unwrap(), "smaller-model");
+    assert_eq!(loaded.model_name(&loaded.subagents[0]).unwrap(), "smaller-model");
+    assert_eq!(loaded.profiles[0].input_budget("smaller-model"), Some(15000));
+    assert_eq!(loaded.profiles[0].input_budget("fixture-model"), Some(32768));
+    let profile = &loaded.profiles[0];
+    assert_eq!(profile.reasoning_level("fixture-model", Some("max"), None).as_deref(), Some("max"));
+    assert_eq!(profile.reasoning_level("fixture-model", Some("medium"), None).as_deref(), Some("high"));
+    assert_eq!(profile.reasoning_level("fixture-model", None, None).as_deref(), Some("high"));
+    assert_eq!(profile.reasoning_level("fixture-model", Some("max"), Some(&["low", "high"])).as_deref(), Some("high"));
+    assert_eq!(profile.reasoning_level("smaller-model", Some("high"), None), None);
+    loaded.subagents[0].model = Some("fixture-model".into());
+    assert_eq!(loaded.model_name(&loaded.subagents[0]).unwrap(), "fixture-model");
+    assert_eq!(loaded.model_name(&loaded.firefly).unwrap(), "smaller-model");
+    let duplicate = loaded.profiles[0].models[0].clone();
+    loaded.profiles[0].models.push(duplicate);
+    assert!(loaded.validate().is_err());
 }

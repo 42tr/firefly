@@ -167,6 +167,23 @@ pub struct ProviderListing {
     pub warnings: Vec<String>,
 }
 
+pub fn managed_provider(profile: &crate::agent_settings::ModelProfile) -> ClaudeProvider {
+    let url = crate::cli_profiles::claude_url(profile);
+    let key = crate::llm::normalize_bearer_secret(profile.api_key.as_deref().unwrap_or_default());
+    ClaudeProvider {
+        name: format!("{}{}", crate::cli_profiles::PREFIX, profile.id),
+        base_url: Some(url.clone()), models: profile.model_ids(),
+        default_model: Some(profile.model.clone()), default_reasoning_level: profile.reasoning_level(&profile.model, None, Some(REASONING_LEVELS)),
+        settings: NativeSettings(serde_json::json!({"env": {
+            "ANTHROPIC_BASE_URL":url, "ANTHROPIC_AUTH_TOKEN":key,
+            "CLAUDE_CODE_EFFORT_LEVEL":"auto",
+            "ANTHROPIC_DEFAULT_OPUS_MODEL":profile.model,
+            "ANTHROPIC_DEFAULT_SONNET_MODEL":profile.model,
+            "ANTHROPIC_DEFAULT_HAIKU_MODEL":profile.model
+        }})),
+    }
+}
+
 fn config_dir_from(explicit: Option<OsString>, home: Option<OsString>) -> Option<PathBuf> {
     explicit
         .filter(|path| !path.is_empty())

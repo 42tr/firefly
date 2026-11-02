@@ -67,9 +67,6 @@ pub struct Config {
     /// http_request 工具允许访问的域名白名单，英文逗号分隔；留空表示不限制。
     #[serde_inline_default(String::new())]
     pub assistant_http_tool_allowed_hosts: String,
-    /// Optional input cap/fallback; omitted means query the model's context window.
-    #[serde(default)]
-    pub assistant_context_tokens: Option<usize>,
     /// Dedicated OpenAI-compatible embedding service; empty uses keyword retrieval only.
     #[serde(default)]
     pub embedding_base_url: String,

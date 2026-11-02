@@ -2,6 +2,9 @@
 mod models;
 mod protocol;
 mod settings;
+mod managed;
+pub use managed::Binding as ThreadBinding;
+pub(crate) use managed::refresh_profiles;
 mod workspace;
 
 #[allow(unused_imports)]
