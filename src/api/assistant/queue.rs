@@ -249,6 +249,7 @@ async fn enqueue_turn(
     let mut message = to_message_response(submission.message, submission.attachments);
     message.processing_status = Some(job.status.clone());
     message.processing_error = job.error_message;
+    tracing::info!(%job_id, conversation_id, status = %job.status, "assistant submission accepted");
     Ok(EnqueueMessageResponse { job_id, status: job.status, message })
 }
 
@@ -275,9 +276,10 @@ async fn run_queue_worker(conversation_id: i64, user_id: String) {
         };
         let job = assistant_job::register_claimed_job(&record);
         match assistant_store::generation_requires_snapshot(record.id).await {
-            Ok(required) => job.snapshot_required.store(required, Ordering::SeqCst),
+            Ok(required) => job.initialize_replay(required),
             Err(err) => {
-                warn!(job_id = %record.id, "failed to check replay history; using snapshots: {err:#}")
+                warn!(job_id = %record.id, "failed to check replay history; using snapshots: {err:#}");
+                job.initialize_replay(true);
             }
         }
         let result = AssertUnwindSafe(run_queued_generation(&record, job.clone())
@@ -544,6 +546,11 @@ pub async fn resume_job_stream(
             .await
             .map_err(AppError::internal_server_error)?
             .ok_or_else(|| AppError::not_found("生成任务不存在或无权访问"))?;
+        if matches!(record.status.as_str(), "queued" | "running") {
+            return Ok(Sse::new(ReceiverStream::new(stream_waiting_job(
+                job_id, user_id, record.conversation_id, start_seq, execution_id,
+            ))).keep_alive(KeepAlive::new().interval(Duration::from_secs(15)).text("keep-alive")));
+        }
         let (tx, rx) = mpsc::channel(1);
         let _ = tx
             .send(Ok(assistant_job::stream_reset_event(job_id, record.conversation_id, None, "job_not_in_memory")))
@@ -552,6 +559,56 @@ pub async fn resume_job_stream(
     };
     Ok(Sse::new(ReceiverStream::new(stream_rx))
         .keep_alive(KeepAlive::new().interval(Duration::from_secs(15)).text("keep-alive")))
+}
+
+// A submitted job's SSE connection can arrive before the worker claims it.
+// Keep that subscription through the queue -> registry handoff, independently
+// of the optional activity WebSocket. Never poll full message/process history.
+fn stream_waiting_job(
+    job_id: uuid::Uuid, user_id: String, conversation_id: i64, start_seq: u64, execution_id: Option<uuid::Uuid>,
+) -> mpsc::Receiver<Result<Event, Infallible>> {
+    let (tx, rx) = mpsc::channel(64);
+    tokio::spawn(async move {
+        let mut changes = crate::assistant_events::changes().subscribe();
+        let mut announced = false;
+        loop {
+            if let Some(job) = assistant_job::global_registry().get(job_id).filter(|job| job.user_id == user_id) {
+                let mut events = assistant_job::stream_for_job_from(job, start_seq, execution_id);
+                loop {
+                    let event = tokio::select! { _ = tx.closed() => return, event = events.recv() => event };
+                    let Some(event) = event else { return; };
+                    if tx.send(event).await.is_err() { return; }
+                }
+            }
+            match assistant_store::get_generation_job(job_id, &user_id).await {
+                Ok(Some(record)) if matches!(record.status.as_str(), "queued" | "running") => {
+                    if !announced {
+                        if tx.send(Ok(Event::default().event("job_started").data(json!({
+                            "job_id":job_id,"conversation_id":conversation_id,"queued":true,
+                        }).to_string()))).await.is_err() { return; }
+                        announced = true;
+                    }
+                }
+                Ok(Some(_)) => {
+                    let _ = tx.send(Ok(assistant_job::stream_reset_event(job_id, conversation_id, None, "job_not_in_memory"))).await;
+                    return;
+                }
+                other => {
+                    let message = if other.is_err() { "读取生成任务状态失败，请重新打开对话" } else { "生成任务已取消或不存在" };
+                    let _ = tx.send(Ok(Event::default().event("error").data(json!({"message":message}).to_string()))).await;
+                    return;
+                }
+            }
+            tokio::select! {
+                _ = tx.closed() => return,
+                _ = changes.recv() => {},
+                // Claims publish their DB change before registering the in-memory
+                // job. Recheck that small gap even if the CLI has not output yet.
+                _ = tokio::time::sleep(Duration::from_secs(2)) => {},
+            }
+        }
+    });
+    rx
 }
 
 pub async fn cancel_job(auth_user: Session, Path(job_id): Path<uuid::Uuid>) -> Result<Json<Value>, AppError> {
@@ -650,6 +707,54 @@ async fn load_generation_conversation(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn queued_stream_follows_worker_claim_without_an_activity_socket() {
+        use axum::response::IntoResponse;
+        let pool = crate::db::test_pool().await;
+        crate::db::set_test_pool(pool.clone());
+        let conversation: i64 = sqlx::query_scalar("INSERT INTO assistant_conversations(user_id,system_prompt) VALUES ('queue-stream','') RETURNING id")
+            .fetch_one(&pool).await.unwrap();
+        let id = uuid::Uuid::new_v4();
+        assistant_store::create_queued_user_turn(id, conversation, "queue-stream", false, "first".into(), &[]).await.unwrap();
+        let mut stream = stream_waiting_job(id, "queue-stream".into(), conversation, 0, None);
+        let queued = tokio::time::timeout(Duration::from_secs(2), stream.recv()).await.unwrap().unwrap();
+        let claimed = assistant_store::claim_next_queued_generation(conversation, "queue-stream").await.unwrap().unwrap();
+        let job = assistant_job::register_claimed_job(&claimed);
+        let mut eager = assistant_job::stream_for_job(job.clone(), 0);
+        assert!(tokio::time::timeout(Duration::from_millis(30), eager.recv()).await.is_err(),
+            "registration must not prematurely force a recovery snapshot");
+        job.initialize_replay(false);
+        drop(eager);
+        job.emit("assistant_delta", json!({"delta":"first reply"}));
+        job.complete().await;
+        crate::assistant_events::notify(Some("queue-stream"), "conversations");
+        let events = futures_util::stream::iter([queued]).chain(ReceiverStream::new(stream));
+        let response = Sse::new(events).into_response();
+        let body = tokio::time::timeout(Duration::from_secs(3), axum::body::to_bytes(response.into_body(), 1024 * 1024))
+            .await.unwrap().unwrap();
+        let text = String::from_utf8(body.to_vec()).unwrap();
+        assert!(text.contains("\"queued\":true"));
+        assert!(text.contains("first reply"));
+        assert!(text.contains("event: assistant_done"));
+        assert!(!text.contains("event: stream_reset"));
+        assistant_job::global_registry().remove_execution(id, job.execution_id);
+    }
+
+    #[tokio::test]
+    async fn disconnecting_a_queued_subscription_does_not_cancel_the_submission() {
+        let pool = crate::db::test_pool().await;
+        crate::db::set_test_pool(pool.clone());
+        let conversation: i64 = sqlx::query_scalar("INSERT INTO assistant_conversations(user_id,system_prompt) VALUES ('queue-disconnect','') RETURNING id")
+            .fetch_one(&pool).await.unwrap();
+        let id = uuid::Uuid::new_v4();
+        assistant_store::create_queued_user_turn(id, conversation, "queue-disconnect", false, "first".into(), &[]).await.unwrap();
+        let mut stream = stream_waiting_job(id, "queue-disconnect".into(), conversation, 0, None);
+        assert!(stream.recv().await.is_some());
+        drop(stream);
+        tokio::task::yield_now().await;
+        assert_eq!(assistant_store::get_generation_job(id, "queue-disconnect").await.unwrap().unwrap().status, "queued");
+    }
 
     struct PlainReplyModel {
         requests: std::sync::Mutex<Vec<g::ModelRequest>>,

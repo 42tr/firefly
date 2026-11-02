@@ -65,6 +65,7 @@ pub(in crate::api::assistant) async fn run_claude_turn(
     };
     if job.cancellation_token().is_cancelled() { return Ok(()); }
     let mut session = claude::acquire(user_id, conversation_id, prepared, &prompt).await?;
+    tracing::info!(job_id = %job.id, conversation_id, "Claude prompt written to CLI");
     let prompt_id = session.prompt_id.clone();
     let (_seen_session, result) = run_claude_events(session.turn(), record, user_id, conversation_id, &job, &prompt_id).await;
     let cleanup = session.release(result.is_ok() && !job.cancellation_token().is_cancelled()).await;
@@ -82,6 +83,9 @@ async fn run_claude_events(
     let mut activity = firefly_claude_transport::Activity::default();
     let mut acknowledged = false;
     let mut state_deadline = None;
+    let mut text_message_id: Option<String> = None;
+    let mut text_delta_seen = false;
+    let mut first_text_sent = false;
 
     loop {
         let event = tokio::select! {
@@ -135,6 +139,7 @@ async fn run_claude_events(
             || event["user_message_uuid"] == prompt_id) {
             acknowledged = true;
             activity.begin_prompt();
+            tracing::info!(job_id = %job.id, conversation_id, "Claude input acknowledged");
         }
         if !acknowledged {
             // Claude reports running before echoing the input. Remember that
@@ -156,7 +161,16 @@ async fn run_claude_events(
         }
         // Child output is not a final answer from the main agent.
         if !event["parent_tool_use_id"].is_null() || !event["agent_id"].is_null() { continue; }
+        if event["type"] == "stream_event" && event["event"]["type"] == "message_start" {
+            text_message_id = event["event"]["message"]["id"].as_str().map(str::to_owned);
+            text_delta_seen = false;
+        }
         if let Some(delta) = claude::text_delta(&event).filter(|delta| !delta.is_empty()) {
+            if !first_text_sent {
+                tracing::info!(job_id = %job.id, delivery = "delta", "Claude first reply text delivered");
+                first_text_sent = true;
+            }
+            text_delta_seen = true;
             job.emit("assistant_delta", json!({ "delta": delta }));
             continue;
         }
@@ -202,6 +216,19 @@ async fn run_claude_events(
                     }
                 }
                 let content = text_parts.join("\n").trim().to_string();
+                let same_message = text_message_id.as_deref().zip(event["message"]["id"].as_str())
+                    .is_none_or(|(current, received)| current == received);
+                // Some providers/CLI paths only emit a complete assistant
+                // message. Persisting it alone leaves the live UI empty.
+                if !content.is_empty() && (!text_delta_seen || !same_message) {
+                    if !first_text_sent {
+                        tracing::info!(job_id = %job.id, delivery = "complete_message", "Claude first reply text delivered");
+                        first_text_sent = true;
+                    }
+                    job.emit("assistant_delta", json!({"delta":content}));
+                }
+                text_message_id = event["message"]["id"].as_str().map(str::to_owned);
+                text_delta_seen = true;
                 if !content.is_empty() || !tool_calls.is_empty() {
                     let assistant = Message::assistant(content, (!tool_calls.is_empty()).then_some(tool_calls));
                     if let Err(err) =
@@ -247,6 +274,8 @@ async fn run_claude_events(
                     return (seen_session, Err(anyhow!("{}", event["result"].as_str().or(errors.as_deref()).unwrap_or("Claude 执行失败"))));
                 }
                 job.emit("assistant_turn_done", json!({"agent":"claude"}));
+                text_message_id = None;
+                text_delta_seen = false;
             }
             _ => {}
         }

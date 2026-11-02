@@ -8,7 +8,7 @@ use std::{
 
 use axum::response::sse::Event;
 use serde_json::{json, Value};
-use tokio::sync::{broadcast, mpsc};
+use tokio::sync::{broadcast, mpsc, Notify};
 use tokio_util::sync::CancellationToken;
 use tracing::error;
 use uuid::Uuid;
@@ -48,6 +48,8 @@ pub struct GenerationJob {
     /// Distinguishes re-executions of the same durable job after a restart.
     pub execution_id: Uuid,
     pub snapshot_required: AtomicBool,
+    replay_ready: AtomicBool,
+    replay_ready_notify: Notify,
     pub conversation_id: i64,
     pub user_id: String,
     /// 原子状态：STATUS_RUNNING / STATUS_COMPLETED / STATUS_FAILED
@@ -74,6 +76,8 @@ impl GenerationJob {
             started_at: chrono::Utc::now(),
             execution_id: Uuid::new_v4(),
             snapshot_required: AtomicBool::new(false),
+            replay_ready: AtomicBool::new(true),
+            replay_ready_notify: Notify::new(),
             conversation_id,
             user_id,
             status: AtomicU8::new(STATUS_RUNNING),
@@ -158,6 +162,12 @@ impl GenerationJob {
 
     pub fn runtime_activity(&self) -> Option<Value> {
         lock_unpoisoned(&self.runtime_activity).clone()
+    }
+
+    pub fn initialize_replay(&self, requires_snapshot: bool) {
+        self.snapshot_required.store(requires_snapshot, Ordering::SeqCst);
+        self.replay_ready.store(true, Ordering::SeqCst);
+        self.replay_ready_notify.notify_waiters();
     }
 
     pub async fn set_runtime_activity(&self, activity: Value) -> anyhow::Result<()> {
@@ -342,6 +352,15 @@ pub fn stream_for_job_from(
     let (tx, rx) = mpsc::channel(64);
 
     tokio::spawn(async move {
+        // Registration precedes the worker's recovery check. An eager first
+        // subscriber must wait for that check instead of taking a false reset.
+        loop {
+            let ready = job.replay_ready_notify.notified();
+            tokio::pin!(ready);
+            ready.as_mut().enable();
+            if job.replay_ready.load(Ordering::SeqCst) { break; }
+            tokio::select! { _ = &mut ready => {}, _ = tx.closed() => return }
+        }
         if job.snapshot_required.load(Ordering::SeqCst) {
             let _ = tx
                 .send(Ok(stream_reset_event(
@@ -450,6 +469,7 @@ pub fn register_claimed_job(record: &assistant_store::GenerationJobRecord) -> Ar
     // Conservatively require a snapshot until the worker has checked recovery
     // metadata; a subscriber may arrive while that database read is pending.
     job.snapshot_required.store(true, Ordering::SeqCst);
+    job.replay_ready.store(false, Ordering::SeqCst);
     jobs.insert(job.id, job.clone());
     job
 }

@@ -106,6 +106,7 @@ export function useChatStream({
       if (startedAt) message.jobStartedAt = startedAt
       if (completedAt) message.jobCompletedAt = completedAt
       if (status) message.jobStatus = status
+      if (['completed', 'failed', 'cancelled'].includes(status)) message.replyPending = false
       if (message.role === 'user' && status === 'running') advanceProcessingState(message, { status })
     }
   }
@@ -293,6 +294,11 @@ export function useChatStream({
 
   const resumeNextQueued = async (conversationId, previousJobId = null) => {
     if (!followQueue || !conversationId || conversationId !== activeConversationId.value) return
+    // An accepted turn can finish before the activity socket sees it. Follow
+    // each local submission's result even when it is no longer the active job.
+    const pending = messages.value.find(message => message.role === 'user' && message.replyPending
+      && message.generationJobId && message.generationJobId !== previousJobId)
+    if (pending) { resumeJob(pending.generationJobId, conversationId, { queued: pending.processingStatus === 'queued' }); return }
     if (realtime) { activeGenerationSubscription?.refresh(); return }
     try {
       const response = await apiFetch(`/api/assistant/conversations/${conversationId}/active-generation`, {
@@ -427,6 +433,7 @@ export function useChatStream({
 
     if (eventType === 'job_started' || eventType === 'stream_started') {
       if (payload.activity !== undefined) runtimeActivity.value = payload.activity
+      else if (payload.queued) runtimeActivity.value = { phase: 'queued' }
       if (payload.job_id) {
         currentJobId = payload.job_id
       }
@@ -829,7 +836,7 @@ export function useChatStream({
     }
   }
 
-  const resumeJob = async (jobId, conversationId) => {
+  const resumeJob = async (jobId, conversationId, { queued = false } = {}) => {
     if (!jobId || !conversationId) return
     runtimeActivity.value = messages.value.find(message => message.generationJobId === jobId)?.runtimeActivity || null
     stopRecovery()
@@ -844,7 +851,7 @@ export function useChatStream({
     currentEventTime = null
     messages.value = messages.value.filter((item) => item.role === 'user' || item.jobId !== jobId)
     currentJobId = jobId
-    setJobTiming(jobId, { status: 'running' })
+    setJobTiming(jobId, { status: queued ? 'queued' : 'running' })
     executionId = null
     streamGeneration += 1
     lastEventSeq = 0
@@ -970,6 +977,9 @@ export function useChatStream({
         })
       }
       advanceProcessingState(optimisticMessage, pendingJobStates.get(optimisticMessage.generationJobId))
+      const observedStatus = pendingJobStates.get(optimisticMessage.generationJobId)?.status
+      const replyObserved = ['completed', 'failed', 'cancelled'].includes(observedStatus)
+        || (optimisticMessage.generationJobId === currentJobId && streamDoneReceived)
       // A stream can start before the acknowledgement links this bubble to its
       // job. Preserve that server time even if the job has already finished.
       const startedAt = data.message?.processing_started_at || pendingJobStates.get(optimisticMessage.generationJobId)?.startedAt
@@ -978,6 +988,7 @@ export function useChatStream({
         advanceProcessingState(existing, { status: optimisticMessage.processingStatus, error: optimisticMessage.processingError })
         messages.value = messages.value.filter(message => message !== optimisticMessage)
       }
+      if (data.job_id) (existing || optimisticMessage).replyPending = !replyObserved
       for (const item of stagedAttachments) {
         if (!item.previewUrl) continue
         if (activeConversationId.value === conversationId) messageAttachmentUrls.add(item.previewUrl)
@@ -990,7 +1001,7 @@ export function useChatStream({
       if (!localSubmissions.size) pendingJobStates.clear()
       fetchConversations({ silent: true })
       if (activeConversationId.value === conversationId && canSend() && !isStreaming.value
-        && optimisticMessage.processingStatus === 'running' && data.job_id) resumeJob(data.job_id, conversationId)
+        && !replyObserved && data.job_id) resumeJob(data.job_id, conversationId, { queued: optimisticMessage.processingStatus === 'queued' })
       return true
     } catch (err) {
       optimisticMessage.processingStatus = 'failed'
@@ -1053,6 +1064,13 @@ export function useChatStream({
   }
 
   if (getCurrentInstance()) {
+    watch(() => canSend(), enabled => {
+      if (!enabled || isStreaming.value || !activeConversationId.value) return
+      const pending = messages.value.find(message => message.role === 'user' && message.replyPending
+        && message.generationJobId && message.conversationId === activeConversationId.value)
+      if (pending) resumeJob(pending.generationJobId, activeConversationId.value,
+        { queued: pending.processingStatus === 'queued' })
+    })
     watch(activeConversationId, () => { if (recoverySubscription) abortStream() }, { flush: 'sync' })
     onBeforeUnmount(abortStream)
   }

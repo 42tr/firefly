@@ -8,7 +8,10 @@ emit({'type':'system','subtype':'session_state_changed','state':'running'})
 emit({'type':'system','subtype':'init','session_id':'fixture-session'})
 emit(dict(user,isReplay=True))
 emit({'type':'system','subtype':'background_tasks_changed','tasks':[{'task_id':'child','task_type':'local_agent','description':'检查实现'}]})
-emit({'type':'assistant','message':{'content':[{'type':'text','text':'正在等待子任务'}]}})
+if user['message']['content']=='streamed':
+    emit({'type':'stream_event','event':{'type':'message_start','message':{'id':'first'}}})
+    emit({'type':'stream_event','event':{'type':'content_block_delta','delta':{'type':'text_delta','text':'正在等待子任务'}}})
+emit({'type':'assistant','message':{'id':'first','content':[{'type':'text','text':'正在等待子任务'}]}})
 emit({'type':'result','subtype':'success','is_error':False})
 time.sleep(0.3)
 if user['message']['content']=='cancel': time.sleep(60)
@@ -16,8 +19,10 @@ if user['message']['content']=='exit': sys.exit(0)
 emit({'type':'system','subtype':'background_tasks_changed','tasks':[]})
 emit({'type':'system','subtype':'task_notification','task_id':'child','status':'completed','summary':'检查通过'})
 time.sleep(0.1)
-emit({'type':'stream_event','event':{'type':'message_start'}})
-emit({'type':'assistant','message':{'content':[{'type':'text','text':'子任务返回，汇总完成'}]}})
+emit({'type':'stream_event','event':{'type':'message_start','message':{'id':'last'}}})
+if user['message']['content']=='streamed':
+    emit({'type':'stream_event','event':{'type':'content_block_delta','delta':{'type':'text_delta','text':'子任务返回，汇总完成'}}})
+emit({'type':'assistant','message':{'id':'last','content':[{'type':'text','text':'子任务返回，汇总完成'}]}})
 emit({'type':'result','subtype':'success','is_error':False})
 emit({'type':'system','subtype':'session_state_changed','state':'idle'})
 for line in sys.stdin: pass
@@ -101,6 +106,15 @@ async fn result_keeps_job_alive_until_background_notification_and_parent_summary
         .await
         .unwrap();
         assert_eq!(texts, ["正在等待子任务", "子任务返回，汇总完成"]);
+        let deltas: Vec<String> = job
+            .event_log
+            .lock()
+            .unwrap()
+            .values()
+            .filter(|entry| entry.event == "assistant_delta")
+            .filter_map(|entry| entry.data["delta"].as_str().map(str::to_owned))
+            .collect();
+        assert_eq!(deltas, ["正在等待子任务", "子任务返回，汇总完成"]);
         let status: String = sqlx::query_scalar(
             "SELECT status FROM assistant_tool_details WHERE call_id='claude-task:child:'",
         )
@@ -151,5 +165,31 @@ async fn clean_process_exit_with_pending_tasks_is_an_interruption() {
     )
     .await;
     assert!(result.unwrap_err().to_string().contains("工作完成前已断开"));
+    lease.release(false).await.unwrap();
+}
+
+#[tokio::test]
+async fn complete_claude_messages_do_not_duplicate_text_already_streamed() {
+    let (record, job, mut lease) = fixture("streamed").await;
+    let prompt = lease.prompt_id.clone();
+    let (_, result) = run_claude_events(
+        lease.turn(),
+        &record,
+        "claude-fixture",
+        record.id,
+        &job,
+        &prompt,
+    )
+    .await;
+    result.unwrap();
+    let text: String = job
+        .event_log
+        .lock()
+        .unwrap()
+        .values()
+        .filter(|entry| entry.event == "assistant_delta")
+        .filter_map(|entry| entry.data["delta"].as_str())
+        .collect();
+    assert_eq!(text, "正在等待子任务子任务返回，汇总完成");
     lease.release(false).await.unwrap();
 }

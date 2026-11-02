@@ -452,6 +452,7 @@ const statusText = computed(() => {
   if (isCreatingConversation.value) return '正在创建对话…'
   if (isLoadingMessages.value) return '历史同步中…'
   if (isStreaming.value) {
+    if (runtimeActivity.value?.phase === 'queued') return '等待处理…'
     if (runtimeActivity.value?.phase === 'waiting_background') {
       return `正在等待 ${runtimeActivity.value.background_count || 1} 个子任务…`
     }

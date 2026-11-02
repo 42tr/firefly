@@ -72,6 +72,74 @@ const transformSnapshot = records => records.map(record => ({
   ...record, jobId: record.generation_job_id, generationJobId: record.generation_job_id,
 }))
 
+for (const status of ['queued', 'completed', 'failed']) {
+  test(`a ${status} submission follows its own result even when the activity socket misses the turn`, async t => {
+    const app = setupRealtime(t, { followQueue: true })
+    t.after(app.abortStream)
+    let streamRequests = 0
+    t.mock.method(globalThis, 'fetch', async (url, options) => {
+      if (options?.method === 'POST') return { ok: true,
+        json: async () => ({ message: { id: 10 }, status, job_id: 'first-job' }) }
+      if (url.includes('/active-generation')) return { ok: true, json: async () => ({ active: false }) }
+      assert.match(url, /\/jobs\/first-job\/stream/)
+      streamRequests++
+      return sse(status === 'failed'
+        ? [['error', { seq: 1, message: '模型配置有误' }], ['assistant_done', { seq: 2 }]]
+        : [['assistant_delta', { seq: 1, delta: '首条消息的回复' }], ['assistant_done', { seq: 2 }]])
+    })
+    app.input.value = 'first question'
+    await app.sendMessage()
+    await new Promise(setImmediate)
+    assert.equal(streamRequests, 1)
+    assert.ok(app.messages.value.some(message => message.role === 'assistant'
+      && message.content.includes(status === 'failed' ? '模型配置有误' : '首条消息的回复')))
+  })
+}
+
+test('a first reply completed while the composer is temporarily disabled is followed once ready', async t => {
+  const app = setupRealtime(t, { followQueue: true })
+  let acknowledge, streamRequests = 0
+  t.mock.method(globalThis, 'fetch', async (url, options) => {
+    if (options?.method === 'POST') return new Promise(resolve => { acknowledge = resolve })
+    streamRequests++
+    return sse([['assistant_delta', { seq: 1, delta: '首条回复' }], ['assistant_done', { seq: 2 }]])
+  })
+  app.input.value = 'question'
+  const sending = app.sendMessage()
+  await new Promise(setImmediate)
+  app.allowed.value = false
+  acknowledge({ ok: true, json: async () => ({ message: { id: 10 }, status: 'completed', job_id: 'first-job' }) })
+  await sending
+  assert.equal(streamRequests, 0)
+  app.allowed.value = true
+  await new Promise(setImmediate)
+  assert.equal(streamRequests, 1)
+  assert.equal(app.messages.value.at(-1).content, '首条回复')
+})
+
+test('a queued reply that finishes before the previous visible stream still gets displayed', async t => {
+  const app = setupRealtime(t, { followQueue: true })
+  let previous, streams = []
+  t.mock.method(globalThis, 'fetch', async (url, options) => {
+    if (options?.method === 'POST') return { ok: true,
+      json: async () => ({ message: { id: 20 }, status: 'completed', job_id: 'second-job' }) }
+    streams.push(url)
+    if (url.includes('/jobs/first-job/')) return { ok: true, body: new ReadableStream({ start(controller) { previous = controller } }) }
+    return sse([['assistant_delta', { seq: 1, delta: '第二条回复' }], ['assistant_done', { seq: 2 }]])
+  })
+  const streaming = app.resumeJob('first-job', 1)
+  await new Promise(setImmediate)
+  app.input.value = 'second question'
+  await app.sendMessage()
+  previous.enqueue(new TextEncoder().encode('event: assistant_done\ndata: {"seq":1}\n\n'))
+  previous.close()
+  await streaming
+  await new Promise(setImmediate)
+  assert.equal(streams.length, 2)
+  assert.match(streams[1], /\/jobs\/second-job\/stream/)
+  assert.equal(app.messages.value.at(-1).content, '第二条回复')
+})
+
 test('Claude background waits survive stream disconnects and only finish on the job terminal event', async t => {
   const app = setup({ followQueue: false })
   t.after(app.abortStream)
@@ -459,9 +527,14 @@ test('root tool and handoff failures keep their explicit error status in streame
 
 test('retrying a lost response reconciles a message already loaded from history', async (t) => {
   const app = setup()
+  t.after(app.abortStream)
   let calls = 0
   const keys = []
-  t.mock.method(globalThis, 'fetch', async (_url, options) => {
+  t.mock.method(globalThis, 'fetch', async (url, options) => {
+    if (url.includes('/stream?')) return sse([
+      ['assistant_delta', { seq: 1, delta: 'finished reply' }], ['assistant_done', { seq: 2 }],
+    ])
+    if (url.includes('/active-generation')) return { ok: true, json: async () => ({ active: false }) }
     keys.push(options.headers['Idempotency-Key'])
     if (++calls === 1) throw new Error('response lost after commit')
     return { ok: true, json: async () => ({ message: { id: 10 }, status: 'completed', job_id: 'job-1' }) }
@@ -476,6 +549,7 @@ test('retrying a lost response reconciles a message already loaded from history'
   ]
   const historyBubble = app.messages.value[0]
   await app.retryMessage(pending)
+  await new Promise(setImmediate)
   assert.equal(keys[0], keys[1])
   assert.equal(app.messages.value.length, 2)
   assert.equal(app.messages.value[0], historyBubble)
@@ -519,9 +593,15 @@ test('reconciling a retry while streaming preserves the active reply', async (t)
 
 test('failed sends keep files and retry the same bubble, without duplicate submissions', async (t) => {
   const app = setup()
+  let waitingStream
+  t.after(() => { app.abortStream(); waitingStream?.close() })
   const requests = []
   let finish
   t.mock.method(globalThis, 'fetch', async (url, options) => {
+    if (url.includes('/stream?')) return { ok: true, body: new ReadableStream({ start(controller) {
+      waitingStream = controller
+      controller.enqueue(new TextEncoder().encode('event: job_started\ndata: {"job_id":"job-1","queued":true}\n\n'))
+    } }) }
     requests.push({ url, body: options.body, key: options.headers['Idempotency-Key'] })
     if (requests.length === 1) throw new Error('offline')
     await new Promise(resolve => { finish = resolve })
