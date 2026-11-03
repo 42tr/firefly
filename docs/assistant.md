@@ -125,7 +125,7 @@ Firefly 最终回复持久化并完成必要工具收尾后，提交回合状态
 
 重启保留已完成结果，排队的后台任务继续排队；运行中任务标记结果未知，不自动重跑。`unknown` 表示结果无法确定，不再永久占用互斥资源；再次执行前仍需核实实际状态。启动时将旧版自动生成的 cwd/仓库锁替换为参数中显式声明的互斥键，未声明则清空，任务历史和执行目录保留。此实现不保证本地进程跨服务重启存活。
 
-Firefly 固定依赖 `glow-agent = 0.3.4`，保留 `g` 依赖别名以兼容现有代码。当前通过 `vendor/glow-agent` 的本地补丁为 Responses 模型增加 `with_reasoning_effort`，请求携带 `reasoning.effort`；补丁来源和改动记录见 `vendor/glow-agent/FIREFLY_PATCH.md`，不修改本机 Cargo 缓存。升级运行时前，先确认 [Glow](https://github.com/42tr/g) 已发布配套功能，再移除补丁、更新依赖和锁文件，运行 Rust 检查。后台任务行浏览器测试：启动 Vite 端口 5193 后执行 `python3 frontend/tests/e2e/test_background_task_bar_ui.py`。
+Firefly 固定依赖 `glow-agent = 0.3.5`，保留 `g` 依赖别名以兼容现有代码。Responses 推理档位由运行时原生 `OpenAIModel::with_reasoning_effort()` 下发 `reasoning.effort`，模型目录发现复用 `ModelBudget::limits()` 返回的 `ModelLimits`（上下文窗口、输入/输出与来源 URL），二者自 0.3.5 起由 [Glow](https://github.com/42tr/g) 提供，不再需要 `vendor/glow-agent` 本地补丁。升级运行时前，先确认 Glow 已发布所需能力，再更新依赖和锁文件，运行 Rust 检查。后台任务行浏览器测试：启动 Vite 端口 5193 后执行 `python3 frontend/tests/e2e/test_background_task_bar_ui.py`。
 
 ### Claude 后台任务与会话生命周期
 
