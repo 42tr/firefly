@@ -470,6 +470,7 @@ pub fn effective_model(
 
 /// Compose one native settings snapshot for this turn. Claude evaluates native
 /// apiKeyHelper itself; listing profiles never executes commands or exposes env.
+#[cfg(test)]
 pub fn configure_command(
     command: &mut Command,
     profile: Option<&ClaudeProvider>,
