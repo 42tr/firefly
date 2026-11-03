@@ -17,13 +17,18 @@ pub async fn resolve(provider: Option<&str>) -> anyhow::Result<Option<ModelProfi
 
 pub async fn listing(runtime: &str) -> anyhow::Result<Vec<Value>> {
     Ok(Settings::load(db::pool()).await?.profiles.into_iter().filter(|p| p.default_model().is_some() && p.supports(runtime))
-        .map(|p| json!({"name": format!("{PREFIX}{}", p.id), "display_name": p.name,
+        .map(|p| {
+            let protocol = if runtime == "claude" { "anthropic" } else { &p.protocol };
+            json!({"name": format!("{PREFIX}{}", p.id), "display_name": p.name,
             "aliases": if p.agent == "claude" { vec![format!("api-{}",p.id),p.id.clone(),p.name.clone()] } else { vec![format!("api-{}",p.id)] },
             "source":"ui", "base_url":p.base_url, "models":p.model_ids(),
             "default_model":p.default_model(),
-            "default_reasoning_level":p.default_model().and_then(|model| p.reasoning_level(model, None, None)),
-            "model_reasoning":p.models.iter().map(|model| json!({"model":model.id,
-                "reasoning_levels":model.reasoning_levels, "default_reasoning_level":model.default_reasoning_level})).collect::<Vec<_>>()})).collect())
+            "default_reasoning_level":p.default_model().and_then(|model| p.reasoning_level_for_protocol(model, None, None, protocol)),
+            "model_reasoning":p.models.iter().map(|model| {
+                let (levels, default) = model.reasoning_options(protocol);
+                json!({"model":model.id, "reasoning_levels":levels, "default_reasoning_level":default})
+            }).collect::<Vec<_>>()})
+        }).collect())
 }
 
 pub fn claude_url(profile: &ModelProfile) -> String {
@@ -47,6 +52,38 @@ mod tests {
         assert_eq!(claude_url(&p), "https://api.kimi.com/anthropic");
         assert_eq!(profile_id("firefly:kimi"), Some("kimi"));
         assert_eq!(profile_id("openai"), None);
+    }
+    #[tokio::test]
+    async fn protocol_capabilities_persist_and_reach_each_runtime_without_crossing_defaults() {
+        use crate::agent_settings::{ProfileModel, ReasoningOptions};
+        let pool = crate::db::test_pool().await; crate::db::set_test_pool(pool.clone());
+        let mut settings = Settings::load(&pool).await.unwrap();
+        let mut p = profile();
+        let mut model = ProfileModel::from("test-model");
+        model.reasoning_by_protocol.insert("responses".into(), ReasoningOptions {
+            reasoning_levels: vec!["none".into(), "high".into(), "max".into()], default_reasoning_level: Some("high".into()),
+        });
+        model.reasoning_by_protocol.insert("anthropic".into(), ReasoningOptions {
+            reasoning_levels: vec!["high".into(), "max".into()], default_reasoning_level: Some("max".into()),
+        });
+        p.models = vec![model];
+        settings.profiles.push(p); settings.firefly.model_profile = Some("kimi".into());
+        settings.save(&pool).await.unwrap().unwrap();
+        let codex = listing("codex").await.unwrap();
+        let claude = listing("claude").await.unwrap();
+        assert_eq!(codex[0]["model_reasoning"][0]["reasoning_levels"], json!(["none", "high", "max"]));
+        assert_eq!(codex[0]["default_reasoning_level"], "high");
+        assert_eq!(claude[0]["model_reasoning"][0]["reasoning_levels"], json!(["high", "max"]));
+        assert_eq!(claude[0]["default_reasoning_level"], "max");
+        let loaded = Settings::load(&pool).await.unwrap();
+        assert_eq!(loaded.reasoning_level(&loaded.firefly).unwrap().as_deref(), Some("high"));
+        let profile = &loaded.profiles[0];
+        assert_eq!(profile.reasoning_level_for_protocol("test-model", Some("none"), None, "anthropic").as_deref(), Some("max"));
+        let resolved = crate::codex::resolve_conversation_settings(std::path::Path::new("."), Some("firefly:kimi"), Some("test-model"), Some("max")).await.unwrap();
+        assert_eq!(resolved.reasoning_level, "max");
+        let mut invalid = loaded;
+        invalid.profiles[0].models[0].reasoning_by_protocol.get_mut("anthropic").unwrap().default_reasoning_level = Some("low".into());
+        assert!(invalid.validate().is_err());
     }
     #[tokio::test]
     async fn catalog_never_exposes_keys_and_deleted_profiles_do_not_fall_back() {

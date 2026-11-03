@@ -182,7 +182,7 @@ pub fn managed_provider(profile: &crate::agent_settings::ModelProfile) -> Claude
     ClaudeProvider {
         name: format!("{}{}", crate::cli_profiles::PREFIX, profile.id),
         base_url: Some(url.clone()), models: profile.model_ids(),
-        default_model: Some(profile.model.clone()), default_reasoning_level: profile.reasoning_level(&profile.model, None, Some(REASONING_LEVELS)),
+        default_model: Some(profile.model.clone()), default_reasoning_level: profile.reasoning_level_for_protocol(&profile.model, None, Some(REASONING_LEVELS), "anthropic"),
         settings: NativeSettings(serde_json::json!({"env": {
             "ANTHROPIC_BASE_URL":url, "ANTHROPIC_AUTH_TOKEN":key,
             "CLAUDE_CODE_EFFORT_LEVEL":"auto",
@@ -342,9 +342,7 @@ pub(crate) fn provider_from_model_profile(
         models: profile.model_ids(),
         default_model: (!profile.model.trim().is_empty()).then(|| profile.model.clone()),
         default_reasoning_level: profile
-            .reasoning_levels
-            .first()
-            .cloned()
+            .reasoning_level_for_protocol(&profile.model, None, Some(REASONING_LEVELS), "anthropic")
             .or_else(|| default_reasoning_level_for_model(&profile.model)),
         settings,
     })

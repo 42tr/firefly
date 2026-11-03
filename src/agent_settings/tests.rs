@@ -101,13 +101,20 @@ async fn configured_effort_reaches_actual_responses_requests_including_streams_a
     settings.subagents[0].reasoning_level = None;
     settings.subagents[0].model = Some("other-model".into());
     settings.model(&settings.subagents[0]).unwrap().generate(request()).await.unwrap();
+    settings.profiles[0].models[0].reasoning_levels = None;
+    settings.profiles[0].models[0].reasoning_by_protocol.insert("responses".into(), ReasoningOptions {
+        reasoning_levels: vec!["none".into(), "low".into(), "medium".into(), "xhigh".into()],
+        default_reasoning_level: Some("xhigh".into()),
+    });
+    settings.firefly.reasoning_level = None;
+    settings.model(&settings.firefly).unwrap().generate(request()).await.unwrap();
     settings.profiles[0].models.clear();
     settings.model(&settings.firefly).unwrap().generate(request()).await.unwrap();
     let requests = captured.lock().unwrap();
     let efforts: Vec<_> = requests.iter().map(|r| r.pointer("/reasoning/effort").and_then(Value::as_str)).collect();
-    assert_eq!(efforts, [Some("high"),Some("max"),Some("max"),Some("low"),Some("low"),None]);
+    assert_eq!(efforts, [Some("high"),Some("max"),Some("max"),Some("low"),Some("low"),Some("xhigh"),None]);
     assert_eq!(requests[4]["model"], "other-model");
-    assert!(requests[5].get("reasoning").is_none());
+    assert!(requests[6].get("reasoning").is_none());
     assert!(requests.iter().all(|r| r.get("max_output_tokens").is_none()));
     server.abort();
 }

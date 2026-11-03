@@ -15,6 +15,26 @@ use crate::{assistant_tasks, config, llm, mcp};
 
 #[derive(Clone, Default, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
+pub struct ReasoningOptions {
+    pub reasoning_levels: Vec<String>,
+    pub default_reasoning_level: Option<String>,
+}
+
+impl ReasoningOptions {
+    fn valid(&self) -> bool {
+        valid_reasoning_levels(&self.reasoning_levels)
+            && self.default_reasoning_level.as_ref().is_none_or(|level| self.reasoning_levels.contains(level))
+    }
+}
+
+fn valid_reasoning_levels(levels: &[String]) -> bool {
+    levels.len() <= 32 && levels.iter().all(|level| !level.is_empty() && level.len() <= 64
+        && level.bytes().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || matches!(c, b'_' | b'-')))
+        && levels.iter().collect::<BTreeSet<_>>().len() == levels.len()
+}
+
+#[derive(Clone, Default, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
 pub struct ProfileModel {
     pub id: String,
     #[serde(default)]
@@ -28,6 +48,20 @@ pub struct ProfileModel {
     pub reasoning_levels: Option<Vec<String>>,
     #[serde(default)]
     pub default_reasoning_level: Option<String>,
+    /// Protocol-specific capabilities from provider documentation. Never infer
+    /// Anthropic effort controls from the provider's Responses controls.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub reasoning_by_protocol: BTreeMap<String, ReasoningOptions>,
+}
+
+impl ProfileModel {
+    pub fn reasoning_options(&self, protocol: &str) -> (Option<&Vec<String>>, Option<&str>) {
+        if let Some(options) = self.reasoning_by_protocol.get(protocol) {
+            (Some(&options.reasoning_levels), options.default_reasoning_level.as_deref())
+        } else {
+            (self.reasoning_levels.as_ref(), self.default_reasoning_level.as_deref())
+        }
+    }
 }
 
 #[derive(Clone, Deserialize, Serialize)]
@@ -93,13 +127,17 @@ impl ModelProfile {
     }
     /// Use only advertised levels. Unknown capabilities leave effort to the service.
     pub fn reasoning_level(&self, model: &str, requested: Option<&str>, allowed: Option<&[&str]>) -> Option<String> {
+        self.reasoning_level_for_protocol(model, requested, allowed, &self.protocol)
+    }
+    pub fn reasoning_level_for_protocol(&self, model: &str, requested: Option<&str>, allowed: Option<&[&str]>, protocol: &str) -> Option<String> {
         let info = self.models.iter().find(|m| m.id == model);
-        let levels = info.and_then(|info| info.reasoning_levels.as_ref())
+        let (levels, default) = info.map(|info| info.reasoning_options(protocol)).unwrap_or_default();
+        let levels = levels
             .or_else(|| (!self.reasoning_levels.is_empty()).then_some(&self.reasoning_levels))?;
         let supported = |level: &&str| levels.iter().any(|item| item == level)
             && allowed.is_none_or(|allowed| allowed.contains(level));
         requested.filter(supported)
-            .or_else(|| info.and_then(|info| info.default_reasoning_level.as_deref()).filter(supported))
+            .or_else(|| default.filter(supported))
             .or_else(|| levels.iter().map(String::as_str).find(supported))
             .map(str::to_owned)
     }
@@ -437,12 +475,11 @@ impl Settings {
                             && url.host_str().is_some() && url.username().is_empty() && url.password().is_none()))
                     && m.input_budget.is_none_or(|n| (1024..=100_000_000).contains(&n)
                         && m.context_length.is_none_or(|window| n <= window))
-                    && m.reasoning_levels.as_ref().is_none_or(|levels| levels.len() <= 32
-                        && levels.iter().all(|level| !level.is_empty() && level.len() <= 64
-                            && level.bytes().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || matches!(c, b'_' | b'-')))
-                        && levels.iter().collect::<BTreeSet<_>>().len() == levels.len())
+                    && m.reasoning_levels.as_ref().is_none_or(|levels| valid_reasoning_levels(levels))
                     && m.default_reasoning_level.as_ref().is_none_or(|level|
                         m.reasoning_levels.as_ref().is_some_and(|levels| levels.contains(level)))
+                    && m.reasoning_by_protocol.len() <= 3 && m.reasoning_by_protocol.iter().all(|(protocol, options)|
+                        matches!(protocol.as_str(), "responses" | "anthropic" | "openai") && options.valid())
             }), "模型目录包含无效、重复或过多的模型，或上下文长度无效");
             ensure!(
                 profile

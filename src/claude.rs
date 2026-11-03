@@ -113,7 +113,7 @@ pub async fn prepare_turn_with_model_profile(
     if let Some(model) = model.filter(|model| !model.is_empty()) { profile.model = model.to_owned(); }
     let native = if profile.protocol == "anthropic" { settings::provider_from_model_profile(&profile)? }
         else { settings::managed_provider(&profile) };
-    let effort = profile.reasoning_level(&profile.model, reasoning_level, Some(REASONING_LEVELS))
+    let effort = profile.reasoning_level_for_protocol(&profile.model, reasoning_level, Some(REASONING_LEVELS), "anthropic")
         .or_else(|| (profile.protocol == "anthropic").then(|| native.default_reasoning_level.clone()).flatten());
     prepare_configured(&cfg, cwd, session_id, Some(&native), &profile.model, effort)
 }

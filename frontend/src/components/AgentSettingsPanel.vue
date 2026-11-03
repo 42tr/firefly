@@ -33,7 +33,8 @@ const agentModel = computed({
   set: value => { if (agent.value) agent.value.model = value || null },
 })
 const agentModelInfo = computed(() => agentModels.value.find(item => item.id === agentModel.value))
-const agentReasoningLevels = computed(() => agentModelInfo.value?.reasoning_levels || [])
+const agentReasoningInfo = computed(() => agentModelInfo.value?.reasoning_by_protocol?.[agentProfile.value?.protocol || 'responses'] || agentModelInfo.value)
+const agentReasoningLevels = computed(() => agentReasoningInfo.value?.reasoning_levels || [])
 const inheritsRootReasoning = computed(() => {
   const root = draft.value?.firefly
   const rootProfile = draft.value?.profiles.find(item => item.id === root?.model_profile)
@@ -43,7 +44,12 @@ const inheritsRootReasoning = computed(() => {
 const inheritedReasoningLevel = computed(() => {
   const levels = agentReasoningLevels.value
   const inherited = inheritsRootReasoning.value ? draft.value?.firefly.reasoning_level : null
-  return [inherited, agentModelInfo.value?.default_reasoning_level].find(level => levels.includes(level)) || levels[0] || ''
+  return [inherited, agentReasoningInfo.value?.default_reasoning_level].find(level => levels.includes(level)) || levels[0] || ''
+})
+const agentReasoningLevel = computed({
+  get: () => agentReasoningLevels.value.includes(agent.value?.reasoning_level)
+    ? agent.value.reasoning_level : inheritedReasoningLevel.value,
+  set: value => { if (agent.value) agent.value.reasoning_level = value || null },
 })
 const agentModelChanged = () => { agent.value.reasoning_level = null }
 const agentProfileChanged = () => { agent.value.model = null; agentModelChanged() }
@@ -240,10 +246,10 @@ onBeforeUnmount(() => dialog.value?.close())
                       <label>执行期限（秒）<input v-model.number="agent.timeout_secs" type="number" min="1" max="604800" required /></label>
                     </div>
                     <label>使用模型<select v-model="agentModel" aria-label="Agent 使用模型" :disabled="!agentProfile" @change="agentModelChanged"><option v-if="!agentModel" value="" disabled>请选择模型</option><option v-if="agentModel && !agentModels.some(item => item.id === agentModel)" :value="agentModel">{{ agentModel }}</option><option v-for="item in agentModels" :key="item.id" :value="item.id">{{ item.id }}{{ item.context_length ? ' · ' + item.context_length.toLocaleString() + ' tokens' : '' }}</option></select></label>
-                    <label>推理级别<select v-model="agent.reasoning_level" aria-label="Agent 推理级别" :disabled="!agentReasoningLevels.length">
-                      <option :value="null">{{ !agentReasoningLevels.length ? '使用服务默认设置' : inheritsRootReasoning ? '继承主 Agent' : '使用模型默认级别' }}{{ inheritedReasoningLevel ? ' · ' + inheritedReasoningLevel : '' }}</option>
+                    <label>推理级别<select v-model="agentReasoningLevel" aria-label="Agent 推理级别" :disabled="!agentReasoningLevels.length">
+                      <option v-if="!agentReasoningLevels.length" value="">使用服务默认设置</option>
                       <option v-for="level in agentReasoningLevels" :key="level" :value="level">{{ level }}</option>
-                    </select><small>{{ agentReasoningLevels.length ? '可选级别由模型服务提供，修改后自动保存，从下一次运行开始使用。' : '模型接口未提供可选推理级别，使用服务端默认设置。' }}</small></label>
+                    </select><small>{{ agentReasoningLevels.length ? '可选级别依据模型接口或官方文档，修改后自动保存，从下一次运行开始使用。' : '未获取到该模型的可选推理级别，使用服务端默认设置。' }}</small></label>
                   </div>
                   <div class="section-card">
                     <label class="prompt-label">系统提示词<textarea v-model="agent.instruction" class="prompt-input" rows="8" maxlength="131072" placeholder="填写角色、工作流程、约束和返回要求。"></textarea></label>

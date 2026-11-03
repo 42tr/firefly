@@ -7,6 +7,8 @@ use serde_json::Value;
 use super::{auth::Session, error::AppError};
 use crate::{agent_settings::Settings, db, llm};
 
+mod aliyun;
+
 #[derive(Deserialize)]
 struct Request { base_url: String, api_key: Option<String>, profile_id: Option<String> }
 type ModelInfo = crate::agent_settings::ProfileModel;
@@ -169,11 +171,16 @@ async fn fetch_catalog(client: &reqwest::Client, mut base: reqwest::Url, key: &s
             (index, result)
         }
     })).buffer_unordered(8);
-    tokio::pin!(requests);
-    let deadline = tokio::time::Instant::now() + Duration::from_secs(15);
-    while let Ok(Some((index, result))) = tokio::time::timeout_at(deadline, requests.next()).await {
-        models[index] = result;
-    }
+    let details = async {
+        tokio::pin!(requests);
+        let deadline = tokio::time::Instant::now() + Duration::from_secs(15);
+        while let Ok(Some((index, result))) = tokio::time::timeout_at(deadline, requests.next()).await {
+            models[index] = result;
+        }
+    };
+    let docs = async { if aliyun { Some(aliyun::load().await) } else { None } };
+    let (_, docs) = tokio::join!(details, docs);
+    if let Some(docs) = docs { docs.apply(&mut models); }
     Ok(models)
 }
 

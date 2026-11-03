@@ -86,22 +86,46 @@ test('agents select only advertised efforts and inherit effort only with the sam
   await nextTick()
   assert.deepEqual(state.agentReasoningLevels.value, ['low', 'high', 'max'])
   assert.equal(state.inheritedReasoningLevel.value, 'high')
+  assert.equal(state.agentReasoningLevel.value, 'max')
   state.tab.value = 'children'; state.selectedAgent.value = 'helper'; await nextTick()
   assert.equal(state.inheritsRootReasoning.value, true)
   assert.equal(state.inheritedReasoningLevel.value, 'max')
-  state.agent.value.reasoning_level = 'low'
+  assert.equal(state.agentReasoningLevel.value, 'max')
+  state.agentReasoningLevel.value = 'low'
+  assert.equal(state.agent.value.reasoning_level, 'low')
   assert.equal(state.draft.value.firefly.reasoning_level, 'max')
   state.agent.value.model = 'small'; state.agentModelChanged(); await nextTick()
   assert.equal(state.agent.value.reasoning_level, null)
   assert.equal(state.inheritsRootReasoning.value, false)
   assert.deepEqual(state.agentReasoningLevels.value, ['low', 'high'])
   assert.equal(state.inheritedReasoningLevel.value, 'low')
+  assert.equal(state.agentReasoningLevel.value, 'low')
   state.agent.value.model = 'unknown'; await nextTick()
   assert.deepEqual(state.agentReasoningLevels.value, [])
   assert.equal(state.inheritedReasoningLevel.value, '')
+  assert.equal(state.agentReasoningLevel.value, '')
   state.agent.value.model = 'kimi'; state.agent.value.reasoning_level = 'medium'; await nextTick()
   assert.equal(state.agent.value.reasoning_level, null)
   assert.equal(state.inheritedReasoningLevel.value, 'max')
+  assert.equal(state.agentReasoningLevel.value, 'max')
+})
+
+test('agent efforts use the profile protocol capability and its documented default', async t => {
+  const state = setup(t, async () => ({ ok: true, json: async () => ({ models: [] }) }))
+  state.draft.value = { revision: 1, profiles: [{ ...entry(), protocol: 'responses', model: 'qwen3.8-max', models: [{
+    id: 'qwen3.8-max', reasoning_levels: null, reasoning_by_protocol: {
+      responses: { reasoning_levels: ['none', 'low', 'medium', 'xhigh'], default_reasoning_level: 'xhigh' },
+      anthropic: { reasoning_levels: ['low', 'medium', 'xhigh'], default_reasoning_level: 'xhigh' },
+    },
+  }] }], firefly: { id: 'firefly', name: 'Firefly', model_profile: 'p', model: null, reasoning_level: null, timeout_secs: 60 }, subagents: [] }
+  await nextTick()
+  assert.deepEqual(state.agentReasoningLevels.value, ['none', 'low', 'medium', 'xhigh'])
+  assert.equal(state.inheritedReasoningLevel.value, 'xhigh')
+  assert.equal(state.agentReasoningLevel.value, 'xhigh')
+  assert.equal(state.agent.value.reasoning_level, null)
+  state.agentReasoningLevel.value = 'medium'
+  await nextTick()
+  assert.equal(state.agent.value.reasoning_level, 'medium')
 })
 
 test('deleting a referenced model clears references without deleting another profile', async t => {
