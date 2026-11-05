@@ -70,8 +70,16 @@ pub(in crate::api::assistant) async fn run_codex_turn(
                     // Storage/protocol errors can end consumption before the
                     // server's turn ends. Stop it before releasing the queue or
                     // retrying the prompt on this thread.
-                    codex::interrupt_turn(&thread_id, &turn_id).await
-                        .map_err(|stop| anyhow!("{error}; 无法确认旧 Codex 执行已停止: {stop}"))?;
+                    if let Err(stop) = codex::interrupt_turn(&thread_id, &turn_id).await {
+                        // "no active turn to interrupt" 表示 turn 已经结束（容量/限流
+                        // 失败后最常见）。此时必须保留原始错误继续走重试循环，不能让
+                        // interrupt 的失败提前返回、掩盖可重试错误。
+                        if stop.to_string().contains("no active turn") {
+                            warn!(thread_id = %thread_id, turn_id = %turn_id, %stop, "Codex turn 已结束，跳过停止确认");
+                        } else {
+                            return Err(anyhow!("{error}; 无法确认旧 Codex 执行已停止: {stop}"));
+                        }
+                    }
                 }
                 (result, true)
             }
